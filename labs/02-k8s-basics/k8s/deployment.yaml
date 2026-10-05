@@ -11,7 +11,7 @@ spec:
   #   - 1로 apply → /hello 를 여러 번 호출해서 host 값 확인
   #   - 숫자를 바꿔 다시 apply → host 값이 어떻게 달라지는지 확인
   #   - 고른 숫자와 이유(가용성 vs 맥 메모리 7.7GB)를 README 측정표 아래에 한 줄로 남긴다
-  replicas: 1
+  replicas: 3
   selector:
     matchLabels:
       app: hello          # 이 라벨이 붙은 Pod 를 "내 것"으로 관리한다
