@@ -1,7 +1,8 @@
 # Traefik(Ingress 컨트롤러) Helm 설치 옵션.
 # kind 에는 LoadBalancer 가 없으니 NodePort 30080 으로 열고, kind-config.yaml 이 맥 8088 을 여기로 연결한다.
 service:
-  type: NodePort
+  spec:
+    type: NodePort   # 차트 기본값은 LoadBalancer. 이 차트는 service.spec 아래에 type 을 둔다
 ports:
   web:
     nodePort: 30080
