@@ -1,0 +1,12 @@
+# kind 클러스터 설정: 노드(= Docker 컨테이너) 1개짜리 연습용 클러스터
+# 핵심은 extraPortMappings: 맥의 localhost:8088 → kind 노드의 30080 포트로 연결한다.
+# 30080 은 나중에 Traefik(Ingress 컨트롤러)이 NodePort 로 열어 둘 포트다.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: lab02
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080   # kind 노드 안쪽 포트 (Traefik NodePort)
+        hostPort: 8088         # 맥에서 접속할 포트 → curl localhost:8088
+        protocol: TCP

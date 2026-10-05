@@ -1,0 +1,7 @@
+# 차트의 이름표. Maven 의 pom.xml 맨 위 groupId/artifactId/version 과 같은 역할.
+apiVersion: v2
+name: hello
+description: Lab 01 Spring 이미지를 Deployment + Service + Ingress 로 배포하는 연습용 차트
+type: application
+version: 0.1.0        # 차트(포장) 버전
+appVersion: "multi"   # 안에 든 앱(이미지 태그) 버전

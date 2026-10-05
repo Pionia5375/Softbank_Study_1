@@ -1,0 +1,25 @@
+# values.yaml = 차트의 "설정 기본값". Spring 의 application.properties 와 같은 역할.
+# 템플릿(templates/*.yaml)은 {{ .Values.xxx }} 로 이 값을 읽는다.
+# 환경마다 다른 값은 -f values-<환경>.yaml 로 덮어쓴다 (application-dev.properties 처럼).
+
+replicaCount: 1
+
+image:
+  repository: lab01-hello
+  tag: multi
+  pullPolicy: IfNotPresent
+
+service:
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: traefik
+  host: ""          # 비워 두면 어떤 도메인으로 와도 받는다
+
+# TODO(human): values-demo.yaml 을 새로 만들어 "데모 환경"에서만 달라질 값을 덮어쓴다.
+#   (5단계에서 values 개념을 배운 뒤)
+#   - 어떤 키를 덮어쓸지 고른다 (예: replicaCount, image.tag, ingress.host 중 무엇?)
+#   - 고른 이유를 한 줄: "dev 와 demo 는 ___ 가 달라야 한다, 왜냐하면 ___"
+#   - helm upgrade ... -f values-demo.yaml 로 적용하고 kubectl get pods 결과를 붙인다
