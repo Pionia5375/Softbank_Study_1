@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# 실수로 생긴 빈 파일
+aa
+
+# Java / Maven 빌드 산출물
+target/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# 실습 측정 중 생기는 임시 로그
+labs/**/results/*.log
+
+# Claude Code / oh-my-claudecode 플러그인 상태 파일
+.omc/
