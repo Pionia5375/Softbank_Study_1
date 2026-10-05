@@ -10,7 +10,7 @@
 #   비교 기준: 이미지 크기, CPU 아키텍처(arm64/amd64) 지원, 셸·패키지 매니저 유무, 보안 패치 주기
 #   기본값을 채우기 전에는 빌드가 "base name should not be blank" 로 실패한다.
 #   임시로는 --build-arg RUNTIME_IMAGE=... 로 넘겨서 빌드할 수 있다.
-ARG RUNTIME_IMAGE
+ARG RUNTIME_IMAGE=eclipse-temurin:21-jre
 
 # ---- build ----
 FROM maven:3.9-eclipse-temurin-21 AS build
@@ -42,5 +42,7 @@ EXPOSE 8080
 #       (Spring Boot 기동 시간을 measure.sh 로 재 보고 start-period 를 정하면 근거가 생긴다)
 #   참고: K8s 는 Dockerfile HEALTHCHECK 를 무시하고 livenessProbe/readinessProbe 를 쓴다.
 #         여기서 정한 값이 W1 K8s 프로브 설정의 출발점이 된다.
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=20s --retries=3 CMD curl -f http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["java", "-jar", "app.jar"]
