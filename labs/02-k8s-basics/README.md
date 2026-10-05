@@ -19,14 +19,14 @@ Lab 01에서 만든 `lab01-hello:multi` 이미지를 내 맥 안의 쿠버네티
      Traefik ──(ingress.yaml 규칙)──▶ Service "hello" ──▶ Pod ×N (Spring 컨테이너)
 ```
 
-| K8s 용어 | Spring 비유 |
+| 용어 | 한 줄 뜻 |
 |---|---|
-| 클러스터 | 스프링 컨테이너(ApplicationContext) 전체 |
-| Pod | 빈 인스턴스 1개 (= 컨테이너 1개를 감싼 실행 단위) |
-| Deployment | `@Bean` 정의 + "항상 N개 유지해" 규칙 |
-| Service | 인터페이스 타입. 뒤 구현체(Pod)가 바뀌어도 이름은 그대로 |
-| Ingress | `@RequestMapping` 표. 실제 요청 처리는 Ingress 컨트롤러가 함 |
-| Helm 차트 | Maven 아티팩트 + `application.properties` |
+| 클러스터 | 컨테이너를 대신 띄워 주고 관리하는 서버 묶음. 여기선 kind 가 맥 안에 1대짜리로 흉내 낸다 |
+| Pod | K8s 가 띄우는 최소 단위. 보통 컨테이너 1개를 감싼 것 |
+| Deployment | "이 이미지로 Pod 를 N개 항상 유지해" 라는 선언 |
+| Service | Pod 들 앞의 고정 이름. Pod 가 다시 떠서 IP 가 바뀌어도 이 이름으로 부르면 된다 |
+| Ingress | 밖에서 온 HTTP 요청을 어느 Service 로 보낼지 적은 규칙표. 실제 처리는 Ingress 컨트롤러(Traefik)가 한다 |
+| Helm 차트 | 위 YAML 들을 묶고, 바뀌는 값만 values.yaml 로 뺀 배포 꾸러미 |
 
 ## 구조
 

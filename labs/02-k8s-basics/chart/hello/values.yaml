@@ -1,6 +1,6 @@
-# values.yaml = 차트의 "설정 기본값". Spring 의 application.properties 와 같은 역할.
+# values.yaml = 차트의 설정 기본값.
 # 템플릿(templates/*.yaml)은 {{ .Values.xxx }} 로 이 값을 읽는다.
-# 환경마다 다른 값은 -f values-<환경>.yaml 로 덮어쓴다 (application-dev.properties 처럼).
+# 환경마다 다른 값은 -f values-<환경>.yaml 로 덮어쓴다.
 
 replicaCount: 1
 

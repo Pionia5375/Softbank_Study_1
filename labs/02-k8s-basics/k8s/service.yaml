@@ -1,6 +1,5 @@
 # Service: Pod 여러 개 앞에 붙는 고정 이름 + 로드밸런서.
 # Pod 는 죽고 다시 뜰 때마다 IP 가 바뀌니까, 다른 앱은 Pod IP 대신 이 Service 이름(hello)으로 부른다.
-# Spring 비유: 구현체가 바뀌어도 그대로인 인터페이스 타입. 호출하는 쪽은 인터페이스만 안다.
 apiVersion: v1
 kind: Service
 metadata:
