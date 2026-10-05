@@ -1,0 +1,14 @@
+# Dockerfile A: 단일 스테이지 (비교 기준선)
+# 빌드 도구(Maven + JDK)와 소스가 그대로 최종 이미지에 남는다.
+# 일부러 "안 좋은 예"로 두고 B 와 크기·빌드 시간·기동 시간을 비교한다.
+
+FROM maven:3.9-eclipse-temurin-21
+
+WORKDIR /workspace
+
+# 소스 전체를 한 번에 복사 → src 가 한 줄만 바뀌어도 의존성 다운로드부터 다시 한다 (캐시 비효율 관찰 포인트)
+COPY . .
+RUN mvn -B package -DskipTests
+
+EXPOSE 8080
+CMD ["java", "-jar", "target/app.jar"]

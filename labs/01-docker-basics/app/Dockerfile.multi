@@ -1,0 +1,46 @@
+# Dockerfile B: 멀티스테이지
+# build 스테이지에서만 Maven + JDK 를 쓰고, 최종 이미지에는 JRE 와 jar 만 남긴다.
+
+# TODO(human): 런타임 베이스 이미지를 골라 기본값을 채운다.
+#   예: ARG RUNTIME_IMAGE=<이미지:태그>
+#   후보를 2~3개 비교해 보고 고른 이유를 notes/ ADR 에 남긴다.
+#     - eclipse-temurin JRE (Ubuntu 기반 / Alpine 기반)
+#     - distroless Java (셸 없음 → HEALTHCHECK 방식에 영향)
+#     - 그 외 (Amazon Corretto, Liberica 등)
+#   비교 기준: 이미지 크기, CPU 아키텍처(arm64/amd64) 지원, 셸·패키지 매니저 유무, 보안 패치 주기
+#   기본값을 채우기 전에는 빌드가 "base name should not be blank" 로 실패한다.
+#   임시로는 --build-arg RUNTIME_IMAGE=... 로 넘겨서 빌드할 수 있다.
+ARG RUNTIME_IMAGE
+
+# ---- build ----
+FROM maven:3.9-eclipse-temurin-21 AS build
+WORKDIR /workspace
+
+# pom.xml 만 먼저 복사해서 의존성 레이어를 분리 → src 만 바뀌면 이 레이어는 캐시 재사용
+COPY pom.xml .
+RUN mvn -B dependency:go-offline
+
+COPY src ./src
+RUN mvn -B package -DskipTests
+
+# ---- runtime ----
+FROM ${RUNTIME_IMAGE} AS runtime
+WORKDIR /app
+
+# 숫자 UID 로 실행 → 베이스 이미지에 useradd/adduser 가 있든 없든 동작
+COPY --from=build --chown=10001:10001 /workspace/target/app.jar app.jar
+USER 10001
+
+EXPOSE 8080
+
+# TODO(human): HEALTHCHECK 를 설정한다.
+#   대상: GET http://localhost:8080/health → 200
+#   정할 것:
+#     - 무엇으로 요청할지: curl/wget 이 위에서 고른 베이스에 있는가?
+#       없다면 설치할지(이미지 크기 증가), 다른 방법을 쓸지 (distroless 라면 셸도 없다)
+#     - --interval / --timeout / --start-period / --retries 값
+#       (Spring Boot 기동 시간을 measure.sh 로 재 보고 start-period 를 정하면 근거가 생긴다)
+#   참고: K8s 는 Dockerfile HEALTHCHECK 를 무시하고 livenessProbe/readinessProbe 를 쓴다.
+#         여기서 정한 값이 W1 K8s 프로브 설정의 출발점이 된다.
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
