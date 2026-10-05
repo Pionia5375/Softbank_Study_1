@@ -95,7 +95,9 @@ TODO(human): `replicas` 를 정한다 (`k8s/deployment.yaml` 주석 참고).
 
 ```bash
 kubectl apply -f k8s/service.yaml
-kubectl port-forward svc/hello 9090:80     # 다른 터미널에서 curl localhost:9090/hello, 끝나면 Ctrl+C
+kubectl get endpoints hello                 # Service 가 넘겨 줄 Pod IP 목록
+kubectl run tmp --rm -it --image=curlimages/curl --restart=Never -- \
+  sh -c 'for i in 1 2 3 4 5 6; do curl -s http://hello/hello; echo; done'   # 클러스터 안에서 Service 이름으로 호출
 
 helm repo add traefik https://traefik.github.io/charts && helm repo update
 helm install traefik traefik/traefik -n traefik --create-namespace -f traefik-values.yaml
@@ -129,14 +131,20 @@ kind delete cluster --name lab02
 
 | 항목 | 방법 | 결과 |
 |---|---|---|
-| 클러스터 생성 시간 | 1단계 `time kind create cluster` | |
-| Pod 삭제 → 새 Pod Running | 3단계, `-w` 출력의 AGE 로 | |
-| `helm upgrade` replicas 1→3, 전부 Running 까지 | 5단계 | |
-| 클러스터 떠 있을 때 Docker 메모리 | `docker stats --no-stream lab02-control-plane` | |
+| 클러스터 생성 시간 | 1단계 `time kind create cluster` | 30.5s (노드 이미지 받는 시간 포함, 1회) |
+| Pod 삭제 → 새 Pod Running | 3단계, `-w` 출력의 AGE 로 | Running 표시까지 0s. 실제 응답 가능까지 약 4~5s 【추정: Lab 01 기동 시간 기준, readinessProbe 없음】 |
+| `helm upgrade` replicas 1→3, 전부 Running 까지 | 5단계 | 18s 안 (get pods 시점 AGE 18s, 정확한 값은 미측정) |
+| 클러스터 떠 있을 때 메모리 | `docker exec lab02-control-plane crictl stats` | hello Pod 1개 약 175MB (요청 없을 때), 쿠버네티스 부품 합계 약 510MB (apiserver 248MB) |
 
-replicas 선택과 이유:
+replicas 선택과 이유: **3**
 
-values-demo.yaml 에서 덮어쓴 키와 이유:
+- 얻는 것: Pod 하나가 죽어도 남은 Pod가 요청을 받는다 (새 Pod 응답까지 약 4~5s 공백을 메움). 요청을 여러 Pod로 분산한다.
+- 대가: Pod당 메모리 약 175MB, 3개면 약 525MB (Docker Desktop 7.7GB 중).
+- 【추정】노드 1대에서는 Pod들이 같은 CPU를 나눠 써서, 분산이 응답 시간을 실제로 줄이는지는 모른다 → 10/10 k6로 replicas 1 vs 3 측정 예정.
+
+values-demo.yaml 에서 덮어쓴 키와 이유: `replicaCount: 3`
+
+- dev와 demo는 Pod 수가 달라야 한다. dev(맥)는 메모리를 아끼려고 기본값 1, demo는 심사 중 Pod 하나가 죽어도 응답이 끊기지 않고 요청이 분산되도록 3.
 
 ## 핵심 결정 3개와 대안
 
