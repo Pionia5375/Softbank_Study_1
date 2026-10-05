@@ -44,8 +44,11 @@ echo "[2/4] 캐시 빌드 (변경 없음)"
 cached_ms=$(build)
 
 echo "[3/4] src 만 바꾼 뒤 재빌드 (레이어 캐시 효과 확인)"
-touch app/src/main/java/com/example/hello/HelloController.java
+f=app/src/main/java/com/example/hello/HelloController.java
+cp "$f" results/HelloController.java.bak
+echo "// cache-bust $(date +%s)" >> "$f"
 src_change_ms=$(build)
+mv results/HelloController.java.bak "$f"
 
 size_mb=$(docker image inspect "$tag" --format '{{.Size}}' | awk '{printf "%.1f", $1/1024/1024}')
 
