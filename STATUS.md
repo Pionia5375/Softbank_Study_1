@@ -49,7 +49,7 @@ v0.5는 기간 단위로 짜여 있다. 아래 일 단위 분할(`1/3` 등)은 S
   - [x] README 측정표 4칸 ✅ (b88be4b: 30.5s / Running 0s·응답 약 4~5s 추정 / 1→3 18s 안 / hello 175MB·K8s 510MB)
   - [x] replicas 3 이유 ✅ (b88be4b: 가용성 + 트래픽 분산, 분산 효과는 10/10 k6로 측정)
   - [x] README "큰 그림" 아래 흐름 네 문장 ✅ (e5cfdf6)
-  - [ ] 선행: 10/7 중 probe + requests/limits → [labs/03-k8s-probes](labs/03-k8s-probes/README.md), TODO(human) 3곳, 롤아웃 중 실패 요청 수 before/after
+  - [x] 선행: probe + requests/limits ✅ ([Lab 03](labs/03-k8s-probes/README.md)): 롤아웃 중 실패 51% → 3%, 128Mi 90% 사용, 64Mi OOMKilled, 결정 requests 256Mi / limits 512Mi
   - [ ] 일본어: Lab 02 흐름(준비→앱→주소→입구→규칙) 2분 설명 녹음
   - 다중 서비스 앱은 Lab 02 README 기준 10/7 이후로 미룸
 - [ ] **10/7 (수) D3** P0-1 (2/3) 롤아웃·롤백·프로브·HPA·requests/limits

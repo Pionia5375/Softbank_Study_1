@@ -91,12 +91,21 @@ scripts/rollout-errors.sh probe-limits
 
 | 항목 | 방법 | 결과 |
 |---|---|---|
-| probe 없음, 롤아웃 중 실패 요청 | 1단계 | |
-| probe 있음, 롤아웃 중 실패 요청 | 2단계 | |
-| Pod 생성 → READY 1/1 | 2단계 `-w` AGE | |
-| liveness 1s/1회 일 때 RESTARTS | 3단계, 1분 관찰 | |
-| limits.memory 128Mi | 4단계 | |
-| 고른 requests / limits | 4단계 | |
+| probe 없음, 롤아웃 중 실패 요청 | 1단계 | **29/57 (51%)**: 502 ×28, 000 ×1. 롤아웃 3s |
+| probe 있음, 롤아웃 중 실패 요청 | 2단계 | **4/125 (3%)**: 000 ×3, 502 ×1. 롤아웃 15s |
+| probe + resources, 롤아웃 중 실패 요청 | 4단계 | 5/128 (4%): 000 ×3, 502 ×2. 롤아웃 15s (probe 만일 때와 차이 없음) |
+| Pod 생성 → READY 1/1 | 2단계 `-w` AGE | 약 5~7s |
+| liveness 1s/1s/1회 | 3단계 | 새 Pod 1개가 97s 동안 RESTARTS 5, CrashLoopBackOff. 롤아웃이 멈추고 옛 Pod 3개가 계속 응답 (curl 정상) |
+| limits.memory 128Mi | 4단계 | 기동·응답은 됨. MaxHeapSize 64MB (상한의 50%), 실제 사용 약 120MB = 상한의 약 90%. 같은 컨테이너에서 `kubectl exec ... java -version` 을 띄운 뒤 RESTARTS 1 【추정: 두 번째 JVM 때문에 상한 초과】 |
+| limits.memory 64Mi | 4단계 | 기동 2s 만에 OOMKilled (Exit 137 = SIGKILL), CrashLoopBackOff. 옛 Pod 가 계속 응답 |
+| 고른 requests / limits | 4단계 | requests cpu 100m, memory 256Mi / limits memory 512Mi (CPU limit 없음). 실제 사용 약 125~131MB, QoS Burstable |
+
+읽는 법:
+
+- probe 없을 때 3s 만에 끝난 롤아웃은 "빨라서 좋은 것" 이 아니라 "준비 안 된 Pod 를 준비됐다고 믿은 것" 이다. 시간 12s 를 내고 실패 요청을 51% → 3% 로 줄였다.
+- 남은 3~4% 는 옛 Pod 가 꺼지는 순간의 실패로 본다 【추정】. 10/7 `preStop` 으로 확인한다.
+- Lab 02 의 "Pod 1개 약 175MB" 는 상한이 없어서 JVM 이 넉넉히 가져간 양이었다. JVM 은 상한을 보고 힙을 정한다 (작은 상한에선 50%, 큰 상한에선 25% 【사실: JVM MinRAMPercentage / MaxRAMPercentage 기본값】). 그래서 limits 는 "지금 쓰는 양" 만 보고 정하면 안 된다.
+- 512Mi 는 대기 상태 기준으로 여유가 충분하다. 요청이 몰릴 때 사용량은 10/10 k6 로 잰다.
 
 ## 핵심 결정 3개와 대안
 
