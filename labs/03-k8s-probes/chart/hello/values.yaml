@@ -21,15 +21,15 @@ ingress:
 # ---- Lab 03 ----
 # probe 를 켜고 끄는 스위치. 먼저 false 로 "probe 없을 때" 를 재고, true 로 바꿔 다시 잰다.
 probes:
-  enabled: false
+  enabled: true
   readiness:
     # TODO(human): 몇 초마다 /health 를 찌를지. 짧을수록 빨리 명단에 들어가지만 요청이 늘어난다.
-    periodSeconds:
+    periodSeconds: 2
     failureThreshold: 3
   liveness:
     # TODO(human): 첫 검사를 몇 초 뒤에 할지. Spring 기동(약 4~5s)보다 짧으면 어떻게 될까?
     #   Lab 01 HEALTHCHECK 의 start-period(20s) 가 출발점.
-    initialDelaySeconds:
+    initialDelaySeconds: 20
     periodSeconds: 10
     failureThreshold: 3
 
@@ -38,4 +38,9 @@ probes:
 #   resources:
 #     requests: { cpu: ___, memory: ___ }   # 최소 보장. 스케줄러가 자리 계산에 쓴다
 #     limits:   { memory: ___ }             # 넘으면 OOMKilled. 대기 175MB + 요청 처리 여유를 얼마로?
-resources: {}
+resources:
+  requests:
+    cpu: 100m
+    memory: 200Mi
+  limits:
+    memory: 512Mi
