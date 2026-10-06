@@ -1,0 +1,7 @@
+# Lab 04 3단계용: values-demo.yaml 위에 겹쳐 쓴다.
+#   helm upgrade hello chart/hello -f chart/hello/values-demo.yaml -f chart/hello/values-hpa.yaml
+# -f 를 여러 개 주면 뒤에 쓴 파일이 이긴다.
+preStop:
+  sleepSeconds: 5
+autoscaling:
+  enabled: true

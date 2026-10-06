@@ -1,0 +1,7 @@
+# 차트의 이름표: 이름, 차트 버전, 안에 든 앱 버전.
+apiVersion: v2
+name: hello
+description: Lab 01 Spring 이미지를 Deployment + Service + Ingress 로 배포하는 연습용 차트
+type: application
+version: 0.3.0        # 차트(포장) 버전. Lab 04 에서 preStop·HPA 추가
+appVersion: "multi"   # 안에 든 앱(이미지 태그) 버전
