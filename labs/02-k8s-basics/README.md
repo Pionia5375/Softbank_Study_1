@@ -19,6 +19,11 @@ Lab 01에서 만든 `lab01-hello:multi` 이미지를 내 맥 안의 쿠버네티
      Traefik ──(ingress.yaml 규칙)──▶ Service "hello" ──▶ Pod ×N (Spring 컨테이너)
 ```
 
+1. kind-config.yaml 의 extraPortMappings 가 맥 8088 로 온 요청을 kind 노드(컨트롤 플레인 컨테이너)의 30080 으로 넘긴다.
+2. 노드의 30080 에서는 Traefik 이 기다린다 (traefik-values.yaml 에서 NodePort 30080 으로 설치).
+3. Traefik 은 ingress.yaml 규칙을 읽고 요청을 Service "hello" 의 80 포트로 보낸다. 규칙은 쿠버네티스가 저장하고, 읽는 건 `ingressClassName: traefik` 으로 지정된 Traefik 이다.
+4. Service 는 `app: hello` 라벨이 붙은 Pod 들 중 하나의 8080 으로 넘긴다. Pod 가 새로 떠서 IP 가 바뀌어도 라벨로 다시 찾는다.
+
 | 용어 | 한 줄 뜻 |
 |---|---|
 | 클러스터 | 컨테이너를 대신 띄워 주고 관리하는 서버 묶음. 여기선 kind 가 맥 안에 1대짜리로 흉내 낸다 |
