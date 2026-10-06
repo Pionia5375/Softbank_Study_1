@@ -52,11 +52,11 @@ v0.5는 기간 단위로 짜여 있다. 아래 일 단위 분할(`1/3` 등)은 S
   - [x] 선행: probe + requests/limits ✅ ([Lab 03](labs/03-k8s-probes/README.md)): 롤아웃 중 실패 51% → 3%, 128Mi 90% 사용, 64Mi OOMKilled, 결정 requests 200Mi / limits 512Mi
   - [ ] ~~일본어 2분 녹음~~ 10/6 스킵 (Jeong 결정)
   - 다중 서비스 앱은 Lab 02 README 기준 10/7 이후로 미룸
-- [ ] **10/7 (수) D3** P0-1 (2/3) 롤아웃·롤백·프로브·HPA·requests/limits
-- [ ] **10/8 (목) D4** P0-1 (3/3) taint/toleration·PriorityClass → 롤아웃·롤백·HPA 측정표
-- [ ] **10/9 (금) D5** P0-2 (1/2) kube-prometheus-stack, Loki + Grafana Alloy
-- [ ] **10/10 (토) D6** P0-2 (2/2) k6, PromQL 5개, 튜닝 전/후 p95 비교표, 대시보드 JSON
-- [ ] **10/11 (일) D7** P0-4 (1/3) Terraform: kind·docker 프로바이더로 모듈 작성
+- [ ] **10/7 (수) D3** P0-1 (2/3) 롤아웃·롤백·프로브·HPA·requests/limits → 10/6 진행: [Lab 04](labs/04-k8s-rollout-hpa/README.md) (프로브·limits 는 Lab 03 완료)
+- [ ] **10/8 (목) D4** P0-1 (3/3) taint/toleration·PriorityClass → 롤아웃·롤백·HPA 측정표 → 10/6 진행: [Lab 05](labs/05-k8s-scheduling/README.md) (노드 3대·셋업 드릴·다중 서비스 축소판)
+- [ ] **10/9 (금) D5** P0-2 (1/2) kube-prometheus-stack, Loki + Grafana Alloy → 10/6 진행: [Lab 06](labs/06-observability-k6/README.md)
+- [ ] **10/10 (토) D6** P0-2 (2/2) k6, PromQL 5개, 튜닝 전/후 p95 비교표, 대시보드 JSON → 10/6 진행: Lab 06 후반
+- [ ] **10/11 (일) D7** P0-4 (1/3) Terraform: kind·docker 프로바이더로 모듈 작성 → 10/6 진행: [Lab 07](labs/07-terraform-kind/README.md) (dev/demo 두 환경, drill 3회)
 
 ### W2 · 10/12~10/18 · Day 8~14
 

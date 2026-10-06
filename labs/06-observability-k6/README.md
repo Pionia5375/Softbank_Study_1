@@ -12,7 +12,7 @@
 | 6 | 튜닝 전/후 | replicas 1 vs 3, CPU limit 없음 vs 500m 에서 p95 가 어떻게 바뀌나 (Lab 02 의 "노드 하나에서 분산이 의미 있나" 질문) |
 | 7 | 비용 | 관측 스택 자체가 메모리를 얼마나 먹나 |
 
-출발 상태 = Lab 05 클러스터 그대로: kind `lab05` (control-plane 1 + worker 2), Traefik(`traefik` 네임스페이스, NodePort 30080 ← Mac 8088), hello 3개(Lab 04 차트 + values-demo.yaml, preStop 5s), metrics-server.
+출발 상태 = Lab 05 클러스터 그대로: kind `lab05` (control-plane 1 + worker 2), Traefik(`traefik` 네임스페이스, NodePort 30080 ← Mac 8088), hello 3개(Lab 05 차트 + values-demo.yaml, preStop 5s), metrics-server.
 앱은 고치지 않는다. 지표는 Traefik(앞단)과 kubelet/cAdvisor·kube-state-metrics(뒷단)에서 얻는다.
 
 ## 용어
