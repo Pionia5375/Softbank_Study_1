@@ -95,6 +95,7 @@ kubectl exec deploy/hello -- curl -s http://hello2/hello; echo   # 클러스터 
 scripts/fill-node.sh delete
 kubectl delete job batch
 helm uninstall hello2
+kubectl taint node lab05-worker2 dedicated-    # 끝에 - 를 붙이면 taint 제거
 helm upgrade hello chart/hello -f chart/hello/values-demo.yaml --set spreadAcrossNodes=true
 kubectl get pods -o wide                 # hello 3개가 워커에 고르게
 ```
