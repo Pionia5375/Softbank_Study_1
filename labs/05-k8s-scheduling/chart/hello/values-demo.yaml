@@ -1,0 +1,4 @@
+# 데모 환경: Pod 3개, 끌 때 5초 대기 (Lab 04 결과)
+replicaCount: 3
+preStop:
+  sleepSeconds: 5

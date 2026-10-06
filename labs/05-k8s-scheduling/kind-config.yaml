@@ -1,0 +1,17 @@
+# Lab 05 클러스터: 컨트롤 플레인 1 + 워커 2.
+# 워커마다 라벨(이름표)을 달아 "이 노드는 앱용 / 배치 작업용" 을 구분한다.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: lab05
+nodes:
+  - role: control-plane
+    extraPortMappings:          # Lab 02 와 같음: 맥 8088 → 노드 30080 (Traefik)
+      - containerPort: 30080
+        hostPort: 8088
+        protocol: TCP
+  - role: worker
+    labels:
+      tier: app                 # 앱 Pod 용
+  - role: worker
+    labels:
+      tier: batch               # 배치 작업용. 4단계에서 taint(출입 금지 표시)도 건다

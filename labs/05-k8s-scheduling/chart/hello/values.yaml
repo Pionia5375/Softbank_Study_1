@@ -1,0 +1,65 @@
+# values.yaml = 차트의 설정 기본값.
+# 템플릿(templates/*.yaml)은 {{ .Values.xxx }} 로 이 값을 읽는다.
+# 환경마다 다른 값은 -f values-<환경>.yaml 로 덮어쓴다.
+
+replicaCount: 1
+
+image:
+  repository: lab01-hello
+  tag: multi
+  pullPolicy: IfNotPresent
+
+service:
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: traefik
+  host: ""          # 비워 두면 어떤 도메인으로 와도 받는다
+
+# ---- Lab 03 ----
+# probe 를 켜고 끄는 스위치. 먼저 false 로 "probe 없을 때" 를 재고, true 로 바꿔 다시 잰다.
+probes:
+  enabled: true
+  readiness:
+    # TODO(human): 몇 초마다 /health 를 찌를지. 짧을수록 빨리 명단에 들어가지만 요청이 늘어난다.
+    periodSeconds: 2
+    failureThreshold: 3
+  liveness:
+    # TODO(human): 첫 검사를 몇 초 뒤에 할지. Spring 기동(약 4~5s)보다 짧으면 어떻게 될까?
+    #   Lab 01 HEALTHCHECK 의 start-period(20s) 가 출발점.
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    failureThreshold: 3
+
+# 비워 두면(resources: {}) 제한 없음 = Lab 02 상태.
+# TODO(human): 4단계에서 채운다. 근거 = Lab 02 측정 (hello Pod 대기 상태 약 175MB)
+#   resources:
+#     requests: { cpu: ___, memory: ___ }   # 최소 보장. 스케줄러가 자리 계산에 쓴다
+#     limits:   { memory: ___ }             # 넘으면 OOMKilled. 대기 175MB + 요청 처리 여유를 얼마로?
+resources:
+  requests:
+    cpu: 100m
+    memory: 200Mi
+  limits:
+    memory: 512Mi
+
+# ---- Lab 04 ----
+# 0 이면 preStop 없음 (Lab 03 상태). 1단계에서 0 → 5 로 바꿔 비교한다.
+preStop:
+  sleepSeconds: 0
+
+# HPA (Pod 수 자동 조절). 3단계에서 켠다.
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 50   # requests.cpu(100m) 의 50% = Pod 하나가 평균 50m 넘게 쓰면 늘린다
+  scaleDownStabilizationSeconds: 60    # 기본 300s. 실습에서 줄어드는 걸 빨리 보려고 60s
+
+# ---- Lab 05 ----
+priorityClassName: ""     # 예: high. k8s/priorityclasses.yaml 을 먼저 apply 해야 한다
+nodeSelector: {}          # 예: { tier: app }
+tolerations: []           # 예: [{ key: dedicated, operator: Equal, value: batch, effect: NoSchedule }]
+spreadAcrossNodes: false

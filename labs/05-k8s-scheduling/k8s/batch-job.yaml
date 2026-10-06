@@ -1,0 +1,26 @@
+# 배치 작업 흉내: 30초 동안 일하고 끝나는 Job 3개.
+# tier=batch 노드에만 가고(nodeSelector), 그 노드의 출입 금지 표시(taint)를 통과할 허가(toleration)를 갖는다.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: batch
+spec:
+  completions: 3
+  parallelism: 3
+  template:
+    spec:
+      priorityClassName: low
+      restartPolicy: Never
+      nodeSelector:
+        tier: batch
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: batch
+          effect: NoSchedule
+      containers:
+        - name: work
+          image: busybox:1.37
+          command: ["sh", "-c", "echo start on $(hostname); sleep 30; echo done"]
+          resources:
+            requests: { cpu: 100m, memory: 32Mi }

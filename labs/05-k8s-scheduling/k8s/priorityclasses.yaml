@@ -1,0 +1,15 @@
+# 우선순위 두 개. value 가 클수록 먼저. 자리가 없으면 high 는 low 를 쫓아내고 들어간다(선점).
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high
+value: 1000
+description: "꼭 살아 있어야 하는 서비스 (hello)"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: low
+value: 100
+preemptionPolicy: Never     # low 는 남을 쫓아내지 않는다 (자기 자리만 기다림)
+description: "밀려나도 되는 작업 (배치, 채우기용)"
