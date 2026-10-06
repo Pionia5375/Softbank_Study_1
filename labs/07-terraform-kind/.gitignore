@@ -1,0 +1,19 @@
+# Terraform 이 init 때 받는 provider 바이너리 (수백 MB). 매번 다시 받으면 된다
+.terraform/
+
+# state = Terraform 의 기억. 클러스터 인증서·키가 평문으로 들어 있어서 git 에 안 올린다
+*.tfstate
+*.tfstate.*
+.terraform.tfstate.lock.info
+crash.log
+crash.*.log
+
+# kind provider 가 terraform 을 실행한 폴더에 <클러스터이름>-config 로 kubeconfig 를 떨군다 (인증서 포함)
+*-config
+*.kubeconfig
+
+# 드릴 측정 로그
+results/*.log
+
+# .terraform.lock.hcl (provider 버전 고정 파일) 은 일부러 무시하지 않는다 → 커밋한다
+# terraform.tfvars 도 비밀이 없어서 커밋한다
