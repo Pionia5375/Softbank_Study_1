@@ -46,8 +46,11 @@ v0.5는 기간 단위로 짜여 있다. 아래 일 단위 분할(`1/3` 등)은 S
   - [ ] 밀린 것: Lab 01 ADR (런타임 베이스 이미지 선택)
   - [x] `labs/02-k8s-basics` 뼈대 (kind + Deployment/Service/Ingress + Helm 차트) ✅ (0a93ccd, 10/5 선행)
   - [x] TODO(human): replicas 3, `values-demo.yaml` ✅ (c9d69ff)
-  - [ ] README 측정표 4칸 채우기 (커밋 메시지는 "측정 기록"이지만 표는 아직 비어 있음)
-  - [ ] replicas 3 고른 이유 한 줄 (가용성 vs 맥 메모리 7.7GB)
+  - [x] README 측정표 4칸 ✅ (b88be4b: 30.5s / Running 0s·응답 약 4~5s 추정 / 1→3 18s 안 / hello 175MB·K8s 510MB)
+  - [x] replicas 3 이유 ✅ (b88be4b: 가용성 + 트래픽 분산, 분산 효과는 10/10 k6로 측정)
+  - [ ] README 이유 두 칸을 내 말로 다시 읽고 고치기 + "큰 그림" 아래 흐름 한 단락
+  - [ ] 선행: 10/7 중 readinessProbe/livenessProbe + requests/limits (10/5 실습에서 찾은 구멍 2개)
+  - [ ] 일본어: Lab 02 흐름(준비→앱→주소→입구→규칙) 2분 설명 녹음
   - 다중 서비스 앱은 Lab 02 README 기준 10/7 이후로 미룸
 - [ ] **10/7 (수) D3** P0-1 (2/3) 롤아웃·롤백·프로브·HPA·requests/limits
 - [ ] **10/8 (목) D4** P0-1 (3/3) taint/toleration·PriorityClass → 롤아웃·롤백·HPA 측정표
