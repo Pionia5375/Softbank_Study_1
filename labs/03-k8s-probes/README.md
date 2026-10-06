@@ -98,7 +98,7 @@ scripts/rollout-errors.sh probe-limits
 | liveness 1s/1s/1회 | 3단계 | 새 Pod 1개가 97s 동안 RESTARTS 5, CrashLoopBackOff. 롤아웃이 멈추고 옛 Pod 3개가 계속 응답 (curl 정상) |
 | limits.memory 128Mi | 4단계 | 기동·응답은 됨. MaxHeapSize 64MB (상한의 50%), 실제 사용 약 120MB = 상한의 약 90%. 같은 컨테이너에서 `kubectl exec ... java -version` 을 띄운 뒤 RESTARTS 1 【추정: 두 번째 JVM 때문에 상한 초과】 |
 | limits.memory 64Mi | 4단계 | 기동 2s 만에 OOMKilled (Exit 137 = SIGKILL), CrashLoopBackOff. 옛 Pod 가 계속 응답 |
-| 고른 requests / limits | 4단계 | requests cpu 100m, memory 256Mi / limits memory 512Mi (CPU limit 없음). 실제 사용 약 125~131MB, QoS Burstable |
+| 고른 requests / limits | 4단계 | requests cpu 100m, memory 200Mi / limits memory 512Mi (CPU limit 없음). 실제 사용 약 125~131MB, QoS Burstable |
 
 읽는 법:
 
