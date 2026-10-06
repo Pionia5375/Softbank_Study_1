@@ -104,13 +104,13 @@ kubectl get pods -o wide                 # hello 3개가 워커에 고르게
 
 | 항목 | 방법 | 결과 |
 |---|---|---|
-| 셋업 드릴 총 시간 (클러스터 → 응답) | 1단계 `time` | |
-| 그중 클러스터 생성 / Traefik / metrics-server / hello | 1단계 `[Ns]` 로그 | |
+| 셋업 드릴 총 시간 (클러스터 → 응답) | 1단계 `time` | **1분 59초** (노드 이미지 캐시 있음) |
+| 그중 클러스터 생성 / Traefik / metrics-server / hello | 1단계 `[Ns]` 로그 | 클러스터 33s / 이미지 3대 복사 26s / Traefik 25s / metrics-server 25s / hello 9s |
 | 노드 3대 클러스터 메모리 (K8s 부품 합) | `docker stats --no-stream` | |
-| taint 후 hello 위치 | 2단계 | |
-| 선점: replicas 5 적용 → 5개 Running 까지 | 3단계 `-w` | |
-| 선점된 Pod | 3단계 events | |
-| hello2 호출 (Ingress / 서비스 이름) | 4단계 | |
+| taint 후 hello 위치 | 2단계 | taint 전: worker2 에 2개, worker 에 1개 → 후: 3개 모두 worker. batch Job 3개는 모두 worker2 |
+| 선점: replicas 5 적용 → 5개 Running 까지 | 3단계 `-w` | 35s. 1개는 빈자리로, 1개는 filler 를 선점(NOMINATED NODE=lab05-worker) |
+| 선점된 Pod | 3단계 `-w` | filler (low) → Terminating → 새 filler 는 Pending 으로 남음 (그 노드에만 묶여 있어 갈 곳 없음) |
+| hello2 호출 (Ingress / 서비스 이름) | 4단계 | 서비스 이름 `http://hello2` 정상. Host 헤더 경로는 rollout 직후 Traefik `no available server` 【추정: 엔드포인트 반영 전 타이밍】 |
 
 ## 핵심 결정 3개와 대안
 
