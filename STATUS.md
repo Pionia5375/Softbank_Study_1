@@ -41,15 +41,15 @@ v0.5는 기간 단위로 짜여 있다. 아래 일 단위 분할(`1/3` 등)은 S
   - [x] `labs/01-docker-basics` 뼈대, A 빌드·실행 확인 ✅
   - [x] Dockerfile B TODO(human): JRE 베이스 선택, HEALTHCHECK ✅ (eclipse-temurin:21-jre, 3f0f4ed)
   - [x] `measure.sh single` / `multi` → README 측정표 ✅ (294.0 MB → 129.8 MB)
-  - [ ] ADR: 런타임 베이스 이미지 선택 ⚠️
+  - [x] ADR: 런타임 베이스 이미지 선택 ✅ ([decisions/2026-10-06.md](decisions/2026-10-06.md) ADR-001, 10/6 작성)
 - [ ] **10/6 (화) D2** P0-1 (1/3) kind 클러스터, 예선 샘플 앱(다중 서비스)을 Deployment·Service·Ingress로 **← 오늘**
-  - [ ] 밀린 것: Lab 01 ADR (런타임 베이스 이미지 선택)
+  - [x] 밀린 것: Lab 01 ADR ✅ (ADR-001, Claude 작성 · Jeong 리뷰)
   - [x] `labs/02-k8s-basics` 뼈대 (kind + Deployment/Service/Ingress + Helm 차트) ✅ (0a93ccd, 10/5 선행)
   - [x] TODO(human): replicas 3, `values-demo.yaml` ✅ (c9d69ff)
   - [x] README 측정표 4칸 ✅ (b88be4b: 30.5s / Running 0s·응답 약 4~5s 추정 / 1→3 18s 안 / hello 175MB·K8s 510MB)
   - [x] replicas 3 이유 ✅ (b88be4b: 가용성 + 트래픽 분산, 분산 효과는 10/10 k6로 측정)
-  - [ ] README 이유 두 칸을 내 말로 다시 읽고 고치기 + "큰 그림" 아래 흐름 한 단락
-  - [ ] 선행: 10/7 중 readinessProbe/livenessProbe + requests/limits (10/5 실습에서 찾은 구멍 2개)
+  - [x] README "큰 그림" 아래 흐름 네 문장 ✅ (e5cfdf6)
+  - [ ] 선행: 10/7 중 probe + requests/limits → [labs/03-k8s-probes](labs/03-k8s-probes/README.md), TODO(human) 3곳, 롤아웃 중 실패 요청 수 before/after
   - [ ] 일본어: Lab 02 흐름(준비→앱→주소→입구→규칙) 2분 설명 녹음
   - 다중 서비스 앱은 Lab 02 README 기준 10/7 이후로 미룸
 - [ ] **10/7 (수) D3** P0-1 (2/3) 롤아웃·롤백·프로브·HPA·requests/limits
