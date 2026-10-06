@@ -117,7 +117,7 @@ scripts/load.sh stop
 | 이미지 v2 롤아웃 시간 | 2단계 | 정상 완료 (시간 미측정) |
 | 잘못된 태그 배포 중 curl | 2단계 | 새 Pod 1개 ErrImagePull, 롤링 멈춤, v2 Pod 3개가 계속 응답 (curl 정상) |
 | `helm rollback` 시간 | 2단계 `time` | 명령 0.25s. 옛 Pod 를 안 껐으므로 서비스 중단 0 |
-| 부하 시작 → 첫 scale up | 3단계 로그 | 부하 Pod 4개 시작 후 90s 안에 2 → 6 (정확한 시각은 미측정: 관찰을 늦게 시작) |
+| 부하 시작 → 첫 scale up | 3단계 로그, `kubectl describe hpa` Events | 부하 Pod 4개 시작 후 90s 안에 2 → 6 **한 번에** (기본 scaleUp 정책: 15s 마다 2배 또는 +4 중 큰 쪽). 정확한 시각은 미측정 |
 | 최대 Pod 수 / 그때 CPU% | 3단계 로그 | 6 (max) 에서 CPU 106~114% (목표 50%). 노드 1대라 Pod 를 늘려도 CPU 를 나눠 쓴다 【추정】 → Lab 06 에서 노드 2대로 재측정 |
 | 부하 중지 → 2개로 돌아올 때까지 | 3단계 로그 | 약 75s: CPU 3% 까지 ~35s, desired 2 까지 +60s (stabilization), Pod 종료 +15s (preStop 5s 포함) |
 
