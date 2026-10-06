@@ -1,10 +1,10 @@
 # STATUS
 
-**2026-10-05 (월) · Day 1/33 · W1 (10/5~10/11)**
+**2026-10-06 (화) · Day 2/33 · W1 (10/5~10/11)**
 
-**오늘 과제:** Lab 01 Docker 기초. [Dockerfile.multi](labs/01-docker-basics/app/Dockerfile.multi)의 TODO(human) 2곳을 채우고 `measure.sh`로 A/B 측정표 완성 + ADR 1개
+**오늘 과제:** Lab 02 K8s 기초 마무리. 뼈대와 TODO(human) 2곳(replicas 3, `values-demo.yaml`)은 어젯밤 커밋됨. [README](labs/02-k8s-basics/README.md) 측정표 4칸(클러스터 생성·Pod 재생성·helm upgrade 1→3·Docker 메모리)을 채우고, replicas 3을 고른 이유 한 줄을 남긴다. 밀린 것: Lab 01 ADR (런타임 베이스 이미지 선택)
 
-**본선 연결:** 본선 가설(이식성·멀티 클러스터·서버리스)은 모두 컨테이너 이미지를 배포 단위로 쓴다. 그래서 이 실습이 완성도·데모 30점과 클라우드 활용 30점의 바탕이 되고, 예선 피드백 "온프레가 단일 이미지 pull"을 해결하는 출발점이다.
+**본선 연결:** 본선 가설(멀티 환경 배치·장애 조치·스케일·AI 추론)은 전부 K8s 위에서 돈다. Deployment·Service·Ingress와 Helm 차트가 스타터 킷 v1(10/15)의 바닥이고, 완성도·데모 30점과 클라우드 활용 30점의 바탕이 된다.
 
 ---
 
@@ -37,12 +37,18 @@ v0.5는 기간 단위로 짜여 있다. 아래 일 단위 분할(`1/3` 등)은 S
 
 ### W1 · 10/5~10/11 · Day 1~7
 
-- [ ] **10/5 (월) D1** Lab 01 Docker 기초 (v0.4 밖, 사전 실습) **← 오늘**
+- [ ] **10/5 (월) D1** Lab 01 Docker 기초 (v0.4 밖, 사전 실습) ⚠️
   - [x] `labs/01-docker-basics` 뼈대, A 빌드·실행 확인 ✅
-  - [ ] Dockerfile B TODO(human): JRE 베이스 선택, HEALTHCHECK
-  - [ ] `measure.sh single` / `multi` → README 측정표
-  - [ ] ADR: 런타임 베이스 이미지 선택
-- [ ] **10/6 (화) D2** P0-1 (1/3) kind 클러스터, 예선 샘플 앱(다중 서비스)을 Deployment·Service·Ingress로
+  - [x] Dockerfile B TODO(human): JRE 베이스 선택, HEALTHCHECK ✅ (eclipse-temurin:21-jre, 3f0f4ed)
+  - [x] `measure.sh single` / `multi` → README 측정표 ✅ (294.0 MB → 129.8 MB)
+  - [ ] ADR: 런타임 베이스 이미지 선택 ⚠️
+- [ ] **10/6 (화) D2** P0-1 (1/3) kind 클러스터, 예선 샘플 앱(다중 서비스)을 Deployment·Service·Ingress로 **← 오늘**
+  - [ ] 밀린 것: Lab 01 ADR (런타임 베이스 이미지 선택)
+  - [x] `labs/02-k8s-basics` 뼈대 (kind + Deployment/Service/Ingress + Helm 차트) ✅ (0a93ccd, 10/5 선행)
+  - [x] TODO(human): replicas 3, `values-demo.yaml` ✅ (c9d69ff)
+  - [ ] README 측정표 4칸 채우기 (커밋 메시지는 "측정 기록"이지만 표는 아직 비어 있음)
+  - [ ] replicas 3 고른 이유 한 줄 (가용성 vs 맥 메모리 7.7GB)
+  - 다중 서비스 앱은 Lab 02 README 기준 10/7 이후로 미룸
 - [ ] **10/7 (수) D3** P0-1 (2/3) 롤아웃·롤백·프로브·HPA·requests/limits
 - [ ] **10/8 (목) D4** P0-1 (3/3) taint/toleration·PriorityClass → 롤아웃·롤백·HPA 측정표
 - [ ] **10/9 (금) D5** P0-2 (1/2) kube-prometheus-stack, Loki + Grafana Alloy
