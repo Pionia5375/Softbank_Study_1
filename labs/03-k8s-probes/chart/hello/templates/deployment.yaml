@@ -1,0 +1,46 @@
+# Lab 02 차트 + Lab 03 추가분(probe, resources). 추가된 부분은 "Lab 03" 주석으로 표시.
+# .Release.Name = helm install 할 때 붙인 이름 (같은 차트를 이름만 바꿔 여러 번 설치할 수 있다)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: hello
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.service.targetPort }}
+          {{- if .Values.probes.enabled }}
+          # Lab 03: readinessProbe = "요청 받을 준비 됐나?" 실패하면 Service 명단에서 빠진다 (재시작은 안 함)
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.service.targetPort }}
+            periodSeconds: {{ required "TODO(human): probes.readiness.periodSeconds" .Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+          # Lab 03: livenessProbe = "살아 있나?" 연속 실패하면 kubelet 이 컨테이너를 재시작한다
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.service.targetPort }}
+            initialDelaySeconds: {{ required "TODO(human): probes.liveness.initialDelaySeconds" .Values.probes.liveness.initialDelaySeconds }}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- with .Values.resources }}
+          # Lab 03: requests = 스케줄러가 "이만큼은 보장" 하고 자리 잡는 값, limits = 넘으면 막히는 상한
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
