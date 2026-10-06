@@ -1,0 +1,73 @@
+# Loki 를 "프로세스 하나 + 파일 저장" 으로 가장 작게 띄우는 설정.
+#   helm install loki grafana-community/loki --version 18.13.8 -n monitoring -f values/loki-values.yaml
+#
+# 주의: OSS Loki 차트는 2026-03-16 부터 grafana-community 저장소로 옮겨졌다.
+#   예전 글의 `grafana/loki` 는 이제 엔터프라이즈(GEL) 용이다
+#   【사실: https://github.com/grafana/loki/blob/main/production/helm/loki/README.md "Helm Chart Migration"】
+# 키 이름 출처 【사실: https://github.com/grafana-community/helm-charts/blob/main/charts/loki/values.yaml,
+#   templates/validate.yaml, 2026-10-06】
+
+# Monolithic = 모든 기능을 바이너리 하나로. 하루 수십 GB 까지 【사실: values.yaml 주석】. 이 차트의 기본값이지만 적어 둔다
+deploymentMode: Monolithic
+
+loki:
+  # true 면 요청마다 X-Scope-OrgID(테넌트) 헤더가 필요하다. 혼자 쓰니 끈다
+  auth_enabled: false
+  commonConfig:
+    # 같은 로그를 몇 벌 복제할지. 하나뿐이니 1 (기본 3 이면 쓰기가 실패한다)
+    replication_factor: 1
+  storage:
+    # S3 같은 오브젝트 저장소 대신 Pod 디스크(/var/loki)에 저장
+    type: filesystem
+  # 로그를 어떤 형식으로 쌓을지. 비워 두면 차트가 설치를 거부한다
+  schemaConfig:
+    configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+  limits_config:
+    # 하루 지난 로그는 지운다 (아래 compactor 설정과 짝)
+    retention_period: 24h
+  compactor:
+    retention_enabled: true
+    delete_request_store: filesystem
+
+singleBinary:
+  # 기본 0. 1 로 켠다. filesystem 저장이면 2 이상은 차트가 막는다 (validate.yaml)
+  replicas: 1
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 512Mi }
+  persistence:
+    # kind 의 기본 StorageClass(standard, local-path) 로 2Gi 디스크를 만든다
+    enabled: true
+    size: 2Gi
+
+# Monolithic 이면 나머지 부품은 0 이어야 한다. read/write/backend 는 기본이 3 이라 꼭 0 으로
+read:
+  replicas: 0
+write:
+  replicas: 0
+backend:
+  replicas: 0
+
+# 앞단 nginx. Alloy 와 Grafana 가 Loki 에 직접 붙으면 되니 끈다.
+# 끄면 접속 주소가 http://loki.monitoring.svc.cluster.local:3100 이 된다 (_helpers.tpl 의 loki.host)
+gateway:
+  enabled: false
+
+# memcached 캐시 2개. 기본 메모리 할당이 chunks 8192MB, results 1024MB 라 노트북에선 반드시 끈다
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+
+# 자체 점검용 부품들. canary 를 끄면 test 도 꺼야 한다 (validate.yaml)
+lokiCanary:
+  enabled: false
+test:
+  enabled: false

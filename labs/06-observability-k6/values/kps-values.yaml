@@ -1,0 +1,96 @@
+# kube-prometheus-stack 를 7.7GB 노트북용으로 줄인 설정.
+#   helm install kps prometheus-community/kube-prometheus-stack --version 91.9.0 \
+#     -n monitoring --create-namespace -f values/kps-values.yaml
+# 키 이름은 차트 91.9.0 의 values.yaml 에서 확인했다
+#   【사실: https://github.com/prometheus-community/helm-charts/blob/main/charts/kube-prometheus-stack/values.yaml, 2026-10-06】
+
+# 이름을 짧게. 안 쓰면 "kps-kube-prometheus-stack-prometheus" 같은 긴 이름이 된다.
+# 이렇게 두면 Service 이름이 kps-prometheus, kps-operator, kps-grafana (Grafana 는 서브차트라 "<릴리스>-grafana")
+fullnameOverride: kps
+
+# 알림 담당. 이번 실습은 "숫자 보기" 만 하므로 끈다 (약 50~100MB 절약 【추정】)
+alertmanager:
+  enabled: false
+
+# kind 에서는 이 네 부품이 127.0.0.1 에만 열려 있어서 Prometheus 가 못 긁는다.
+# 켜 두면 "target down" 경고만 쌓이므로 끈다 【추정: kind 기본 설정 기준】
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+grafana:
+  # 로컬 실습 전용 비밀번호. 실제 환경에선 admin.existingSecret 으로 Secret 을 쓴다
+  adminPassword: admin
+  # 차트가 같이 주는 기본 대시보드 (Kubernetes / Compute Resources 등). 꽤 유용해서 켜 둔다
+  defaultDashboardsEnabled: true
+  defaultDashboardsTimezone: browser
+  # helm test 용 Pod. 필요 없음
+  testFramework:
+    enabled: false
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 384Mi }
+  sidecar:
+    # sidecar = ConfigMap 을 지켜보다가 대시보드/데이터소스를 Grafana 에 넣어 주는 작은 컨테이너
+    resources:
+      requests: { cpu: 10m, memory: 48Mi }
+      limits: { memory: 128Mi }
+    dashboards:
+      # label grafana_dashboard="1" 이 붙은 ConfigMap 을 모든 네임스페이스에서 찾아 대시보드로 올린다 (차트 기본값 그대로, 적어 두기만)
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+    datasources:
+      # alertmanager 를 껐으니 Alertmanager 데이터소스도 만들지 않는다
+      alertmanager:
+        enabled: false
+  # Prometheus 데이터소스(uid: prometheus)는 차트가 자동으로 만든다. Loki 만 추가.
+  # 주소 = loki 차트(릴리스 이름 loki, gateway 끔)의 Service: loki.monitoring.svc:3100
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      uid: loki
+      access: proxy
+      url: http://loki.monitoring.svc.cluster.local:3100
+      jsonData:
+        maxLines: 1000
+
+prometheusOperator:
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { memory: 192Mi }
+
+prometheus:
+  prometheusSpec:
+    # 몇 초마다 긁을지. 기본(빈 값) = 30s. k6 를 2분만 돌리므로 15s 로 촘촘하게
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+    # 얼마나 오래 보관할지. 실습이라 하루면 충분. 크기 상한도 같이 (먼저 닿는 쪽에서 지운다)
+    retention: 1d
+    retentionSize: 1GB
+    # false = "이 Helm 릴리스가 만든 ServiceMonitor 만" 이 아니라 클러스터의 모든 ServiceMonitor/PodMonitor 를 본다.
+    # Traefik 차트가 traefik 네임스페이스에 만드는 ServiceMonitor 를 줍기 위해 필요하다
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 1Gi }
+    # storageSpec 를 비워 두면 emptyDir (Pod 가 지워지면 데이터도 사라짐). 실습엔 이게 가볍다
+
+# 서브차트(키 이름이 차트 이름 그대로)
+kube-state-metrics:
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
+prometheus-node-exporter:
+  resources:
+    requests: { cpu: 10m, memory: 24Mi }
+    limits: { memory: 64Mi }

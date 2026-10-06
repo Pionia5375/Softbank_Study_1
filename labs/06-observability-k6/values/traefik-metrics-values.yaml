@@ -1,0 +1,22 @@
+# Lab 05 에서 설치한 Traefik 에 "Prometheus 가 긁어 갈 수 있게" 만 더한다.
+#   helm upgrade traefik traefik/traefik -n traefik --version <설치된 버전> --reuse-values -f values/traefik-metrics-values.yaml
+# --reuse-values = Lab 05 때 준 값(NodePort 30080 등)은 그대로 두고 이 파일 내용만 얹는다.
+# 키 이름 출처 【사실: https://github.com/traefik/traefik-helm-chart/blob/master/traefik/values.yaml (chart 41.6.1),
+#   templates/servicemonitor.yaml, EXAMPLES.md "ServiceMonitor", 2026-10-06】
+#
+# 사실 Traefik 은 기본으로 이미 :9100/metrics 에 숫자를 내놓고 있다 (ports.metrics.port: 9100).
+# 없는 건 (1) 그 포트를 가리키는 Service 와 (2) Prometheus 에게 "여기 긁어" 라고 알려 주는 ServiceMonitor 뿐.
+metrics:
+  prometheus:
+    # 지연 시간 히스토그램의 칸(초). 기본은 0.1, 0.3, 1.2, 5 네 칸뿐이라
+    # /hello 처럼 수 ms 에 끝나는 요청은 전부 "0.1초 이하" 한 칸에 들어가서 p95 를 구분할 수 없다.
+    # 5ms ~ 5s 를 10칸으로 나눈다 (Prometheus 클라이언트 기본 칸과 비슷)
+    buckets: "0.005,0.01,0.025,0.05,0.1,0.25,0.5,1,2.5,5"
+    # 9100 포트만 담은 Service 를 따로 만든다. ServiceMonitor 는 이 Service 를 찾아간다
+    service:
+      enabled: true
+    # ServiceMonitor = "이 Service 의 metrics 포트를 긁어라" 는 Prometheus Operator 용 설정 파일.
+    # monitoring.coreos.com/v1 CRD 가 먼저 있어야 해서, kube-prometheus-stack 설치 뒤에 적용한다 (없으면 차트가 설치를 거부함)
+    serviceMonitor:
+      enabled: true
+      interval: 15s
