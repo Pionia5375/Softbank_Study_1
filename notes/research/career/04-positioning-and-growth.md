@@ -56,7 +56,7 @@
 
 - 【미확인】 해커톤 "특별 포지션"이 OPEN/JOB-MATCH 중 어디에 가까운지, 배속 확약인지 → 커피챗 질문 5번.
 - 【사실】 GPU 클라우드 실무 요건(경력직 공고): K8s/VMware/KVM 기반 구축 경험, 우대 NVIDIA GPU 서버·Lustre/Ceph·Python/Ansible/Terraform, **GPU·CUDA는 입사 후 배워도 된다**, PM 경험 우대 ([005070](https://www.softbank.jp/recruit/career/positions/detail/005070/)). 네트워크 쪽은 EVPN/VXLAN, InfiniBand/RoCEv2 ([005063](https://www.softbank.jp/recruit/career/positions/detail/005063/)).
-- 【사실】 "AI Data Center GPU Cloud"가 2026-10 상용 개시, 소프트웨어는 사내 Infrinia 팀의 **Infrinia AI Cloud OS**(Kubernetes as a Service, Inference as a Service) ([보도자료 2026-05-25](https://www.softbank.jp/en/corp/news/press/sbkk/2026/20260525_01/)). → 본선 주제 후보 A(멀티테넌트 추론 서버리스)와 정확히 같은 방향.
+- 【사실】 "AI Data Center GPU Cloud"가 2026-10 상용 개시 **예정**(2026-10-15 기준 출시 보도자료 없음, 00-index §2 모순 3), 소프트웨어는 사내 Infrinia 팀의 **Infrinia AI Cloud OS**(Kubernetes as a Service, Inference as a Service) ([보도자료 2026-05-25](https://www.softbank.jp/en/corp/news/press/sbkk/2026/20260525_01/)). → 본선 주제 후보 A(멀티테넌트 추론 서버리스)와 정확히 같은 방향.
 
 ---
 

@@ -33,7 +33,7 @@
 
 | 출처 | URL | 뭘 얻나 | 주기 | RSS | 상태 |
 |---|---|---|---|---|---|
-| A. 보도자료 전체 (영문) | https://www.softbank.jp/en/corp/news/press/all/ | 신규 서비스·제휴·투자 발표 원문. 가장 빠름 | 주 수 회 | 없음 | 확인 |
+| A. 보도자료 전체 (영문) | https://www.softbank.jp/en/corp/news/press/all/ | 신규 서비스·제휴·투자 발표 원문. 가장 빠름 | 주 수 회 | 없음 | 확인. 단 목록이 JS 렌더링이라 WebFetch로 항목이 안 보임(2026-10-15). WebSearch로 대체 |
 | A'. 보도자료 (일문) | https://www.softbank.jp/corp/news/press/sbkk/ | 영문보다 먼저·더 많이 올라옴 【추정】 | 주 수 회 | ? | 【미확인】 |
 | B. 법인(비즈) 뉴스 | https://www.softbank.jp/biz/news/ (클라우드: /biz/news/cloud/) | GPU 클라우드·AI 데이터센터 상품 발표. **본선 주제와 제일 가까운 곳** | 월 수 회 | 없음 | 확인 |
 | C. IR 뉴스 | https://www.softbank.jp/en/corp/ir/news/ | 실적·적시공시 | 분기 + 수시 | 없음 | 확인 |
@@ -69,7 +69,7 @@
 
 | 출처 | URL | 뭘 얻나 | 주기 | RSS | 상태 |
 |---|---|---|---|---|---|
-| A. **SoftBank 테크블로그 (공식, Zenn)** | https://zenn.dev/p/softbank | 사내 엔지니어 실무 글. 2026-03 이전 글은 아래 B에 보관 | 주 1 정도 【추정】 | **있음** https://zenn.dev/p/softbank/feed | 확인 |
+| A. **SoftBank 테크블로그 (공식, Zenn)** | https://zenn.dev/p/softbank | 사내 엔지니어 실무 글 (주간 AWS·Google Cloud 업데이트, 신졸 엔지니어 글 포함). 2026-03 이전 글은 아래 B에 보관 | 주 3~5편 (2026-10-15 피드 확인) | **있음** https://zenn.dev/p/softbank/feed | 확인 |
 | B. 구 클라우드 기술 블로그 | https://www.softbank.jp/biz/blog/cloud-technology/ | 2026-03 이전 클라우드 실무 글 아카이브 | 정지 | 없음 | 링크로 확인 |
 | C. SB Intuitions TECH BLOG | https://www.sbintuitions.co.jp/blog/ | 자체 LLM(Sarashina)·평가 벤치마크. 최근: J-MultiChallenge(9/28), Sarashina Image(9/4) | 월 2~3 | ? (하테나 블로그라 /feed 있을 가능성 【추정】) | 확인 |
 | D. SB Intuitions X | https://x.com/sbintuitions | 모델 공개 알림 | 수시 | - | 링크로 확인 |
@@ -97,7 +97,7 @@
 | C. SoftBank Tech Night (connpass) | https://sbtechnight.connpass.com/ | 사내 엔지니어 공개 세미나 신청. 2026 주제: Platform Engineering(3/17), RAG(8/28) | 거의 매달 | 04 문서에서 확인 |
 | C'. SoftBank Tech Night (TECH PLAY) | https://techplay.jp/community/sbc/event | 같은 행사 목록. 예정: 10/23 「RAGの真価を引き出すデータ基盤」, 10/26 TECH DRIVERS Day8 「AI時代のPlatform Engineering」 | 거의 매달 | 01 문서에서 확인 |
 | C''. Tech Night 발표 슬라이드 | https://speakerdeck.com/sbtechnight | 사내 플랫폼 엔지니어링(GitOps, Backstage) 발표 자료 | 행사마다 | 01 문서에서 확인 |
-| E. 소프트뱅크 기술 연구 토픽 | https://www.softbank.jp/corp/technology/research/topics/ | DSF·AI 에이전트·GPU 효율 같은 연구 발표 원문 (예: /topics/227/ KubeCon DSF) | 월 수 회 | 01·03 문서에서 확인 |
+| E. 소프트뱅크 기술 연구 토픽 | https://www.softbank.jp/corp/technology/research/topics/ | DSF·AI 에이전트·GPU 효율 같은 연구 발표 원문 (예: /topics/227/ KubeCon DSF, /topics/229/ GPU 클라우드 위 피지컬 AI 학습 루프 2026-08-03) | 월 수 회 | 01·03 문서에서 확인 |
 | D. SlideShare 등 기타 | "ソフトバンク" 검색 | 개인 엔지니어 발표 슬라이드 | 비정기 | 【미확인】 |
 
 ## 7. 아직 못 찾은 것 (루틴이 계속 찾을 것)
