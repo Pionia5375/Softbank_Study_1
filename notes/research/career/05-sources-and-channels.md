@@ -94,8 +94,11 @@
 |---|---|---|---|---|
 | A. KubeCon + CloudNativeCon Japan 2026 | https://events.linuxfoundation.org/kubecon-cloudnativecon-japan-2026/ | 2026-07-29~30 요코하마, 이미 끝남. 발표 영상에서 SoftBank 세션 찾기 (CNCF 발표문엔 SoftBank 언급 없음) | 끝남 | 확인 |
 | B. CloudNative Days | https://cloudnativedays.jp/ | 일본 클라우드 네이티브 커뮤니티 행사. 다음 회차 일정 【미확인】 | 연 2회 정도 【추정】 | 【미확인】 |
-| C. SoftBank connpass | https://softbank.connpass.com/ | 사내 주최 공개 세미나 | 비정기 | 【미확인】(robots 차단) |
-| D. SpeakerDeck/SlideShare | "ソフトバンク" 검색 | 사내 엔지니어 발표 슬라이드 | 비정기 | 【미확인】 |
+| C. SoftBank Tech Night (connpass) | https://sbtechnight.connpass.com/ | 사내 엔지니어 공개 세미나 신청. 2026 주제: Platform Engineering(3/17), RAG(8/28) | 거의 매달 | 04 문서에서 확인 |
+| C'. SoftBank Tech Night (TECH PLAY) | https://techplay.jp/community/sbc/event | 같은 행사 목록. 예정: 10/23 「RAGの真価を引き出すデータ基盤」, 10/26 TECH DRIVERS Day8 「AI時代のPlatform Engineering」 | 거의 매달 | 01 문서에서 확인 |
+| C''. Tech Night 발표 슬라이드 | https://speakerdeck.com/sbtechnight | 사내 플랫폼 엔지니어링(GitOps, Backstage) 발표 자료 | 행사마다 | 01 문서에서 확인 |
+| E. 소프트뱅크 기술 연구 토픽 | https://www.softbank.jp/corp/technology/research/topics/ | DSF·AI 에이전트·GPU 효율 같은 연구 발표 원문 (예: /topics/227/ KubeCon DSF) | 월 수 회 | 01·03 문서에서 확인 |
+| D. SlideShare 등 기타 | "ソフトバンク" 검색 | 개인 엔지니어 발표 슬라이드 | 비정기 | 【미확인】 |
 
 ## 7. 아직 못 찾은 것 (루틴이 계속 찾을 것)
 
