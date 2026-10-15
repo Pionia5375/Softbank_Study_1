@@ -44,6 +44,7 @@
 | G. 기자회견 자료 | https://www.softbank.jp/en/corp/news/conference/ | 발표 슬라이드 원본 | 비정기 | 없음 | 확인 |
 | H. SoftBank News (영문) | https://www.softbank.jp/en/sbnews/ | 보도자료를 풀어 쓴 기사. 배경 이해용 (카테고리: Future_Tech 등) | 주 1~2 | 없음 | 확인 |
 | I. SoftBank News X | https://twitter.com/sbnews9434 | SoftBank News 새 글 알림 | 수시 | - | 페이지 링크로 확인 |
+| I'. SoftBank News X (다른 계정?) | https://x.com/sbg_news | 보도자료 링크를 바로 올림 (2026-05-25 GPU 클라우드 발표 게시 확인). I와 같은 운영인지 【미확인】 | 수시 | - | 검색으로 확인 (2026-10-16) |
 | J. SoftBank 공식 X | @SoftBank | 소비자 쪽 공지 위주 【추정】 | 수시 | - | 메타데이터로만 확인 |
 | K. LinkedIn | https://www.linkedin.com/company/softbank-mobile | 영문 회사 소식·채용 | 주 수 회 | - | 페이지 링크로 확인 |
 | L. YouTube (SoftBank News) | https://www.youtube.com/channel/UCcMKfz1n6L6erIlyyowlOOA | 발표 영상 | 비정기 | 있음(YouTube 채널 피드) 【추정】 | 페이지 링크로 확인 |
