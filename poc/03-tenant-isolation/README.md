@@ -94,7 +94,7 @@
                                                    │ helm template + values=tenant-a.yaml
                                                    ▼
        ┌──────────────── namespace tenant-a ────────────────┐    argocd ns
-       │ ResourceQuota  LimitRange  NetworkPolicy×3          │    AppProject tenant-a
+       │ ResourceQuota  LimitRange  NetworkPolicy×3(+1)       │    AppProject tenant-a
        │ Role/RoleBinding  ServiceAccount deployer           │      (목적지 tenant-a 만,
        │                                                      │       울타리 오브젝트 금지)
        │ hello-fn ◀── Application tenant-a-hello (project: tenant-a)
@@ -227,8 +227,8 @@ helm template tenant-a charts/tenant -f tenants/tenant-a.yaml | less
 ```bash
 for t in a b; do helm template tenant-$t charts/tenant -f tenants/tenant-$t.yaml > /tmp/tenant-$t.yaml; done
 grep '^kind:' /tmp/tenant-a.yaml | sort | uniq -c
-# 기대 (8종 10장):
-#   1 kind: AppProject / 1 LimitRange / 1 Namespace / 3 NetworkPolicy / 1 ResourceQuota / 1 Role / 1 RoleBinding / 1 ServiceAccount
+# 기대 (8종 10장. tenant-a 처럼 network.allowFromNamespaces 를 쓰면 NetworkPolicy 가 1장 늘어 11장):
+#   1 kind: AppProject / 1 LimitRange / 1 Namespace / 3 NetworkPolicy (+1 allow-from) / 1 ResourceQuota / 1 Role / 1 RoleBinding / 1 ServiceAccount
 kubectl apply --dry-run=server -f /tmp/tenant-a.yaml
 # --dry-run=server = API 서버에 보내서 검사만 받고 저장은 안 한다. 오타·잘못된 필드를 여기서 잡는다
 # 첫 실행에선 namespace 가 아직 없어서 "namespaces tenant-a not found" 가 나올 수 있다. 그 줄 말고 다른 에러가 없으면 통과
@@ -370,7 +370,7 @@ tenant-a 가 tenant-b 의 함수를 **GET 으로만** 부를 수 있게 열어 �
   - `ingress.fromEndpoints`: `k8s:io.kubernetes.pod.namespace: tenant-a`
   - `toPorts.ports: 5678/TCP` 아래 `rules.http: [{method: GET, path: "/"}]`
 - 주의: 표준 NetworkPolicy 는 tenant-a 쪽 **나가기**도 막고 있다 (tenant-a 의 default deny Egress). tenant-a 에도 tenant-b 로 나가는 허용이 한 장 필요하다.
-- 문서: https://docs.cilium.io/en/stable/security/policy/language/#layer-7-examples
+- 문서: https://docs.cilium.io/en/stable/security/policy/layer7/
 - 통과 기준:
 
 ```bash
@@ -415,8 +415,8 @@ ls poc/03-tenant-isolation/results/
 
 ## 11. 검증 상태 (Claude 가 이 폴더를 만들 때 확인한 것)
 
-- 【사실】 정답본 차트를 `helm template` 으로 펼치면 tenant-a 기준 8종 10장이 나오고, `kubeconform -strict` (쿠버네티스 1.33 스키마 + Argo CD CRD 스키마) 로 차트 출력·gitops 3개·fixtures 전부 통과 (14 + 5 오브젝트, 2026-10-20).
+- 【사실】 정답본 차트를 `helm template` 으로 펼치면 tenant-a 기준 8종 10장(allowFromNamespaces 추가 뒤엔 11장)이 나오고, `kubeconform -strict` (쿠버네티스 1.33 스키마 + Argo CD CRD 스키마) 로 차트 출력·gitops 3개·fixtures 전부 통과 (14 + 5 오브젝트, 2026-10-20).
 - 【사실】 빈칸 뼈대에 정답 값을 넣고 펼친 결과가 정답본 출력과 주석 빼고 한 글자도 다르지 않다 (tenant-a, tenant-b).
 - 【사실】 스크립트 3개 `bash -n` + `shellcheck -S warning` 통과.
-- 【미검증】 실제 클러스터에서의 동작 전부 (Cilium 설치, Hubble 출력 모양, NetworkPolicy 차단, Quota 거절 문구, cgroup CPU 측정, Argo CD 의 valueFiles 상대 경로·AppProject 거절 문구, ApplicationSet 새로고침 신호). Claude 의 클라우드 컨테이너는 중첩 컨테이너에 필요한 커널 권한이 없어서 kind 노드에서 파드를 띄울 수 없었다. 첫 실행에서 FAIL 이 나오면 출력 그대로 스레드에 붙여 줘. 스크립트 쪽 문제면 Claude 가 고친다.
+- 【미검증】 실제 클러스터에서의 동작 전부 (Cilium 설치, Hubble 출력 모양, NetworkPolicy 차단, cgroup CPU 측정). Quota·AppProject 거절 문구, valueFiles 의 차트 밖 상대 경로(같은 저장소 안이면 허용), ApplicationSet 새로고침 주석(application-set-refresh)은 공식 문서·소스로 확인했다 (docs/guide 01·03장). Claude 의 클라우드 컨테이너는 중첩 컨테이너에 필요한 커널 권한이 없어서 kind 노드에서 파드를 띄울 수 없었다. 첫 실행에서 FAIL 이 나오면 출력 그대로 스레드에 붙여 줘. 스크립트 쪽 문제면 Claude 가 고친다.
 - 【추정】 `test-isolation.sh` 의 기대 PASS 개수는 17 (net 5 + cpu 3 + rbac 8 + argocd 1). 10절의 숫자는 이걸 기준으로 본다.

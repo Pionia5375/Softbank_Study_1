@@ -4,6 +4,9 @@ kind: Application
 metadata:
   name: placement-check
   namespace: argocd
+  # root-ec2 를 지울 때 이 Application 이 만든 리소스도 같이 지워지게 (없으면 고아로 남는다)
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   source:

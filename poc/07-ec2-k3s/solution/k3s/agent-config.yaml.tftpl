@@ -18,9 +18,13 @@ node-taint:
 %{ endif ~}
 # (실행 노드에는 taint 를 안 건다 = 아무 설정 없는 파드의 기본 착지점. README 결정 3)
 
-# 노드가 꺼질 때(스팟 회수 포함) kubelet 이 파드를 먼저 정상 종료시키고 내려가게.
+# 노드가 꺼질 때(스팟 회수 포함) kubelet 이 파드를 먼저 정상 종료시키고 내려가게 (graceful node shutdown).
 # 60초 중 마지막 10초는 시스템 핵심 파드 몫.
+# 주의: shutdownGracePeriod 는 kubelet 의 "명령줄 플래그" 가 아니라 KubeletConfiguration 파일의 필드다.
+#   kubelet-arg 에 "shutdown-grace-period=60s" 처럼 적으면 kubelet 이 unknown flag 로 죽고 노드가 영영 Ready 가 안 된다.
+#   그래서 install.sh 가 /etc/rancher/k3s/kubelet.yaml 을 먼저 쓰고, 여기서는 그 파일을 config= 로 넘긴다.
+#   k3s 는 이 파일을 kubelet 드롭인 폴더(kubelet.conf.d/10-cli-config.conf)로 복사해 자기 기본 설정과 합친다.
 # 문서: https://kubernetes.io/docs/concepts/cluster-administration/node-shutdown/#graceful-node-shutdown
+#       https://kubernetes.io/docs/reference/config-api/kubelet-config.v1beta1/
 kubelet-arg:
-  - "shutdown-grace-period=60s"
-  - "shutdown-grace-period-critical-pods=10s"
+  - "config=/etc/rancher/k3s/kubelet.yaml"

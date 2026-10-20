@@ -17,7 +17,7 @@ controller:
       memory: 64Mi
     limits:
       memory: 256Mi
-  # 컨트롤러 자신의 지표(/metrics, 8090). 오늘은 안 긁지만 끄지 않는다 (기본 true)
+  # 컨트롤러 자신의 지표(/metrics, 8090)는 항상 노출된다. 이 옵션은 지표용 Service 를 만들지 여부 (차트 기본 false, 여기선 켠다)
   metrics:
     enabled: true
 

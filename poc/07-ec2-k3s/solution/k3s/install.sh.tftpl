@@ -24,6 +24,17 @@ ${config}
 K3SCONFIG
 chmod 600 /etc/rancher/k3s/config.yaml   # 토큰이 들어 있어서 root 만 읽게
 
+%{ if role == "agent" ~}
+# 1-2) kubelet 설정 파일 (graceful node shutdown). agent-config.yaml 의 kubelet-arg "config=" 가 이 파일을 가리킨다.
+#      kubelet 의 명령줄 플래그가 아니라 설정 파일 필드라서 따로 파일로 둔다.
+cat > /etc/rancher/k3s/kubelet.yaml <<'KUBELET'
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+shutdownGracePeriod: 60s
+shutdownGracePeriodCriticalPods: 10s
+KUBELET
+%{ endif ~}
+
 # 2) 공식 설치 스크립트. 바이너리 설치 + systemd 서비스(k3s 또는 k3s-agent) 등록 + 시작까지 한다.
 #    마지막 인자 server/agent 가 어느 쪽으로 설치할지 정한다.
 curl -sfL https://get.k3s.io | INSTALL_K3S_CHANNEL='${k3s_channel}' sh -s - ${role}

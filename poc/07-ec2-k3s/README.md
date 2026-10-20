@@ -414,7 +414,7 @@ aws ec2 describe-spot-price-history --region ap-northeast-2 \
 | | 4단계 (kind) | 7단계 (EC2 k3s) |
 |---|---|---|
 | runsc 설치 | `install-gvisor.sh` 가 맥에서 `docker cp` | `enable_gvisor = true` 면 Terraform 이 실행 풀 user_data 뒤에 `terraform/cluster/gvisor.sh.tftpl` 을 붙인다. 스팟 교체 노드에도 자동으로 깔린다 |
-| containerd 등록 | `/etc/containerd/config.toml` 에 직접 추가 | k3s 는 config.toml 을 매번 새로 만든다 → 손으로 고치면 사라진다. 그래서 **템플릿 파일**(`config-v3.toml.tmpl` 또는 `config.toml.tmpl`)에 "기본 설정 + runsc" 를 쓴다 【사실: https://docs.k3s.io/advanced#configuring-containerd】. k3s 가 runsc 를 스스로 찾으면 그 단계는 건너뛴다 【미확인: 자동 감지 대상 목록에 runsc 가 있는지】 |
+| containerd 등록 | `/etc/containerd/config.toml` 에 직접 추가 | k3s 는 config.toml 을 매번 새로 만든다 → 손으로 고치면 사라진다. 그래서 **템플릿 파일**(`config-v3.toml.tmpl` 또는 `config.toml.tmpl`)에 "기본 설정 + runsc" 를 쓴다 【사실: https://docs.k3s.io/advanced#configuring-containerd】. k3s 의 자동 감지 목록(crun, lunatic, nvidia*, slight, spin, wasm 계열)에 runsc 는 없다 【사실: https://docs.k3s.io/advanced#alternative-container-runtime-support】 → 스크립트는 항상 템플릿을 쓰는 가지로 간다 |
 | RuntimeClass·기능 플래그·ksvc | Jeong 이 4단계에서 쓴 파일 | **같은 파일 그대로** (`--solution` 으로 정답본도 가능). ksvc 는 이미지 주소만 바꿔서 적용 |
 | 이미지 | kind-registry | `ttl.sh` (로그인 없는 공개 임시 레지스트리, 24시간 뒤 삭제). 맥이 애플 실리콘이면 `--platform linux/amd64` 로 빌드해야 t3 에서 돈다 |
 | 입구 | 맥 8081 → NodePort 31080 | `kubectl port-forward svc/kourier 8081:80` (SSM 터널 위). 그래서 `coldstart.sh` 를 손대지 않고 그대로 쓴다 |

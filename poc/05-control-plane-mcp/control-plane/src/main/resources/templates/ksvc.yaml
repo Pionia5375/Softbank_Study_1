@@ -28,15 +28,16 @@ spec:
         # 상태 조회가 "지금 서비스 중인 게 몇 번째 빌드인가" 를 이걸로 안다. 키 이름은 FunctionDeployer.ANNOTATION_BUILD_ID
         faas.poc/build-id: ${BUILD_ID}
         # TODO(human) 결정 2: 파드를 최대 몇 개까지 늘릴까? (문자열이라 따옴표)
-        #   3단계 ResourceQuota 안에 들어가야 한다: max-scale × limits.memory ≤ 테넌트 메모리 한도
+        #   3단계 ResourceQuota 안에 들어가야 한다: max-scale × (함수 + queue-proxy 의 limits) ≤ 테넌트 한도. tenant-a 는 limits.cpu 2 가 먼저 닿아서(hello-fn 2개 400m + 함수 파드 400m 씩) 실제로는 파드 4개까지만 뜬다
         #   MCP scale 도구의 min-scale 상한(5)도 이 값을 넘지 않는다
         autoscaling.knative.dev/max-scale: "5"
         # min-scale 은 일부러 안 쓴다. 운영 에이전트(MCP scale)의 몫이다.
         #   여기 쓰면 server-side apply 에서 컨트롤 플레인이 그 필드의 주인이 되어, 다음 배포 때 에이전트 값을 덮어쓴다
     spec:
-      # 파드 하나가 동시에 받는 요청 수 상한. 넘으면 Knative 가 파드를 늘린다. 0 = 무제한
+      # 파드 하나가 동시에 처리하는 요청 수 상한(hard limit). 넘치는 요청은 queue-proxy 가 줄 세우고(10×CC 넘으면 503),
+      #   파드를 늘리는 기준은 이 값의 70%(target-utilization) = 평균 7 이다. 0 = 무제한
       containerConcurrency: 10
-      # 요청 하나 최대 30초. 넘으면 504
+      # 요청 하나 최대 30초. 넘으면 504. 이 값이 파드의 terminationGracePeriodSeconds 도 되므로 queue-proxy drain(30초)과 같아 빠듯하다
       timeoutSeconds: 30
       # 함수는 실행 노드 풀(4단계: 라벨 pool=exec, taint pool=exec:NoSchedule)에서만 돈다. 빌드 노드와 섞이지 않게
       #   Knative 는 이 필드들을 기본으로 막는다 → 4단계에서 config-features 의
@@ -62,7 +63,8 @@ spec:
               memory: 64Mi
             limits:
               memory: 128Mi
-          # 3단계 테넌트 namespace 의 Pod Security "restricted" 를 통과하는 최소 설정
+          # limits.cpu 를 일부러 안 적어도 3단계 LimitRange 가 기본 200m 을 붙인다 (queue-proxy 도 200m/128Mi)
+          # 3단계 테넌트 namespace 의 Pod Security (enforce baseline, warn restricted) 를 통과하는 설정
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false

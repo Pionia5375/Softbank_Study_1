@@ -343,8 +343,8 @@ kubectl -n argocd get applications -w
 
 | 결정 | 선택 | 대안 | 이유 | 측정값 | 심사 항목 |
 |---|---|---|---|---|---|
-| Git 변경 감지 | polling ___s + jitter ___s | webhook (터널 필요) / 기본 120s+60s | | poll 평균 ___s, refresh 평균 ___s | 완성도·데모 (데모 중 push 후 기다리는 시간) |
-| 자동 동기화 범위 | prune ___ / selfHeal ___ | 수동 Sync 버튼 | | selfHeal 복구 ___s | 클라우드 활용, 장애 대응 |
+| Git 변경 감지 | polling 120s + jitter 60s | webhook (터널 필요) / 기본 120s+60s | | poll 평균 ___s, refresh 평균 ___s | 완성도·데모 (데모 중 push 후 기다리는 시간) |
+| 자동 동기화 범위 | prune true / selfHeal true | 수동 Sync 버튼 | | selfHeal 복구 ___s | 클라우드 활용, 장애 대응 |
 | replicaCount | ___ | 1 / 2 / 3 | | 파드 교체 ___s | 완성도 |
 
 ---

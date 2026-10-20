@@ -9,14 +9,20 @@ kind: Application
 metadata:
   name: node-termination-handler
   namespace: argocd
+  # root-ec2 를 지울 때 이 Application 이 만든 리소스도 같이 지워지게 (없으면 고아로 남는다)
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   source:
-    repoURL: https://aws.github.io/eks-charts
-    chart: aws-node-termination-handler
-    # 【미확인】 최신 차트 버전. 10/27 아침 helm search repo eks/aws-node-termination-handler --versions | head -3 으로 보고
-    # 정확한 버전으로 고정하는 게 원칙이다. "0.*" 는 0.x 중 최신을 고르는 임시값.
-    targetRevision: "0.*"
+    # 차트는 OCI 레지스트리로 옮겨졌다. 옛 eks-charts(https://aws.github.io/eks-charts)는 0.21.0(앱 v1.19.0)에서 멈춰 있다.
+    # Argo CD v3.1+ 는 oci:// 주소를 바로 소스로 쓸 수 있다 (우리 차트 10.10.5 = v3.5).
+    #   문서: https://argo-cd.readthedocs.io/en/stable/user-guide/oci/
+    # 【추정】 oci 소스가 Helm 차트를 자동 인식하지 못하면 대안: argocd repo add public.ecr.aws/aws-ec2/helm --type helm --enable-oci
+    #   한 뒤 repoURL: public.ecr.aws/aws-ec2/helm + chart: aws-node-termination-handler 로 쓴다.
+    repoURL: oci://public.ecr.aws/aws-ec2/helm/aws-node-termination-handler
+    # 버전 고정 (2026-10-20 기준 차트 0.27.6 = 앱 v1.25.6). 10/27 아침 helm show chart oci://public.ecr.aws/aws-ec2/helm/aws-node-termination-handler 로 다시 확인
+    targetRevision: 0.27.6
     helm:
       valuesObject:
         enableSpotInterruptionDraining: true    # 회수 경고 → drain

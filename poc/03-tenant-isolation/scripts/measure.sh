@@ -100,7 +100,7 @@ tenant_ready() {
 }
 tenant_gone() { ! kubectl get ns tenant-c; }
 
-# ApplicationSet 에 "지금 Git 다시 봐" 신호. 안 하면 기본 3분마다 한 번 본다 【추정: 컨트롤러 기본 requeue 3분】
+# ApplicationSet 에 "지금 Git 다시 봐" 신호. 안 하면 기본 3분마다 한 번 본다 【사실: requeueAfterSeconds 기본 180초, ApplicationSet Git generator 문서】
 refresh_appset() {
   kubectl -n argocd annotate applicationset tenants argocd.argoproj.io/application-set-refresh=true --overwrite >/dev/null 2>&1
 }

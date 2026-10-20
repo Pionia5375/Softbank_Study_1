@@ -81,7 +81,7 @@ ksvc hello-runc
 - **runc**: 지금까지 쓴 기본 런타임. 커널 기능(namespace, cgroup)으로 칸막이만 친다.
 - **gVisor(runsc)**: 컨테이너와 호스트 커널 사이에 **Sentry** 라는 "가짜 커널" 프로그램을 끼운다. 시스템 콜을 Sentry 가 먼저 받아서 처리하고, 호스트 커널에는 훨씬 적은 종류의 시스템 콜만 간다. → 남의 코드를 돌리는 FaaS 에 맞다.
 - 대가: (1) 시스템 콜이 많은 함수(파일·네트워크 많이)는 느려진다. 계산만 하는 함수는 거의 같다. (2) Sentry 가 Pod 마다 메모리를 더 먹는다. (3) 시작이 조금 느리다.
-- 함수 응답의 `kernel` 칸을 보면 바로 구분된다: runc 면 노드 커널 버전(예: `6.x`), gVisor 면 gVisor 가 흉내 내는 버전(【추정】 `4.4.0`).
+- 함수 응답의 `kernel` 칸을 보면 바로 구분된다: runc 면 노드 커널 버전(예: `6.x`), gVisor 면 gVisor 가 흉내 내는 버전(`4.19.0-gvisor`. 【사실】 release-20261012.0 의 pkg/sentry/kernel/version/version.go).
 - 쿠버네티스에서 고르는 법: 노드 containerd 에 `runsc` 라는 런타임을 등록(Claude 스크립트) → **RuntimeClass** 오브젝트로 이름 `gvisor` 를 붙임(Jeong) → Pod(ksvc)에서 `runtimeClassName: gvisor`(Jeong).
 - 【사실】 2026-07 부터 gVisor 배포는 `runsc` 하나가 아니라 `runsc` + `containerd-shim-runsc-v1` + `gvisor-bin/` 폴더 묶음이다 (https://github.com/google/gvisor/blob/master/g3doc/user_guide/install.md). 옛 블로그처럼 runsc 하나만 복사하면 안 돈다.
 
