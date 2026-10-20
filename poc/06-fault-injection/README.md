@@ -191,6 +191,10 @@ ROLLOUT_NS=fn-canary ROLLOUT=podinfo APP=podinfo ./scripts/s3-bad-deploy.sh git
 ```
 네임스페이스 tenant-a/tenant-b, 노드 라벨 pool=exec 는 3단계와 대역이 같아서 따로 안 적어도 된다.
 
+3단계 정답본과 대역이 다른 점 【사실】 `poc/03-tenant-isolation/solution` (main 7d48f36) 기준. 숫자가 조금 달라지는 이유가 이것이다.
+- Pod Security 가 `enforce: baseline` (+ `warn: restricted`) 이다. 대역은 restricted. 시나리오 4 의 P1(특권 + hostPath)은 baseline 에서도 막혀서 결과는 같고, 찍히는 문구만 `violates PodSecurity "baseline:latest"` 로 바뀐다.
+- 쿼터: tenant-a limits.cpu 2·pods 10, tenant-b limits.cpu **1**·pods **5**. LimitRange 기본 cpu limit 200m / max 1. 그래서 시나리오 2 에서 폭주 파드(limits 1코어)는 대역의 2개가 아니라 **1개만** 뜬다.
+
 - 4단계 함수가 **Knative Service** 면: Knative 가 만든 Deployment 이름(`<서비스>-00001-deployment`)을 `FN_NAME` 으로, 라벨 `serving.knative.dev/service=<서비스>` 를 `FN_SELECTOR` 로. 단 scale-to-zero 라 파드가 0개면 시나리오 1 이 칠 대상이 없다 → `autoscaling.knative.dev/min-scale: "2"` 를 잠깐 걸고 한다. 【미검증】 이 컨테이너에선 Knative 로 돌려 보지 못했다.
 - 프로브는 피해자와 **같은 네임스페이스** 에 뜬다 (NetworkPolicy 가 같은 ns 끼리만 열어 주므로). Knative 는 요청이 kourier(앞단 게이트웨이)를 거쳐서, tenant 네임스페이스 egress 정책에 kourier-system 이 열려 있어야 프로브가 닿는다 【미검증】.
 - Cilium 을 쓰면 `hubble` CLI 를 깔아 두면 시나리오 4 가 막힌 연결 목록도 보여 준다: `cilium hubble port-forward &` 를 먼저.
