@@ -16,16 +16,16 @@ spec:
 
   # ---- 어디서 가져오나 (Git) ----
   source:
-    repoURL: ___         # TODO(human): 이 레포의 https 주소 (.git 붙여도 되고 안 붙여도 된다)
-    targetRevision: ___  # TODO(human): 따라갈 브랜치
-    path: ___            # TODO(human): 레포 루트 기준 차트 폴더 경로
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1         # TODO(human): 이 레포의 https 주소 (.git 붙여도 되고 안 붙여도 된다)
+    targetRevision: main  # TODO(human): 따라갈 브랜치
+    path: poc/01-argocd/functions/hello-fn            # TODO(human): 레포 루트 기준 차트 폴더 경로
     # path 에 Chart.yaml 이 있으면 Argo CD 가 알아서 Helm 차트로 보고 helm template 을 돌린다
 
   # ---- 어디에 까나 (클러스터) ----
   destination:
     # Argo CD 자신이 사는 클러스터 = 클러스터 안에서 본 API 서버 주소
     server: https://kubernetes.default.svc
-    namespace: ___       # TODO(human): 함수를 띄울 namespace 이름 (예: fn-demo)
+    namespace: fn-demo       # TODO(human): 함수를 띄울 namespace 이름 (예: fn-demo)
 
   # ---- 어떻게 맞추나 ----
   syncPolicy:
@@ -33,10 +33,10 @@ spec:
     automated:
       # TODO(human) 결정 1: Git 에서 지운 리소스를 클러스터에서도 지울까?
       #   true = Git 과 정확히 같게 / false = 지우는 건 사람이 확인 후 (실수로 지운 파일이 운영 리소스를 날리는 걸 막음)
-      prune: ___
+      prune: true
       # TODO(human) 결정 2: 누가 kubectl 로 클러스터를 직접 바꾸면 Git 상태로 되돌릴까?
       #   true = 바로 되돌림 (장애 중 손으로 고친 것도 되돌려짐!) / false = OutOfSync 로 표시만
-      selfHeal: ___
+      selfHeal: true
     syncOptions:
       # destination.namespace 가 없으면 만들어 준다
       - CreateNamespace=true
