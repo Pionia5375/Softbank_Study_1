@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>NN 장 제목 · FaaS PoC 가이드</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="guide.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="guide.js" defer></script>
+</head>
+<body>
+<div class="shell">
+<nav class="nav" aria-label="장 목록"></nav>
+<main>
+<article class="page">
+
+<header class="chapter-head">
+  <p class="eyebrow">NN장 · 관련 폴더 poc/0N-xxx</p>
+  <h1>장 제목</h1>
+  <p class="lede">이 장을 읽고 나면 할 수 있는 것 한두 문장.</p>
+  <div class="chapter-meta">
+    <span class="chip">PoC 폴더 <b>poc/0N-xxx</b></span>
+    <span class="chip">핵심 기술 <b>A · B · C</b></span>
+  </div>
+</header>
+
+<h2 id="map">이 장의 지도</h2>
+<p>…</p>
+
+<h2 id="concept-a">기술 A</h2>
+
+<div class="tier" data-tier="1">
+  <h3>A 는 무엇이고 왜 쓰나</h3>
+  <p>…</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>A 는 안에서 어떻게 도나</h3>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 420" role="img" aria-labelledby="a-arch-t">
+        <title id="a-arch-t">A 의 내부 구조</title>
+        <defs>
+          <marker id="a-arch-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <rect x="20" y="20" width="300" height="120" rx="12" class="d-card"/>
+        <text x="40" y="56" class="d-ttl">컴포넌트</text>
+        <text x="40" y="84" class="d-sub">설명 한 줄</text>
+        <path d="M320 80 L420 80" class="d-e-api" marker-end="url(#a-arch-m-api)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 N-1.</b> 캡션</figcaption>
+  </figure>
+  <pre class="mermaid">
+sequenceDiagram
+  participant U as 사용자
+  participant K as API 서버
+  U->>K: 요청
+  K-->>U: 응답
+  </pre>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>세부 로직</h3>
+  <div class="code-head"><span>poc/0N-xxx/path/file.yaml</span><span>발췌</span></div>
+  <pre><code><span class="c"># 주석</span>
+<span class="k">apiVersion</span>: v1</code></pre>
+  <pre class="pseudo"><code><span class="k">반복</span> 매 3분:
+  원하는 상태 = Git 에서 렌더링
+  <span class="c">// 설명</span></code></pre>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>…</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p>…</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>…</p></aside>
+<aside class="callout warn"><p class="callout-title">주의</p><p>…</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://…">…</a></p></aside>
+
+<div class="table-wrap"><table><thead><tr><th>열</th><th>열</th></tr></thead><tbody><tr><td>…</td><td>…</td></tr></tbody></table></div>
+
+<h2 id="recap">정리</h2>
+
+<nav class="pager" aria-label="이전 다음 장"></nav>
+</article>
+</main>
+</div>
+</body>
+</html>
