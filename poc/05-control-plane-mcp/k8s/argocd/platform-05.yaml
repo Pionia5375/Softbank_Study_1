@@ -15,14 +15,14 @@ spec:
     repoURL: https://github.com/Pionia5375/Softbank_Study_1
     targetRevision: main
     # 레포 루트 기준. control-plane/ 과 ops-agent/ 를 둘 다 담은 상위 폴더
-    path: ___
+    path: poc/05-control-plane-mcp/k8s/platform
     # 평범한 YAML 폴더(Helm 차트 아님). 하위 폴더까지 읽으려면?
     directory:
-      recurse: ___
+      recurse: true
   destination:
     server: https://kubernetes.default.svc
     # namespace 를 비워 둔다: 파일마다 metadata.namespace 가 다르다 (faas-system, faas-build, tenant-a)
   syncPolicy:
     automated:
-      prune: ___
-      selfHeal: ___
+      prune: true
+      selfHeal: true

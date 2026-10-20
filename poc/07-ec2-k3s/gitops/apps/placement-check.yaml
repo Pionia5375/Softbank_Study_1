@@ -1,4 +1,4 @@
-# 노드 풀 배치 확인용 워크로드. Jeong 작성.
+# 노드 풀 배치 확인용 워크로드. Jeong 작성, 정답본.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -18,4 +18,4 @@ spec:
       prune: true
       selfHeal: true
     syncOptions:
-      - ___    # TODO(human): 목적지 namespace 가 없으면 Argo CD 가 만들게 하는 옵션 (https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/)
+      - CreateNamespace=true

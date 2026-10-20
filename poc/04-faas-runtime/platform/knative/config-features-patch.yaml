@@ -1,4 +1,4 @@
-# Knative 기능 플래그 켜기. Jeong 작성 (빈칸 4개, 막히면 solution/platform/knative/config-features-patch.yaml)
+# Knative 기능 플래그 켜기. Jeong 작성 (정답본)
 # 문서: https://knative.dev/docs/serving/configuration/feature-flags/
 #
 # Knative Service 는 Pod 스펙의 일부 칸만 허용한다. 나머지는 "기능 플래그"를 켜야 쓸 수 있다.
@@ -6,8 +6,8 @@
 # 쓰는 법: kubectl -n knative-serving patch configmap config-features --type merge --patch-file platform/knative/config-features-patch.yaml
 data:
   # ksvc 에서 nodeSelector 쓰기 → 함수를 exec 풀에 고정
-  ___: "enabled"            # TODO(human): 문서의 Kubernetes node selector 항목에서 키 이름
+  kubernetes.podspec-nodeselector: "enabled"
   # ksvc 에서 tolerations 쓰기 → exec 풀의 taint 통과
-  ___: "enabled"            # TODO(human)
+  kubernetes.podspec-tolerations: "enabled"
   # ksvc 에서 runtimeClassName 쓰기 → gVisor 로 실행
-  ___: ___                  # TODO(human): 키와 값 둘 다. 값은 "enabled" / "allowed" / "disabled" 중 무엇이 맞나
+  kubernetes.podspec-runtimeclassname: "enabled"

@@ -123,28 +123,38 @@ class OpsTools:
 
     def scale(self, function: str, delta: int, dry_run: bool = False) -> dict:
         """min-scale(항상 떠 있는 최소 파드 수)을 delta 만큼 바꾼다. 콜드 스타트를 줄이려고 미리 데워 두는 용도."""
-        # TODO(human): scale 도구를 쓴다. 30분 넘게 막히면 solution/mcp-server/ops_mcp/tools.py 를 본다.
-        # 바로 아래 get_metrics, rollback 이 같은 모양이니 먼저 읽고 따라 쓰면 된다.
-        #
-        # 할 일 (순서대로)
-        #   1) args = {...} 로 받은 인자를 묶어 둔다 (감사 로그용). 아래 전체를 try / except GuardrailError 로 감싸고
-        #      except 에서 self.audit.record(self.s.tenant, "scale", args, "denied", str(e)) 후 raise
-        #      그 아래 except Exception 도 하나 더: RBAC 403 같은 API 서버 거절을 "error" 로 남기고 raise (get_metrics 와 같은 모양)
-        #   2) name = check_function_name(function)
-        #   3) 가드레일 4 (한도): delta 가 int 가 아니거나, 0 이거나, abs(delta) > self.s.max_step 이면 GuardrailError
-        #   4) svc = self._require_service(name)
-        #      _traffic_pinned(svc) 가 True 면 GuardrailError (rollback 으로 트래픽이 고정된 상태에선 scale 이 효과가 없다)
-        #   5) 지금 값: ann = _annotations(svc); current = int(ann.get(MIN_SCALE, "0"))
-        #      천장: ceiling = min(self.s.min_scale_cap, int(ann.get(MAX_SCALE, str(self.s.min_scale_cap))))
-        #      target = current + delta 가 0 ~ ceiling 밖이면 GuardrailError
-        #   6) patch = {"spec": {"template": {"metadata": {"annotations": {MIN_SCALE: str(target)}}}}}
-        #      self.kn.patch_service(name, patch, dry_run=dry_run)   ← annotation 값은 문자열이어야 한다
-        #   7) 감사 로그: dry_run 이면 "allowed", 아니면 "executed", detail 은 f"{current}->{target}"
-        #   8) 돌려줄 dict: {"function", "min_scale_from", "min_scale_to", "dry_run", "note"}
-        #      (tests/test_scale.py 가 이 키 이름을 본다)
-        #
-        # 다 쓰면: cd poc/05-control-plane-mcp/mcp-server && .venv/bin/pytest -q   → 19 passed
-        raise NotImplementedError("TODO(human): scale")
+        args = {"function": function, "delta": delta, "dry_run": dry_run}
+        try:
+            name = check_function_name(function)
+            # 가드레일 4: 한 번에 바꾸는 폭 제한. 0 은 의미 없는 호출
+            if not isinstance(delta, int) or delta == 0 or abs(delta) > self.s.max_step:
+                raise GuardrailError(f"delta 는 0 이 아닌 -{self.s.max_step}~+{self.s.max_step} 정수여야 한다 (받은 값 {delta!r})")
+
+            svc = self._require_service(name)
+            if _traffic_pinned(svc):
+                raise GuardrailError("트래픽이 특정 Revision 에 고정돼 있다(rollback 이후). 지금 scale 하면 트래픽 0% 인 새 Revision 만 데워진다")
+
+            ann = _annotations(svc)
+            current = int(ann.get(MIN_SCALE, "0"))
+            max_scale = int(ann.get(MAX_SCALE, str(self.s.min_scale_cap)))
+            ceiling = min(self.s.min_scale_cap, max_scale)
+            target = current + delta
+            if target < 0 or target > ceiling:
+                raise GuardrailError(f"min-scale 은 0~{ceiling} 이어야 한다 (지금 {current}, 요청 {delta:+d} → {target})")
+
+            # merge patch: annotations 중 min-scale 키 하나만 바꾼다. 컨트롤 플레인이 적은 다른 필드는 그대로
+            patch = {"spec": {"template": {"metadata": {"annotations": {MIN_SCALE: str(target)}}}}}
+            self.kn.patch_service(name, patch, dry_run=dry_run)
+
+            self.audit.record(self.s.tenant, "scale", args, "allowed" if dry_run else "executed", f"{current}->{target}")
+            return {"function": name, "min_scale_from": current, "min_scale_to": target, "dry_run": dry_run,
+                    "note": "Knative 는 template 이 바뀌면 같은 이미지로 새 Revision 을 만들고 트래픽을 옮긴다"}
+        except GuardrailError as e:
+            self.audit.record(self.s.tenant, "scale", args, "denied", str(e))
+            raise
+        except Exception as e:  # RBAC 403 같은 API 서버 거절도 남긴다 (가드레일 2층이 막은 기록)
+            self.audit.record(self.s.tenant, "scale", args, "error", f"{type(e).__name__}: {getattr(e, 'status', '')} {getattr(e, 'reason', '') or e}")
+            raise
 
     # ------------------------------------------------------------------ rollback (사람 승인 필요)
 

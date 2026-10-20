@@ -15,7 +15,7 @@ metadata:
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 # 한 테넌트 안에서만 쓰니까 Role (ClusterRole 이 아니라)
-kind: ___
+kind: Role
 metadata:
   name: ops-agent
   namespace: tenant-a
@@ -23,19 +23,19 @@ rules:
   - apiGroups: ["serving.knative.dev"]
     resources: ["services"]
     # get_service → get, patch_service(scale·rollback) → patch. create·delete 는 없다: 에이전트는 함수를 만들거나 지우지 못한다
-    verbs: [___]
+    verbs: ["get", "list", "patch"]
   - apiGroups: ["serving.knative.dev"]
     resources: ["revisions"]
     # list_revisions → list (rollback 이 되돌아갈 곳을 찾을 때)
-    verbs: [___]
-  - apiGroups: [___]
+    verbs: ["get", "list"]
+  - apiGroups: ["autoscaling.internal.knative.dev"]
     resources: ["podautoscalers"]
     # get_podautoscaler → get
     verbs: ["get"]
   - apiGroups: [""]
     resources: ["pods"]
     # list_pods → list. 일부러 빼는 것: pods/exec(셸 접속), pods/log(로그에 비밀이 섞일 수 있음), delete
-    verbs: [___]
+    verbs: ["list"]
   - apiGroups: ["metrics.k8s.io"]
     resources: ["pods"]
     # pod_metrics → list (metrics-server 가 없으면 이 줄은 있어도 쓸 일이 없다)
@@ -47,10 +47,10 @@ metadata:
   name: ops-agent
   namespace: tenant-a
 subjects:
-  - kind: ___
+  - kind: ServiceAccount
     name: ops-agent
     namespace: tenant-a
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: ___
+  name: ops-agent

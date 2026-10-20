@@ -1,46 +1,42 @@
-# Rollout = Deployment 자리에 들어가는 Argo Rollouts 리소스. Jeong 작성. 빈칸 11개.
-# 생김새: 위쪽 template 은 Deployment 와 똑같고, 아래 strategy.canary 만 새롭다 (README 1.3)
-# 문서: https://argo-rollouts.readthedocs.io/en/stable/features/specification/   (모든 필드 예시가 한 파일에)
+# Rollout = Deployment 자리에 들어가는 Argo Rollouts 리소스 (정답본)
+# 문서: https://argo-rollouts.readthedocs.io/en/stable/features/specification/
 #       https://argo-rollouts.readthedocs.io/en/stable/features/canary/
 #       https://argo-rollouts.readthedocs.io/en/stable/features/analysis/#background-analysis
-apiVersion: ___            # TODO(human): Argo 계열 리소스 공통 그룹/버전 (Application 맨 위와 같은 값)
-kind: ___                  # TODO(human)
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
 metadata:
   name: podinfo
   namespace: fn-canary
 spec:
-  # 파드 수. 카나리 비율이 "파드 수"로 맞춰지므로(README 1.3) 비율과 같이 정한다
-  # 예: 5개면 setWeight 20 = 카나리 1 + stable 4
-  replicas: ___            # TODO(human)
+  # 파드 5개. setWeight 20 = 카나리 1개 + stable 4개 가 되도록 5로 고른다
+  replicas: 5
   # 예전 ReplicaSet 몇 개를 남겨 둘지 (되돌리기용)
   revisionHistoryLimit: 3
   selector:
     matchLabels:
       app: podinfo
-
-  # ---- template: Deployment 와 똑같다 ----
+  # ---- 여기부터 template 은 Deployment 와 똑같다 ----
   template:
     metadata:
       labels:
-        app: ___           # TODO(human): 위 selector 와 같게
+        app: podinfo
       annotations:
-        # Prometheus 차트의 기본 긁기 설정(kubernetes-pods)이 이 두 줄이 붙은 파드만 긁는다 (README 1.5)
-        prometheus.io/scrape: ___   # TODO(human): 문자열 "true" (따옴표 필수. annotation 값은 문자열만 된다)
-        prometheus.io/port: ___     # TODO(human): podinfo 가 /metrics 를 내는 포트 (문자열)
+        # Prometheus 차트의 kubernetes-pods 작업이 이 두 줄을 보고 이 파드를 긁는다
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9898"
     spec:
       containers:
         - name: podinfo
-          # podinfo = 일부러 고장 낼 수 있는 연습용 웹 앱 (README 1.4)
-          # [배포 1 = 좋은 배포] 이 태그를 6.15.0 으로, 메시지를 v2 로 바꿔 push
+          # [배포 1 = 좋은 배포] 6.14.1 → 6.15.0, 메시지 v1 → v2
           image: ghcr.io/stefanprodan/podinfo:6.14.1
           command:
             - ./podinfo
             - --port=9898
             - --level=info
-            # [배포 2 = 나쁜 배포] 아래 줄 주석을 풀고 메시지를 v3-bad 로 바꿔 push
+            # [배포 2 = 나쁜 배포] 아래 줄 주석을 풀고 메시지를 v3-bad 로. 요청 3개 중 1개 꼴로 4xx/5xx 를 돌려준다
             # - --random-error
           env:
-            - name: PODINFO_UI_MESSAGE      # curl 하면 응답 JSON 의 "message" 로 나온다. 지금 어느 버전인지 눈으로 확인용
+            - name: PODINFO_UI_MESSAGE
               value: "v1"
           ports:
             - name: http
@@ -56,27 +52,24 @@ spec:
               memory: 32Mi
             limits:
               memory: 64Mi
-
-  # ---- strategy: Deployment 에 없는 부분 ----
+  # ---- 여기부터가 Deployment 에 없는 부분 ----
   strategy:
     canary:
-      # TODO(human) 오늘의 결정 B: 몇 % 씩, 얼마나 기다리며 늘릴까 (README 1.3 표)
-      #   setWeight: N        = 카나리 비율을 N% 로 (파드 수로 반올림)
-      #   pause: {duration: 60s} = 60초 기다림. duration 을 빼면 사람이 promote 할 때까지 무한 대기
-      #   최소 2단계(조금 → 많이). 각 pause 는 분석이 2번 이상 잴 수 있게 initialDelay+interval×2 보다 길게
+      # 결정 1: 몇 % 씩, 얼마나 기다리며 늘릴까
       steps:
-        - setWeight: ___
-        - pause: {duration: ___}
-        - setWeight: ___
-        - pause: {duration: ___}
-      # 백그라운드 분석: 카나리가 도는 내내 AnalysisTemplate 을 반복 실행, 한 번이라도 Failed 면 즉시 abort
+        - setWeight: 20          # step 0: 카나리 1개
+        - pause: {duration: 60s} # step 1: 60초 지켜보기
+        - setWeight: 60          # step 2: 카나리 3개
+        - pause: {duration: 60s} # step 3
+        # 마지막 step 이 끝나면 100% 로 올리고 카나리가 새 stable 이 된다
+      # 백그라운드 분석: 카나리가 도는 내내 AnalysisTemplate 을 반복 실행. 한 번이라도 Failed 면 즉시 abort
       analysis:
         templates:
-          - templateName: ___      # TODO(human): analysis-template.yaml 의 metadata.name
-        # 몇 번째 step 부터 분석을 시작할지 (0부터 셈). step 0 직후엔 카나리 파드가 막 떠서 지표가 없다
+          - templateName: success-rate
+        # step 1(첫 pause)부터 시작. step 0 은 카나리 파드가 막 뜨는 중이라 지표가 없다
         startingStep: 1
         args:
-          # 이번 카나리 파드에 붙은 rollouts-pod-template-hash 값을 템플릿의 canary-hash 로 넘긴다
+          # 이번 카나리 파드들에 붙은 rollouts-pod-template-hash 값을 템플릿에 넘긴다
           - name: canary-hash
             valueFrom:
               podTemplateHashValue: Latest

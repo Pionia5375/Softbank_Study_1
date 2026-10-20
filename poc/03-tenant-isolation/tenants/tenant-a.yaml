@@ -1,8 +1,6 @@
-# 테넌트 a. Jeong 작성.
-# 이 파일 한 장이 두 역할을 한다: (1) ApplicationSet 이 Application 을 찍어 내는 입력 (2) tenant 차트의 values.
-# 차트 기본값(charts/tenant/values.yaml)과 다른 것만 적으면 된다. 여기 적은 값이 기본값을 덮어쓴다.
-# 테넌트 이름 = namespace 이름. 소문자·숫자·하이픈만
-name: ___
+# 테넌트 a. 이 파일 한 장이 (1) ApplicationSet 이 Application 을 찍어 내는 입력이고 (2) tenant 차트의 values 다.
+# 차트 기본값(charts/tenant/values.yaml)과 다른 것만 적는다.
+name: tenant-a
 quota:
   requestsCpu: "1"
   requestsMemory: 1Gi
@@ -10,3 +8,8 @@ quota:
   limitsMemory: 2Gi
   pods: "10"
   services: "5"
+# 5단계 Knative 함수(tenant-a/hello)가 이 namespace 에 뜬다. 요청은 kourier-system(입구)이나
+# knative-serving(activator: 파드가 0개일 때 요청을 잡아 두는 곳)을 거쳐 들어오고, autoscaler(knative-serving)가
+# queue-proxy 지표를 긁으러 들어온다. 이 둘을 안 열면 default-deny 에 막혀 ksvc 가 READY 여도 curl 이 응답을 못 받는다.
+network:
+  allowFromNamespaces: [knative-serving, kourier-system]

@@ -1,4 +1,4 @@
-# Knative Service (ksvc) = 함수 하나. Jeong 작성 (빈칸 6개, 막히면 solution/functions/ksvc/hello-runc.yaml)
+# Knative Service (ksvc) = 함수 하나. Jeong 작성 (정답본)
 # 이 한 장을 넣으면 Knative 가 Deployment·Service·Route·Revision·오토스케일러 설정을 알아서 만든다.
 # 문서: https://knative.dev/docs/serving/services/creating-services/
 #       https://knative.dev/docs/serving/autoscaling/scale-to-zero/
@@ -13,21 +13,26 @@ spec:
     metadata:
       annotations:
         # 요청이 없으면 0개까지 줄인다 (= 콜드 스타트가 생긴다). "0" 이 기본값이지만 결정이 보이게 적어 둔다
-        autoscaling.knative.dev/___: "0"     # TODO(human): 문서 scale-bounds 에서 하한 키 이름
+        autoscaling.knative.dev/min-scale: "0"
         # 아무리 몰려도 5개까지. 한 함수가 exec 풀을 다 먹는 걸 막는다 (노이지 네이버)
-        autoscaling.knative.dev/max-scale: "___"   # TODO(human) 결정
+        autoscaling.knative.dev/max-scale: "5"
         # Pod 하나가 동시에 맡을 요청 수 목표. 넘으면 Pod 를 늘린다
-        autoscaling.knative.dev/target: "___"      # TODO(human) 결정
+        autoscaling.knative.dev/target: "10"
         # 측정 편의: 요청이 끊기고 이 시간이 지나면 0 으로 가는 판단을 시작한다 (기본 60s, 최소 6s)
         autoscaling.knative.dev/window: "6s"
     spec:
       # ---- 어디서 돌까: exec 풀에만 (config-features 플래그가 켜져 있어야 통과) ----
-      # TODO(human): exec 풀에만 (nodeSelector + toleration). 빌드 Job 에서 쓴 모양 그대로
-      ___
+      nodeSelector:
+        pool: exec
+      tolerations:
+        - key: pool
+          operator: Equal
+          value: exec
+          effect: NoSchedule
       containers:
-        - image: ___          # TODO(human): build.sh v1 이 올린 이미지 (kaniko-job 의 --destination 과 맞게)
+        - image: kind-registry:5000/fn/hello:v1
           ports:
-            - containerPort: ___   # TODO(human): main.go 가 듣는 포트 (PORT 기본값)
+            - containerPort: 8080
           env:
             - name: FN_NAME
               value: hello-runc

@@ -1,4 +1,4 @@
-# 함수 역할 샘플: 실행 풀(스팟)에만 뜨는 Deployment + Service + Ingress + PDB. Jeong 작성.
+# 함수 역할 샘플: 실행 풀(스팟)에만 뜨는 Deployment + Service + Ingress + PDB. Jeong 작성, 정답본.
 # 문서: nodeSelector https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#nodeselector
 #       PDB https://kubernetes.io/docs/tasks/run-application/configure-pdb/
 apiVersion: apps/v1
@@ -16,9 +16,8 @@ spec:
         app: fn-sample
     spec:
       # 실행 풀에만. 실행 풀엔 taint 가 없어서 toleration 은 필요 없다
-      # TODO(human): 실행 풀 라벨
       nodeSelector:
-        ___: ___
+        pool: exec
       # 두 파드를 서로 다른 노드에 흩는다. 한 노드가 회수돼도 나머지 하나가 응답한다
       topologySpreadConstraints:
         - maxSkew: 1
@@ -74,7 +73,7 @@ kind: PodDisruptionBudget
 metadata:
   name: fn-sample
 spec:
-  minAvailable: ___    # TODO(human): replicas 2 중 drain 중에도 최소 몇 개를 살려 둘지
+  minAvailable: 1
   selector:
     matchLabels:
       app: fn-sample

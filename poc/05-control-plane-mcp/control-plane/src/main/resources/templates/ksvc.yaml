@@ -14,8 +14,8 @@ apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
   # 컨트롤 플레인이 이 이름으로 찾는다. 함수 이름 그대로
-  name: ___
-  namespace: ___
+  name: ${NAME}
+  namespace: ${TENANT}
   labels:
     faas.poc/tenant: ${TENANT}
     faas.poc/function: ${NAME}
@@ -26,11 +26,11 @@ spec:
     metadata:
       annotations:
         # 상태 조회가 "지금 서비스 중인 게 몇 번째 빌드인가" 를 이걸로 안다. 키 이름은 FunctionDeployer.ANNOTATION_BUILD_ID
-        faas.poc/build-id: ___
+        faas.poc/build-id: ${BUILD_ID}
         # TODO(human) 결정 2: 파드를 최대 몇 개까지 늘릴까? (문자열이라 따옴표)
         #   3단계 ResourceQuota 안에 들어가야 한다: max-scale × limits.memory ≤ 테넌트 메모리 한도
         #   MCP scale 도구의 min-scale 상한(5)도 이 값을 넘지 않는다
-        autoscaling.knative.dev/max-scale: ___
+        autoscaling.knative.dev/max-scale: "5"
         # min-scale 은 일부러 안 쓴다. 운영 에이전트(MCP scale)의 몫이다.
         #   여기 쓰면 server-side apply 에서 컨트롤 플레인이 그 필드의 주인이 되어, 다음 배포 때 에이전트 값을 덮어쓴다
     spec:
@@ -52,10 +52,10 @@ spec:
       # runtimeClassName: gvisor
       containers:
         # 태그(:latest) 대신 digest(@sha256:...) → 같은 Revision 은 언제 다시 떠도 똑같은 이미지
-        - image: ___
+        - image: ${IMAGE}
           ports:
             # 함수 런타임(server.py)이 듣는 포트. Knative 가 PORT 환경 변수로도 넣어 준다
-            - containerPort: ___
+            - containerPort: 8080
           resources:
             requests:
               cpu: 100m
@@ -73,5 +73,5 @@ spec:
   # 트래픽을 어디로 보낼까. 새 배포는 항상 "가장 최근 Ready Revision" 으로 100%
   #   에이전트가 rollback 하면 이 목록이 특정 Revision 고정으로 바뀌고, 다음 배포의 apply(force)가 다시 이걸로 되돌린다
   traffic:
-    - latestRevision: ___
-      percent: ___
+    - latestRevision: true
+      percent: 100

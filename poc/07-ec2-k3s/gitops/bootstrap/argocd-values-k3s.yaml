@@ -1,23 +1,18 @@
-# EC2 k3s 전용 Argo CD 덧씌우기 값. Jeong 작성.
+# EC2 k3s 전용 Argo CD 덧씌우기 값. Jeong 작성, 정답본.
 # 1단계 values(poc/01-argocd/platform/argocd/values.yaml)를 먼저 깔고, 그 위에 이 파일을 한 겹 더 얹는다.
 #   helm ... -f poc/01-argocd/platform/argocd/values.yaml -f 이 파일
 #   → 같은 키는 뒤 파일이 이긴다. 로컬과 EC2 가 "다른 점만" 여기 적힌다.
 # 문서: https://github.com/argoproj/argo-helm/tree/main/charts/argo-cd (values.yaml 의 global 절)
 
-# 빈칸은 밑줄 세 개.
-
 global:
   # Argo CD 의 모든 파드(server, repo-server, application-controller, redis, ...)를 시스템 노드로.
   # 이유: 실행 노드는 스팟이라 언제든 사라진다. 배포 도구가 같이 사라지면 복구도 못 한다.
-  # TODO(human): 시스템 노드의 라벨 키: 값 (k3s/server-config.yaml.tftpl 에 쓴 것)
   nodeSelector:
-    ___: ___
+    pool: system
 
   # 시스템 노드에는 CriticalAddonsOnly=true:NoExecute taint 가 있다 (k3s/server-config.yaml.tftpl).
   # 견디는 설정이 없으면 nodeSelector 가 맞아도 못 올라가서 Pending.
   # operator: Exists = 값이 뭐든 이 키면 견딘다. effect 를 비우면 모든 effect 를 견딘다.
-  # TODO(human): 시스템 노드 taint 를 견디는 toleration 한 개 (key / operator)
-  #   문서: https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/
   tolerations:
-    - key: ___
-      operator: ___
+    - key: CriticalAddonsOnly
+      operator: Exists

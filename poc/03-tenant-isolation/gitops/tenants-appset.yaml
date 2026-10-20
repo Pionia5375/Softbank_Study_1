@@ -1,16 +1,14 @@
-# 테넌트 공장. Jeong 작성.
-# ApplicationSet = "Application 틀 하나 + 목록(generator)" → 목록 항목마다 Application 을 찍어 낸다.
-# 여기선 목록 = Git 의 tenants/*.yaml 파일들. 새 테넌트 = 파일 하나 추가 + git push.
-# 붙이는 법 (한 번만): kubectl apply -f poc/03-tenant-isolation/gitops/tenants-appset.yaml
-# 문서: https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators-Git/#git-generator-files
-#       https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/GoTemplate/
+# 테넌트 공장. tenants/ 폴더의 yaml 파일 하나마다 Application 하나를 찍어 낸다. 정답본.
+# 새 테넌트 = tenants/ 에 파일 하나 추가 + git push. 테넌트 삭제 = 파일 삭제 + push (namespace 까지 지워진다!)
+# 붙이는 법: kubectl apply -f poc/03-tenant-isolation/gitops/tenants-appset.yaml
+# 문서: https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators-Git/
 apiVersion: argoproj.io/v1alpha1
-kind: ___
+kind: ApplicationSet
 metadata:
   name: tenants
   namespace: argocd
 spec:
-  # 템플릿 문법: Go 템플릿(Helm 과 같은 중괄호 두 겹). 없는 키를 쓰면 빈칸 대신 에러
+  # {{ .name }} 같은 Go 템플릿 문법을 쓴다. 없는 키를 쓰면 조용히 빈칸이 아니라 에러를 낸다
   goTemplate: true
   goTemplateOptions: ["missingkey=error"]
   generators:
@@ -18,26 +16,24 @@ spec:
         repoURL: https://github.com/Pionia5375/Softbank_Study_1
         revision: main
         files:
-          # 이 모양에 맞는 파일마다 Application 하나. 파일 안의 키(name 등)가 템플릿 변수가 된다
-          #   + 덤으로 .path.filename (파일 이름, 예: tenant-a.yaml) 같은 변수도 생긴다
-          - path: ___
+          # 이 경로에 맞는 파일마다 Application 하나. 파일 안의 키(name 등)가 템플릿 변수가 된다
+          - path: poc/03-tenant-isolation/tenants/*.yaml
   template:
     metadata:
-      # 빈칸: 파일 안의 name 값을 그대로 Application 이름으로 (작은따옴표로 감쌀 것. 중괄호로 시작하는 값은 YAML 이 다르게 읽는다)
-      name: ___
+      # 테넌트 이름 그대로 (tenant-a, tenant-b)
+      name: '{{ .name }}'
       namespace: argocd
       finalizers:
         - resources-finalizer.argocd.argoproj.io
     spec:
-      # 울타리는 플랫폼이 관리 → default Project. 테넌트 자신의 함수는 tenant-a Project 로 (tenant-a-hello.yaml)
+      # 울타리는 플랫폼이 관리 → default Project. 테넌트 자신의 함수는 tenant-a Project (gitops/tenant-a-hello.yaml)
       project: default
       source:
         repoURL: https://github.com/Pionia5375/Softbank_Study_1
         targetRevision: main
-        # tenant 차트 폴더 (레포 루트 기준 경로)
-        path: ___
+        path: poc/03-tenant-isolation/charts/tenant
         helm:
-          # 차트 폴더 기준 상대 경로. 차트 폴더에서 두 칸 올라가면 03 폴더 → tenants/<파일 이름>
+          # 차트 폴더 기준 상대 경로. 레포 안이면 차트 밖 파일도 values 로 쓸 수 있다
           valueFiles:
             - '../../tenants/{{ .path.filename }}'
       destination:
@@ -47,10 +43,6 @@ spec:
         automated:
           prune: true
           selfHeal: true
-  # TODO(human) 결정: 파일을 지우면 Application(→ namespace 와 안의 모든 것)도 지울까?
-  #   sync          = 지운다. Git 이 진실. 실수로 파일 하나 지우면 테넌트 전체가 날아간다
-  #   create-update = 안 지운다. 지우기는 사람이 손으로 (kubectl delete application ...)
-  #   measure.sh onboard 의 "오프보딩 시간" 은 sync 일 때만 잴 수 있다
-  # 문서: https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Controlling-Resource-Modification/
+  # 결정: 파일을 지우면 Application 도 지운다 (create-update 로 바꾸면 지우기는 사람이 손으로)
   syncPolicy:
-    applicationsSync: ___
+    applicationsSync: sync

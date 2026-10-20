@@ -22,7 +22,7 @@ spec:
         app: control-plane
     spec:
       # 이 파드가 API 서버에 말할 때 쓰는 신분. rbac.yaml 에서 만든 것. 안 쓰면 default SA 로 떠서 전부 403
-      serviceAccountName: ___
+      serviceAccountName: control-plane
       securityContext:
         runAsNonRoot: true
         seccompProfile:
@@ -31,7 +31,7 @@ spec:
         - name: control-plane
           image: faas-control-plane:0.1
           # kind load 로 넣은 이미지는 레지스트리에 없다. Always 면 레지스트리에서 받으려다 ErrImagePull
-          imagePullPolicy: ___
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080
           # application.yml 의 faas.* 를 환경 변수로 덮어쓴다 (FAAS_REGISTRY_PUSH → faas.registry-push)
@@ -43,13 +43,13 @@ spec:
           # Spring Boot actuator 의 health 주소 (pom.xml 에 actuator 가 있다)
           readinessProbe:
             httpGet:
-              path: ___
+              path: /actuator/health
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 5
           livenessProbe:
             httpGet:
-              path: ___
+              path: /actuator/health
               port: 8080
             initialDelaySeconds: 20
             periodSeconds: 10

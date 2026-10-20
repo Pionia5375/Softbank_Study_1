@@ -24,15 +24,15 @@ rules:
   - apiGroups: ["batch"]
     resources: ["jobs"]
     # startDeploy: get(있나?) create / status: list(라벨로) / finishDeploy: waitUntilCondition 은 내부적으로 list + watch
-    verbs: [___]
+    verbs: ["get", "list", "watch", "create"]
   - apiGroups: [""]
     resources: ["configmaps"]
     # 소스 ConfigMap 만들기만 한다. 지우는 건 Job 의 ownerReference 로 쓰레기 수집기가 한다 → delete 불필요
-    verbs: [___]
+    verbs: ["get", "create"]
   - apiGroups: [""]
     resources: ["pods"]
     # readDigest: 라벨로 빌드 파드 목록을 읽는다. 로그나 exec 권한은 필요 없다
-    verbs: [___]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -43,7 +43,7 @@ subjects:
   - kind: ServiceAccount
     name: control-plane
     # ServiceAccount 가 사는 namespace (RoleBinding 이 있는 faas-build 가 아니다!)
-    namespace: ___
+    namespace: faas-system
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -51,17 +51,17 @@ roleRef:
 ---
 # (2) 테넌트 확인용: Namespace 는 namespace 가 없는 리소스라 ClusterRole + ClusterRoleBinding 이 필요하다
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ___
+kind: ClusterRole
 metadata:
   name: faas-control-plane-namespaces
 rules:
   - apiGroups: [""]
     resources: ["namespaces"]
     # tenantExists 는 이름으로 하나만 읽는다. list 를 주면 모든 테넌트 이름이 보인다 → 주지 않는다
-    verbs: [___]
+    verbs: ["get"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ___
+kind: ClusterRoleBinding
 metadata:
   name: faas-control-plane-namespaces
 subjects:
@@ -81,7 +81,7 @@ kind: ClusterRole
 metadata:
   name: faas-control-plane-functions
 rules:
-  - apiGroups: [___]
+  - apiGroups: ["serving.knative.dev"]
     resources: ["services"]
     # status: get / finishDeploy: server-side apply 는 HTTP PATCH 다 (없으면 생성까지 PATCH 한 번으로)
     verbs: ["get", "list", "create", "patch"]

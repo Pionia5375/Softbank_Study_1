@@ -1,7 +1,5 @@
-# 컨테이너 1개 단위 기본값·최대값. Jeong 작성.
-# 왜 Quota 와 짝인가: Quota 가 limits.cpu 를 세기 시작하면, limits 를 안 적은 파드는 "셀 수 없어서" 거절된다.
-#   LimitRange 가 기본 limits 를 자동으로 붙여 주면 그런 파드(예: 01 단계 hello-fn)도 들어올 수 있다.
-# 문서: https://kubernetes.io/docs/concepts/policy/limit-range/
+# 컨테이너 1개 단위 기본값·최대값. Quota 가 limits.cpu 를 세는 순간 "limits 없는 파드"는 거절되므로,
+# 기본 limits 를 자동으로 붙여 주는 LimitRange 가 짝으로 꼭 필요하다.
 apiVersion: v1
 kind: LimitRange
 metadata:
@@ -9,15 +7,13 @@ metadata:
   namespace: {{ .Values.name }}
 spec:
   limits:
-    # 단위: Container(컨테이너 하나씩) / Pod(파드 안 컨테이너 합) 중 하나
-    - type: ___
-      # 빈칸 4곳: values.yaml 의 limitRange 아래 값을 같은 모양으로 읽는다 (위 resourcequota.yaml 참고)
+    - type: Container
       default:
-        cpu: ___
+        cpu: {{ .Values.limitRange.default.cpu | quote }}
         memory: {{ .Values.limitRange.default.memory | quote }}
       defaultRequest:
-        cpu: ___
+        cpu: {{ .Values.limitRange.defaultRequest.cpu | quote }}
         memory: {{ .Values.limitRange.defaultRequest.memory | quote }}
       max:
-        cpu: ___
-        memory: ___
+        cpu: {{ .Values.limitRange.max.cpu | quote }}
+        memory: {{ .Values.limitRange.max.memory | quote }}

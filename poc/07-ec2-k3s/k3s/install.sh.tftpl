@@ -1,15 +1,13 @@
 #!/bin/bash
-# EC2 첫 부팅 때 root 로 한 번 실행되는 스크립트 (user_data). Jeong 작성.
-# Terraform(terraform/cluster/k3s.tf)이 이 파일을 templatefile() 로 읽어서 아래 세 자리를 채운다.
+# EC2 첫 부팅 때 root 로 한 번 실행되는 스크립트 (user_data). Jeong 작성, 정답본.
+# Terraform(k3s.tf)이 이 파일을 templatefile() 로 읽어서 아래 세 자리를 채운다.
 #   role        = "server" 또는 "agent"
 #   k3s_channel = "stable" 등
 #   config      = server-config.yaml.tftpl 또는 agent-config.yaml.tftpl 을 채운 결과 (YAML 문자열)
-# Terraform 자리표시자 문법: 달러 + 중괄호 + 이름 + 중괄호 (아래 echo 줄에 이미 하나 써 둠).
-# 주의: 셸 변수에 중괄호를 쓰고 싶으면 달러를 두 번 쓴다. 안 그러면 Terraform 이 자기 자리표시자로 착각한다.
+# 주의: 이 파일 안에서 셸 변수 중괄호를 쓰려면 앞에 $ 를 하나 더 붙여 이스케이프한다.
+#       Terraform 이 자기 자리표시자로 착각하기 때문 (README 4.1 참고).
 # 문서: https://docs.k3s.io/installation/configuration#configuration-file
 #       https://docs.k3s.io/reference/env-variables
-#
-# 빈칸은 밑줄 세 개. 다 채우면 README 3단계의 grep 출력이 없어야 한다.
 
 set -euo pipefail
 
@@ -18,18 +16,16 @@ set -euo pipefail
 exec > >(tee -a /var/log/k3s-bootstrap.log) 2>&1
 echo "[bootstrap] role=${role} start $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# 1) k3s 설정 파일. k3s 는 시작할 때 정해진 경로의 config.yaml 을 자동으로 읽는다.
-#    TODO(human): 그 폴더 경로를 문서(위 첫 번째 링크)에서 찾아 세 군데(mkdir, cat, chmod) 빈칸에 쓴다.
-mkdir -p ___
-cat > ___/config.yaml <<'K3SCONFIG'
-___
+# 1) k3s 설정 파일. k3s 는 시작할 때 /etc/rancher/k3s/config.yaml 을 자동으로 읽는다.
+#    명령줄 옵션(--node-label ...)을 길게 쓰는 대신 파일 하나에 모은다.
+mkdir -p /etc/rancher/k3s
+cat > /etc/rancher/k3s/config.yaml <<'K3SCONFIG'
+${config}
 K3SCONFIG
-# TODO(human): 위 세 번째 빈칸 = Terraform 이 넘겨 준 config 값을 그대로 끼워 넣는 자리표시자.
-chmod 600 ___/config.yaml   # 토큰이 들어 있어서 root 만 읽게
+chmod 600 /etc/rancher/k3s/config.yaml   # 토큰이 들어 있어서 root 만 읽게
 
-# 2) 공식 설치 스크립트. 바이너리 설치 + systemd 서비스 등록 + 시작까지 한다.
-#    TODO(human): 설치 채널을 정하는 환경변수 이름(두 번째 링크), 그리고 server/agent 를 고르는 마지막 인자.
-#    둘 다 Terraform 이 넘겨 준 값(k3s_channel, role)을 자리표시자로 쓴다.
-curl -sfL https://get.k3s.io | ___='___' sh -s - ___
+# 2) 공식 설치 스크립트. 바이너리 설치 + systemd 서비스(k3s 또는 k3s-agent) 등록 + 시작까지 한다.
+#    마지막 인자 server/agent 가 어느 쪽으로 설치할지 정한다.
+curl -sfL https://get.k3s.io | INSTALL_K3S_CHANNEL='${k3s_channel}' sh -s - ${role}
 
 echo "[bootstrap] role=${role} done $(date -u +%Y-%m-%dT%H:%M:%SZ)"

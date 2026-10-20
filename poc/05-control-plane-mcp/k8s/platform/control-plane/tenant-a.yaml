@@ -5,7 +5,7 @@ kind: RoleBinding
 metadata:
   name: faas-control-plane-functions
   # 권한이 적용되는 곳 = 테넌트 namespace
-  namespace: ___
+  namespace: tenant-a
 subjects:
   - kind: ServiceAccount
     name: control-plane
@@ -13,5 +13,5 @@ subjects:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   # RoleBinding 이 ClusterRole 을 가리키면: "그 ClusterRole 의 권한을, 이 RoleBinding 의 namespace 안에서만" 준다
-  kind: ___
+  kind: ClusterRole
   name: faas-control-plane-functions

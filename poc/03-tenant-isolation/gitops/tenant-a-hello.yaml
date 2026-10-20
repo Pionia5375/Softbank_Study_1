@@ -1,5 +1,5 @@
-# 테넌트 a 가 자기 함수(01 단계 hello-fn 차트)를 "자기 Project" 로 배포한다. Jeong 작성.
-# 01 단계 gitops/apps/hello-fn.yaml 과 거의 같다. 다른 점 세 개: project, destination.namespace, CreateNamespace 없음.
+# 테넌트 a 가 자기 함수(01 단계의 hello-fn 차트)를 자기 Project 로 배포한다. 정답본.
+# project: tenant-a 이므로 Argo CD 가 "tenant-a namespace 에만, 울타리 오브젝트는 금지" 규칙을 강제한다.
 # 붙이는 법: kubectl apply -f poc/03-tenant-isolation/gitops/tenant-a-hello.yaml
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -9,23 +9,19 @@ metadata:
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  # 다른 점 1: default 가 아니라 테넌트 차트가 만든 AppProject. 이 한 줄 때문에 Argo CD 가 울타리 규칙을 검사한다
-  project: ___
+  project: tenant-a
   source:
     repoURL: https://github.com/Pionia5375/Softbank_Study_1
     targetRevision: main
     path: poc/01-argocd/functions/hello-fn
     helm:
-      # 차트 values 중 message 만 덮어쓴다
       valuesObject:
         message: "hello from tenant-a"
   destination:
     server: https://kubernetes.default.svc
-    # 다른 점 2
-    namespace: ___
+    namespace: tenant-a
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
-    # 다른 점 3: CreateNamespace=true 를 쓰지 않는다. namespace 는 플랫폼(ApplicationSet)이 만든다.
-    #   써 봤자 AppProject 의 clusterResourceWhitelist 가 비어 있어서 Namespace 를 못 만든다
+    # CreateNamespace 는 쓰지 않는다. namespace 는 플랫폼(tenants ApplicationSet)이 만든다
