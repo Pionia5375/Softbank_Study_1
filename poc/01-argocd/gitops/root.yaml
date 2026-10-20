@@ -15,7 +15,7 @@ spec:
   source:
     repoURL: https://github.com/Pionia5375/Softbank_Study_1         # TODO(human): hello-fn 과 같은 레포
     targetRevision: main
-    path: gitops/apps            # TODO(human): Application YAML 들이 든 폴더
+    path: poc/01-argocd/gitops/apps  # 레포 루트 기준. hello-fn Application 과 같은 레벨
     # Chart.yaml 이 없는 폴더면 Argo CD 는 "그냥 YAML 파일 묶음(directory)"으로 읽는다
   destination:
     server: https://kubernetes.default.svc
