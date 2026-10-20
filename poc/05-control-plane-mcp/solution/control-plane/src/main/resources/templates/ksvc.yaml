@@ -38,8 +38,17 @@ spec:
       containerConcurrency: 10
       # 요청 하나 최대 30초. 넘으면 504
       timeoutSeconds: 30
-      # 4단계 gVisor 를 끝냈으면 아래 주석을 풀어 사용자 코드를 gVisor 샌드박스 안에서 돌린다
-      #   (Knative 설정 config-features 의 kubernetes.podspec-runtimeclassname: enabled 필요)
+      # 함수는 실행 노드 풀(4단계: 라벨 pool=exec, taint pool=exec:NoSchedule)에서만 돈다. 빌드 노드와 섞이지 않게
+      #   Knative 는 이 필드들을 기본으로 막는다 → 4단계에서 config-features 의
+      #   kubernetes.podspec-nodeselector / kubernetes.podspec-tolerations / kubernetes.podspec-runtimeclassname 을 enabled 로 켰다
+      nodeSelector:
+        pool: exec
+      tolerations:
+        - key: pool
+          operator: Equal
+          value: exec
+          effect: NoSchedule
+      # 사용자 코드를 gVisor 샌드박스 안에서 돌리려면 주석을 푼다 (4단계 RuntimeClass, 기동이 느려지는 대가는 4단계 측정값)
       # runtimeClassName: gvisor
       containers:
         # 태그(:latest) 대신 digest(@sha256:...) → 같은 Revision 은 언제 다시 떠도 똑같은 이미지

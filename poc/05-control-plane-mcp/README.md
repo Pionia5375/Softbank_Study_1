@@ -138,15 +138,15 @@ poc/05-control-plane-mcp/
 |---|---|---|---|
 | 클러스터 | kind `faas` (컨텍스트 `kind-faas`), Argo CD + root App of Apps | 1단계 9절 【사실】 | |
 | 테넌트 | namespace `tenant-a`, 라벨 `tenant: tenant-a`, Pod Security enforce baseline / warn restricted, default-deny NetworkPolicy | 3단계 tenant 차트 【사실】 | `application.yml` `faas.tenant-label` |
-| Knative Serving + Kourier | 설치됨, 입구 `kourier-system/kourier` | 4단계 【미확인: 4단계 문서 확인】 | `OPS_MCP_GATEWAY`, `GW` |
+| Knative Serving + Kourier | 설치됨, 입구 `localhost:8081` + Host 헤더 (kourier NodePort 31080), 도메인 `<이름>.<ns>.faas.local`. config-features 의 podspec-nodeselector·tolerations·runtimeclassname enabled | 4단계 README 2절 【사실, main 040773a】 | `OPS_MCP_GATEWAY`, `GW` |
 | Knative → 테넌트 트래픽 | tenant-a NetworkPolicy 가 `knative-serving`·`kourier-system` 에서 들어오는 걸 허용 (3단계 values `network.allowFromNamespaces`) | 4단계 【미확인】 | 3단계 `tenants/tenant-a.yaml` |
-| 빌드 노드 | 라벨 `pool=build`, taint `pool=build:NoSchedule` | 4단계 【미확인】 | `templates/build-job.yaml` |
-| 레지스트리 | push `kind-registry:5000`, pull `localhost:5001` | 4단계 【미확인】 | `application.yml`, `deployment.yaml` env |
-| kaniko 이미지 | `gcr.io/kaniko-project/executor:v1.23.2` | 4단계 【미확인】 | `templates/build-job.yaml` |
-| gVisor | RuntimeClass `gvisor` (선택) | 4단계 【미확인】 | `templates/ksvc.yaml` 주석 |
+| 노드 풀 | 빌드 `pool=build` + taint `pool=build:NoSchedule`, 함수 실행 `pool=exec` + taint `pool=exec:NoSchedule` | 4단계 【사실】 | `templates/build-job.yaml`, `templates/ksvc.yaml` |
+| 레지스트리 | push `kind-registry:5000`, pull `localhost:5001` (노드는 두 이름 다 됨, Knative 태그 해석 건너뛰기에도 둘 다 등록) | 4단계 setup.sh 【사실】 | `application.yml`, `deployment.yaml` env |
+| kaniko 이미지 | `gcr.io/kaniko-project/executor:v1.23.2`. 4단계는 ns `fn-build` 에 tar.gz 컨텍스트로 쓴다. 5단계는 따로 `faas-build` ns 에서 initContainer `cp -L` 로 ConfigMap 심볼릭 링크 문제를 피한다 (같은 문제, 다른 해법) | 4단계 【사실】 | `templates/build-job.yaml` |
+| gVisor | RuntimeClass `gvisor` (handler runsc, exec 풀에 고정). 5단계 기본은 꺼 둠 (선택) | 4단계 【사실】 | `templates/ksvc.yaml` 주석 |
 | metrics-server | 있으면 get_metrics 에 CPU/메모리가 나온다. 없어도 동작 | Lab 04 | |
 
-- 4단계가 빌드 노드·레지스트리를 아직 안 만들었으면 임시로: `kubectl label node faas-worker pool=build` 하고 build-job.yaml 의 tolerations 는 그대로 둬도 된다(taint 가 없으면 toleration 은 무시됨). 레지스트리는 위 1.4 의 kind 공식 문서 스크립트.
+- 4단계 함수 규약은 Go 샘플뿐이라, 파이썬 `handler.py` 의 `handle(body: bytes)` 규약은 이 단계가 정했다 (`runtime/python/server.py`).
 - 3단계 tenant 차트의 `deployer` ServiceAccount 는 쓰지 않는다. 에이전트용으로 더 좁은 `ops-agent` 를 따로 만든다 (이유는 `k8s/platform/ops-agent/rbac.yaml` 맨 위).
 
 ---
@@ -219,9 +219,7 @@ kubectl create namespace faas-build --dry-run=client -o yaml | kubectl apply -f 
 ./mvnw spring-boot:run
 #   jar 를 만들지 않고 바로 실행. 8080 포트. 로그의 AUDIT 줄이 감사 로그
 
-# 터미널 2: Knative 입구를 맥으로 연결
-kubectl -n kourier-system port-forward svc/kourier 8081:80
-#   맥 localhost:8081 → 클러스터의 Kourier. 함수 호출은 Host 헤더로 어느 함수인지 구분한다
+# 터미널 2: 필요 없음. 4단계에서 Kourier 가 localhost:8081 로 열려 있다 (안 열리면 kubectl -n kourier-system port-forward svc/kourier 8081:80)
 
 # 터미널 3: 배포
 cd poc/05-control-plane-mcp
@@ -243,8 +241,8 @@ GW=http://localhost:8081 scripts/deploy-fn.sh tenant-a hello samples/hello-v1.py
 curl -s localhost:8080/api/v1/tenants/tenant-a/functions/hello | python3 -m json.tool   # 상태 JSON
 kubectl -n faas-build get jobs,pods                     # 빌드 Job 과 파드 (Completed)
 kubectl -n tenant-a get ksvc,revisions                  # Knative Service 1, Revision 1
-curl -s -H "Host: hello.tenant-a.example.com" localhost:8081 -d jeong
-#   Host 는 위 상태 JSON 의 url 에서 http:// 를 뺀 값. 4단계 도메인 설정이 다르면 그 값으로
+curl -s -H "Host: hello.tenant-a.faas.local" localhost:8081 -d jeong
+#   Host 는 위 상태 JSON 의 url 에서 http:// 를 뺀 값 (4단계 도메인 faas.local)
 ```
 
 막히면 볼 곳: `BUILDING` 에서 안 넘어감 → `kubectl -n faas-build describe pod` (Pending 이면 빌드 노드 라벨, ImagePull 이면 kaniko 이미지). `BUILD_FAILED` → 상태 JSON 의 message 에 나온 `kubectl logs` 명령. `DEPLOYING` 에서 멈춤 → `kubectl -n tenant-a describe ksvc hello`.
