@@ -288,6 +288,19 @@
 10/14 5절 대신 이 6.4 표로 W3~W5를 바꾼다. 10/18 게이트는 이미 지났으니 표에서 지우고, 10/25 게이트를 "참조 아키텍처 v1 + 모의 #2 준비 완료"로 바꾸자. Jeong이 동의하면 Claude가 적용한다.
 
 
+### 6.6 10/20 밤 추가 결정 (스레드 대화) 【사용자 + 추정】
+
+- **CKA는 본선 이후**에 본다 【사용자】. 강의는 그날 PoC에 필요한 챕터만 1.5배속으로 (6.4 표 옆 열: 10/22 롤아웃, 10/23 RBAC·NetworkPolicy·Quota·ServiceAccount, 10/24 스케줄링·Job, 10/26 트러블슈팅, 10/27 kubeadm·etcd 백업). Argo CD는 CKA 범위 밖이라 공식 Getting Started로.
+- **PoC 방식** 【사용자】: 하나씩 이해하면서, 기본 컴포넌트는 Jeong이 직접 작성한다. 나누는 기준:
+  - Jeong이 직접: 테넌트 Namespace·ResourceQuota·LimitRange·NetworkPolicy·Role/RoleBinding, Argo CD `Application`, Argo Rollouts `Rollout` + `AnalysisTemplate`, Knative `Service`, `RuntimeClass`(gVisor), 빌드 `Job`(nodeSelector·toleration), Spring 컨트롤 플레인 API의 "함수 배포" 엔드포인트, MCP 도구 3개.
+  - Claude가: 설치(Helm values: Argo CD·Cilium·Knative·Prometheus), Terraform, 측정·부하 스크립트, 설계 문서 초안.
+  - 규칙: Claude는 빈칸 있는 뼈대 + 공식 문서 링크만 주고, Jeong이 채운다. 한 컴포넌트에 30분 넘게 막히면 정답을 보고 한 줄씩 설명받는다 (일정 보호).
+- **추가**: 10/23에 Cilium(eBPF 기반 CNI) + Hubble로 테넌트 간 차단 장면. kind 기본 CNI는 NetworkPolicy를 강제하지 않는 것으로 알려져 있어 어차피 필요 【추정, 실습에서 확인】.
+- **추가**: 10/24 반나절 gVisor `RuntimeClass` → 일반 컨테이너 대비 기동 시간·p95 (CPU 위주 함수 / I/O 위주 함수 나눠서). 웜 풀(Agent Sandbox `SandboxWarmPool` 개념)은 설계 문서 대안으로.
+- **킥 (AI)**: 플랫폼 API를 MCP 도구로 열고 LLM 에이전트를 붙인다. 차별점은 "사용자 코드와 AI 코드를 같은 gVisor 계층에서 실행 + 5층 가드레일(샌드박스 / 최소 도구·RBAC / 승인·GitOps PR / 한도·드라이런 / 감사 로그·롤백)". 데모는 시나리오 1개. 10/25 반나절에 가짜 API 위 MCP 도구 3개 뼈대.
+- **주의할 트레이드오프**: gVisor 안의 시스템 콜은 호스트 eBPF로 안 보인다 (Sentry가 가로챔). 네트워크는 Cilium/Hubble, 시스템 콜은 gVisor 자체 이벤트로 나눈다 【추정, 확인 필요】.
+- **뺌**: API를 WASM/다른 언어로 재작성 (지연 대부분은 k8s 호출·DB·네트워크, 측정 후 느린 곳만), Amazon Q (2027-04-30 지원 종료, Kiro로 이전 【사실: https://atmarkit.itmedia.co.jp/ait/articles/2607/03/news056.html 】), GKE 자체 사용, Tetragon(시간 남으면).
+
 ## 핵심 결정 3개 (+대안)
 
 | 결정 | 제안 | 대안과 버린 이유 |
