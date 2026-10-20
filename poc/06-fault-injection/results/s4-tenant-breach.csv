@@ -1,0 +1,10 @@
+date,id,attempt,expected,actual,verdict,seconds
+2026-10-20,N1,"tenant-a Service (http://hello.tenant-a.svc/)",blocked,"http 200",FAIL,0.5
+2026-10-20,N2,"tenant-a 파드 IP 직접 (10.244.1.55:5678)",blocked,"http 200",FAIL,0.4
+2026-10-20,N3,"API 서버 (kubernetes.default.svc)",blocked,"http 403",FAIL,0.5
+2026-10-20,N4,"메타데이터 169.254.169.254",blocked,"http 403",FAIL,0.4
+2026-10-20,R1,"SA 로 tenant-a Secret 목록",forbidden,"Forbidden",PASS,0.0
+2026-10-20,R2,"SA 로 자기 ns 에 파드 생성",forbidden,"Forbidden",PASS,0.0
+2026-10-20,P1,"privileged + hostPath:/ 파드 (관리자 권한으로도)",forbidden,"violates PodSecurity "restricted:latest"",PASS,0.2
+2026-10-20,Q1,"CPU 4코어 파드",forbidden,"maximum cpu usage per Container",PASS,0.1
+2026-10-20,D1,"TenantPolicyDenied 알림 (P1 후)",firing,"28.0s",PASS,28.0

@@ -1,0 +1,238 @@
+# 6단계 대역(stand-in) 대상 (Claude 작성, 완성본)
+# 2~4단계가 만든 것을 아주 작게 흉내 낸 "공격 대상". 앞 단계가 끝났으면 이 파일은 쓰지 않고 진짜 대상을 친다.
+#   tenant-a : 지연에 민감한 함수 hello (Deployment) + 카나리로 배포되는 api (Rollout)
+#   tenant-b : 폭주·침범 시도를 할 "나쁜 이웃"
+# 격리 장치(3단계 몫): PSA restricted, ResourceQuota, LimitRange, default-deny NetworkPolicy, 함수 계정(default)에 권한 없음
+# 2단계 몫: Rollout + AnalysisTemplate (분석은 Prometheus 대신 curl Job 으로. Prometheus 없이도 돌게)
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-a
+  labels:
+    tenant: a
+    pod-security.kubernetes.io/enforce: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tenant-b
+  labels:
+    tenant: b
+    pod-security.kubernetes.io/enforce: restricted
+---
+# ---------- 테넌트별 한도 (같은 내용을 두 ns 에) ----------
+apiVersion: v1
+kind: ResourceQuota
+metadata: { name: tenant-quota, namespace: tenant-a }
+spec:
+  hard:
+    requests.cpu: "1"
+    limits.cpu: "2"
+    requests.memory: 1Gi
+    limits.memory: 2Gi
+    pods: "15"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata: { name: tenant-quota, namespace: tenant-b }
+spec:
+  hard:
+    requests.cpu: "1"
+    limits.cpu: "2"
+    requests.memory: 1Gi
+    limits.memory: 2Gi
+    pods: "15"
+---
+apiVersion: v1
+kind: LimitRange
+metadata: { name: tenant-defaults, namespace: tenant-a }
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 50m, memory: 32Mi }
+      default: { cpu: 500m, memory: 128Mi }
+      max: { cpu: "1", memory: 512Mi }
+---
+apiVersion: v1
+kind: LimitRange
+metadata: { name: tenant-defaults, namespace: tenant-b }
+spec:
+  limits:
+    - type: Container
+      defaultRequest: { cpu: 50m, memory: 32Mi }
+      default: { cpu: 500m, memory: 128Mi }
+      max: { cpu: "1", memory: 512Mi }
+---
+# ---------- 네트워크: 기본 전부 막고, 같은 ns 끼리 + DNS 만 연다 ----------
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: tenant-a }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ podSelector: {} }]
+  egress:
+    - to: [{ podSelector: {} }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny, namespace: tenant-b }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from: [{ podSelector: {} }]
+  egress:
+    - to: [{ podSelector: {} }]
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }]
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]
+---
+# ---------- RBAC: 함수 파드는 네임스페이스의 default 서비스계정으로 돈다. 거기엔 아무 권한도 주지 않는다 ----------
+# (3단계 차트의 deployer 계정은 "배포하는 사람" 용이라 함수 파드에 붙이지 않는다)
+# 침범 대상: tenant-a 의 비밀값
+apiVersion: v1
+kind: Secret
+metadata: { name: db-password, namespace: tenant-a }
+stringData: { password: tenant-a-only }
+---
+# ---------- tenant-a 함수 hello: exec 풀에서만 뜬다 (4단계 함수 흉내) ----------
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: hello, namespace: tenant-a, labels: { app: hello } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: hello } }
+  template:
+    metadata: { labels: { app: hello } }
+    spec:
+      nodeSelector: { pool: exec }
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: fn
+          image: hashicorp/http-echo:1.0
+          args: ["-text=hello from tenant-a", "-listen=:5678"]
+          ports: [{ name: http, containerPort: 5678 }]
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 2
+          resources:
+            requests: { cpu: 50m, memory: 16Mi }
+            limits: { cpu: 200m, memory: 32Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: hello, namespace: tenant-a }
+spec:
+  selector: { app: hello }
+  ports: [{ name: http, port: 80, targetPort: http }]
+---
+# ---------- tenant-a api: Argo Rollouts 카나리 (2단계 흉내) ----------
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata: { name: api, namespace: tenant-a }
+spec:
+  replicas: 4
+  revisionHistoryLimit: 3
+  selector: { matchLabels: { app: api } }
+  template:
+    metadata: { labels: { app: api } }
+    spec:
+      nodeSelector: { pool: exec }
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: fn
+          image: hashicorp/http-echo:1.0
+          # 나쁜 버전 흉내 = 이 두 줄을 "-text=api v2-bad", "-status-code=500" 으로 바꾸기 (scripts/s3-bad-deploy.sh 가 한다)
+          args: ["-text=api v1", "-status-code=200", "-listen=:5678"]
+          ports: [{ name: http, containerPort: 5678 }]
+          resources:
+            requests: { cpu: 20m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 32Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+  strategy:
+    canary:
+      canaryService: api-canary
+      stableService: api-stable
+      steps:
+        - setWeight: 25
+        - analysis:
+            templates: [{ templateName: http-success }]
+        - setWeight: 50
+        - pause: { duration: 10s }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: api, namespace: tenant-a }
+spec:
+  selector: { app: api }
+  ports: [{ name: http, port: 80, targetPort: http }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: api-canary, namespace: tenant-a }
+spec:
+  selector: { app: api }
+  ports: [{ name: http, port: 80, targetPort: http }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: api-stable, namespace: tenant-a }
+spec:
+  selector: { app: api }
+  ports: [{ name: http, port: 80, targetPort: http }]
+---
+# 분석: 5초 간격으로 최대 3번, 매번 카나리 Service 에 curl 5번. 200 이 아니면 그 회차 실패.
+# failureLimit 1 = 실패가 1번을 넘으면(=2번째 실패) 분석 실패 → Rollout 이 abort(자동 롤백)
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata: { name: http-success, namespace: tenant-a }
+spec:
+  metrics:
+    - name: canary-http-200
+      count: 3
+      interval: 5s
+      failureLimit: 1
+      provider:
+        job:
+          spec:
+            backoffLimit: 0
+            template:
+              spec:
+                restartPolicy: Never
+                securityContext:
+                  runAsNonRoot: true
+                  runAsUser: 100
+                  seccompProfile: { type: RuntimeDefault }
+                containers:
+                  - name: check
+                    image: curlimages/curl:8.16.0
+                    command: [sh, -c]
+                    args:
+                      - |
+                        for i in 1 2 3 4 5; do
+                          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://api-canary.tenant-a.svc/)
+                          echo "try $i -> $code"
+                          [ "$code" = "200" ] || exit 1
+                          sleep 1
+                        done
+                    resources:
+                      requests: { cpu: 10m, memory: 16Mi }
+                      limits: { cpu: 100m, memory: 32Mi }
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      capabilities: { drop: [ALL] }

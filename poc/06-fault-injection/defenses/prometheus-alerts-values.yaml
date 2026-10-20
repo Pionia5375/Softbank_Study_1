@@ -1,0 +1,88 @@
+# 장애 감지 알림 — Jeong 작성 (빈칸 ___ 8개)
+# 2단계 Prometheus(Helm release prometheus, 차트 prometheus-community/prometheus 29.37.0)에 "덧붙이는" values.
+#   helm upgrade prometheus prometheus-community/prometheus --version 29.37.0 -n monitoring \
+#     -f poc/02-rollouts/platform/prometheus/values.yaml -f poc/06-fault-injection/defenses/prometheus-alerts-values.yaml
+#   (-f 를 두 번: 뒤 파일이 앞 파일을 덮는다. 2단계 값은 그대로 두고 6단계 것만 더한다)
+# 문서: 알림 규칙 https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/
+#       차트 values https://github.com/prometheus-community/helm-charts/blob/main/charts/prometheus/values.yaml (serverFiles, extraScrapeConfigs)
+
+# 쿠버네티스 리소스 상태(노드 Ready, Deployment 준비 파드 수, 쿼터 사용량)를 숫자로 바꿔 주는 부품. 2단계는 껐다. 알림 1·2·3 이 이 지표를 쓴다
+# TODO(human): 켤지
+kube-state-metrics:
+  enabled: ___
+
+# values 가 바뀌면 Prometheus 에 "설정 다시 읽어" 를 보내는 옆 컨테이너. 2단계는 껐다.
+# 켜 두면 알림 규칙을 고칠 때마다 helm upgrade 만 하면 된다 (안 켜면 Prometheus 파드를 재시작해야 반영)
+# TODO(human): 켤지
+configmapReload:
+  prometheus:
+    enabled: ___
+
+# 차트 기본 긁기 목록에 Argo Rollouts 컨트롤러 지표가 없다 → 한 줄 추가 (알림 4 RolloutAborted 가 쓴다)
+# 주의: 이 값은 문자열이고 차트가 템플릿(tpl)으로 한 번 더 읽는다. 중괄호 두 겹을 쓰지 말 것
+extraScrapeConfigs: |
+  - job_name: argo-rollouts
+    static_configs:
+      - targets: ["argo-rollouts-metrics.argo-rollouts.svc:8090"]
+
+serverFiles:
+  alerting_rules.yml:
+    groups:
+      - name: fault-injection
+        rules:
+          # 시나리오 1: 노드가 Ready 가 아니다
+          - alert: FnNodeNotReady
+            # TODO(human): kube_node_status_condition 지표로 "Ready 조건이 true 인 값이 0" 을 쓴다.
+            #   라벨은 condition="Ready", status="true". 먼저 Prometheus 화면(Query)에 쳐 보고 노드 수만큼 1 이 나오는지 확인
+            expr: ___
+            # TODO(human): 몇 초 계속되면 울릴지. 0s = 바로. 노드 NotReady 자체가 이미 약 50초 늦게 오는 신호라는 걸 기억 (s1 측정)
+            for: ___
+            labels: { severity: critical, scenario: s1 }
+            annotations:
+              summary: "노드 {{ $labels.node }} NotReady"
+              runbook: poc/06-fault-injection/runbooks/RB-01-node-down.md
+          # 시나리오 1·2: 테넌트 함수의 준비된 파드가 원하는 수보다 적다
+          - alert: FnReplicasUnavailable
+            expr: |
+              kube_deployment_status_replicas_available{namespace=~"tenant-.*"}
+                < kube_deployment_spec_replicas{namespace=~"tenant-.*"}
+            # TODO(human): 평소 배포할 때도 잠깐 모자란다. 배포 때마다 울리지 않을 만큼만 기다린다
+            for: ___
+            labels: { severity: warning, scenario: s1 }
+            annotations:
+              summary: "{{ $labels.namespace }}/{{ $labels.deployment }} 준비된 파드 부족"
+              runbook: poc/06-fault-injection/runbooks/RB-01-node-down.md
+          # 시나리오 2: 테넌트가 자기 한도의 몇 % 넘게 썼다 (= 폭주 중이거나 곧 막힌다)
+          - alert: TenantQuotaNearLimit
+            # kube_resourcequota 는 type="used"(쓴 양)와 type="hard"(한도) 두 줄이 나온다. 나눠서 비율을 본다
+            # TODO(human): 몇 % 를 넘으면 울릴지 (0~1 사이 숫자)
+            expr: |
+              kube_resourcequota{type="used"}
+                / ignoring(type) kube_resourcequota{type="hard"} > ___
+            for: 0s
+            labels: { severity: warning, scenario: s2 }
+            annotations:
+              summary: "{{ $labels.namespace }} 의 {{ $labels.resource }} 사용량이 한도의 90% 초과"
+              runbook: poc/06-fault-injection/runbooks/RB-02-noisy-neighbor.md
+          # 시나리오 3: 카나리 분석이 실패해서 Rollout 이 멈췄다 (자동 롤백됨)
+          - alert: RolloutAborted
+            # TODO(human): rollout_info 지표의 phase 라벨이 abort 뒤에 무엇이 되나.
+            #   함정: kubectl get rollout 의 PHASE 열(Degraded)과 지표 라벨 값은 다르다. 추측하지 말고
+            #   s3 를 한 번 돌려 abort 된 상태에서 Prometheus 화면에 rollout_info 를 쳐서 phase 라벨 값을 그대로 옮긴다
+            expr: rollout_info{phase="___"} == 1
+            for: 0s
+            labels: { severity: warning, scenario: s3 }
+            annotations:
+              summary: "{{ $labels.namespace }}/{{ $labels.name }} 카나리 중단(자동 롤백)"
+              runbook: poc/06-fault-injection/runbooks/RB-03-bad-deploy.md
+          # 시나리오 4: Pod Security 가 파드 생성을 거부했다 (특권 컨테이너·hostPath 시도)
+          - alert: TenantPolicyDenied
+            # pod_security_evaluations_total = API 서버가 PSA 판정을 할 때마다 1 씩 오르는 카운터.
+            # TODO(human): 카운터는 계속 커지기만 하니 "최근 5분 동안 늘어난 양" 으로 바꿔야 한다. 그 함수 이름
+            #   (https://prometheus.io/docs/prometheus/latest/querying/functions/ 에서 rate 말고 '양' 을 주는 것)
+            expr: sum(___(pod_security_evaluations_total{decision="deny",mode="enforce"}[5m])) > 0
+            for: 0s
+            labels: { severity: warning, scenario: s4 }
+            annotations:
+              summary: "최근 5분 Pod Security 거부 {{ $value }} 건"
+              runbook: poc/06-fault-injection/runbooks/RB-04-tenant-breach.md

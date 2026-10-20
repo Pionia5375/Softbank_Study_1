@@ -1,0 +1,17 @@
+# 시나리오 1(spot 모드) 방어: PodDisruptionBudget — Jeong 작성 (빈칸 ___ 4개)
+# PDB = "자발적으로 파드를 빼낼 때(drain, 클러스터 업그레이드) 최소 몇 개는 살아 있어야 한다" 는 약속.
+# 노드가 갑자기 죽는 건(hard) 자발적이 아니라서 PDB 와 상관없다. 스팟 회수 예고를 받고 drain 할 때만 효과가 있다.
+#   문서: https://kubernetes.io/docs/concepts/workloads/pods/disruptions/
+#   예시: https://kubernetes.io/docs/tasks/run-application/configure-pdb/
+# TODO(human): apiVersion 과 kind (문서의 예시 맨 위 두 줄)
+apiVersion: ___
+kind: ___
+metadata:
+  name: hello
+  namespace: tenant-a
+spec:
+  # TODO(human): 최소 몇 개를 남길지. hello 는 replicas 2 다. 2 로 하면 어떻게 될지는 README 5절에서 직접 깨뜨려 본다
+  minAvailable: ___
+  selector:
+    # TODO(human): 어떤 파드에 대한 약속인지. hello 파드의 라벨을 적는다 (standin/targets.yaml 에서 찾기)
+    matchLabels: ___

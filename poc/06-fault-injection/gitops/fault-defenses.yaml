@@ -1,0 +1,29 @@
+# 6단계 방어 설정(PDB)을 Git 으로 배포하는 Argo CD Application — Jeong 작성 (빈칸 ___ 4개)
+# 진짜 클러스터에서만 쓴다 (대역 클러스터엔 Argo CD 가 없다). 1단계에서 쓴 gitops/apps/hello-fn.yaml 과 모양이 같다.
+#   문서: https://argo-cd.readthedocs.io/en/stable/user-guide/directory/
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fault-defenses
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1
+    targetRevision: main
+    # TODO(human): 레포 안에서 pdb.yaml 이 있는 폴더 경로
+    path: ___
+    directory:
+      # TODO(human): 이 폴더에서 Argo CD 가 읽으면 안 되는 파일 두 개 (쿠버네티스 리소스가 아닌 것).
+      #   여러 개는 '{a.yaml,b.yaml}' 처럼 중괄호로 묶는다 (따옴표 필수: YAML 에서 { 로 시작하면 다른 뜻이 된다)
+      exclude: ___
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tenant-a
+  syncPolicy:
+    automated:
+      # TODO(human): 1단계에서 정한 값과 같게 (Git 에서 지우면 클러스터에서도 지울지 / kubectl 수정을 되돌릴지)
+      prune: ___
+      selfHeal: ___

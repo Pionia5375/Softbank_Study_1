@@ -1,0 +1,6 @@
+date,label,mode,run,replicas,t_canary_s,t_failed_s,t_abort_s,t_stable_s,t_alert_s,baseline_n,baseline_p50_ms,baseline_p95_ms,baseline_err_pct,after_n,errors,err_pct_window,p95_window_ms,first_err_s,last_err_s,outage_s
+2026-10-20,기본,kubectl,1,4,0.1,19.0,19.0,20.6,42.2,139,2.3,3.7,0.0,423,34,8.0,4.0,0.3,19.7,19.3
+2026-10-20,기본,kubectl,2,4,0.1,16.0,16.0,17.8,44.6,140,2.4,3.2,0.0,443,26,5.9,4.8,2.8,18.1,15.4
+2026-10-20,기본,kubectl,3,4,0.1,16.0,16.0,16.0,31.5,138,2.5,3.3,0.0,325,27,8.3,4.8,2.6,16.4,13.8
+2026-10-20,failureLimit 5 (설정 오류라 Error→abort: 깨뜨리기 무효),kubectl,1,4,0.1,1.8,1.8,3.5,29.0,138,2.4,4.8,0.0,312,0,0.0,4.6,,0,0
+2026-10-20,분석이 stable 을 봄(깨뜨리기),kubectl,1,4,0.1,missed,missed,promoted-bad,,139,2.4,4.1,0.0,563,195,29.6,4.8,2.8,64.4,61.6

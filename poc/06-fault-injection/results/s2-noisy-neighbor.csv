@@ -1,0 +1,5 @@
+date,label,run,quota_objects,burners_wanted,burners_running,burners_pending,t_blocked_s,t_alert_s,victim_scaleup_s,fix_at_s,baseline_n,baseline_p50_ms,baseline_p95_ms,baseline_err_pct,after_n,errors,err_pct_window,p95_window_ms,first_err_s,last_err_s,outage_s
+2026-10-20,쿼터 있음,1,1,30,2,0,0.3,4.7,1.7,60.7,275,2.3,3.3,0.0,686,0,0.0,6.9,,0,0
+2026-10-20,쿼터 있음,2,1,30,2,0,0.3,15.3,1.5,60.1,275,2.3,3.1,0.0,671,3,0.0,7.4,60.4,62.3,1.9
+2026-10-20,쿼터 있음,3,1,30,2,0,0.3,11.1,2.4,60.8,275,2.4,3.5,0.0,675,1,0.0,7.8,62.8,62.8,0.0
+2026-10-20,쿼터 없음(깨뜨리기),1,0,30,14,16,,,7.9,60.2,276,2.3,3.9,0.0,552,1,0.0,93.9,61.8,61.8,0.0

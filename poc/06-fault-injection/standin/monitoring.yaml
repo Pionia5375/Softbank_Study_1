@@ -1,0 +1,158 @@
+# 6단계 대역 관측 스택 (Claude 작성, 완성본)
+# 진짜 클러스터에는 2단계의 Prometheus Helm 차트(prometheus-community/prometheus) + 6단계 values 를 쓴다.
+# 여기선 Helm 없이 Prometheus 1개 + kube-state-metrics 1개만. 알림 규칙은 standin/load-rules.sh 가
+# defenses/prometheus-alerts-values.yaml 의 규칙 부분만 잘라 ConfigMap 으로 넣는다.
+# Service 이름·포트를 prometheus-server:80 으로 둔 이유: 2단계 차트가 만드는 것과 같아서 스크립트가 그대로 돈다.
+---
+apiVersion: v1
+kind: Namespace
+metadata: { name: monitoring }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: prometheus, namespace: monitoring }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: standin-prometheus }
+rules:
+  - nonResourceURLs: [/metrics]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [nodes, nodes/metrics, nodes/proxy, services, endpoints, pods]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: standin-prometheus }
+subjects: [{ kind: ServiceAccount, name: prometheus, namespace: monitoring }]
+roleRef: { kind: ClusterRole, name: standin-prometheus, apiGroup: rbac.authorization.k8s.io }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: prometheus-config, namespace: monitoring }
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    rule_files: [/etc/prometheus/rules/*.yaml]
+    scrape_configs:
+      - job_name: kube-state-metrics
+        static_configs: [{ targets: [kube-state-metrics.monitoring.svc:8080] }]
+      - job_name: argo-rollouts
+        static_configs: [{ targets: [argo-rollouts-metrics.argo-rollouts.svc:8090] }]
+      - job_name: apiserver
+        scheme: https
+        authorization: { credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token }
+        tls_config: { insecure_skip_verify: true }
+        static_configs: [{ targets: [kubernetes.default.svc:443] }]
+        metric_relabel_configs:
+          # apiserver 지표는 아주 많다. 우리가 쓰는 것만 남긴다
+          - source_labels: [__name__]
+            regex: apiserver_request_total|pod_security_evaluations_total
+            action: keep
+      - job_name: cadvisor
+        scheme: https
+        authorization: { credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token }
+        tls_config: { insecure_skip_verify: true }
+        kubernetes_sd_configs: [{ role: node }]
+        relabel_configs:
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: container_cpu_usage_seconds_total|container_cpu_cfs_throttled_periods_total|container_cpu_cfs_periods_total
+            action: keep
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: prometheus, namespace: monitoring }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: prometheus } }
+  template:
+    metadata: { labels: { app: prometheus } }
+    spec:
+      serviceAccountName: prometheus
+      nodeSelector: { pool: system }
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.5.0
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.retention.time=6h
+            - --web.enable-lifecycle
+          ports: [{ name: web, containerPort: 9090 }]
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 1Gi }
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus/prometheus.yml, subPath: prometheus.yml }
+            - { name: rules, mountPath: /etc/prometheus/rules }
+      volumes:
+        - { name: config, configMap: { name: prometheus-config } }
+        # 규칙 ConfigMap 은 standin/load-rules.sh 가 만든다. 아직 없어도 Prometheus 는 뜬다(optional)
+        - { name: rules, configMap: { name: prometheus-rules, optional: true } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: prometheus-server, namespace: monitoring }
+spec:
+  selector: { app: prometheus }
+  ports: [{ name: web, port: 80, targetPort: web }]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: kube-state-metrics, namespace: monitoring }
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: standin-ksm }
+rules:
+  - apiGroups: [""]
+    resources: [nodes, pods, resourcequotas, namespaces, services, endpoints, limitranges]
+    verbs: [list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets]
+    verbs: [list, watch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: standin-ksm }
+subjects: [{ kind: ServiceAccount, name: kube-state-metrics, namespace: monitoring }]
+roleRef: { kind: ClusterRole, name: standin-ksm, apiGroup: rbac.authorization.k8s.io }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: kube-state-metrics, namespace: monitoring }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: kube-state-metrics } }
+  template:
+    metadata: { labels: { app: kube-state-metrics } }
+    spec:
+      serviceAccountName: kube-state-metrics
+      nodeSelector: { pool: system }
+      containers:
+        - name: ksm
+          # registry.k8s.io 의 공식 이미지가 정석. 검증 컨테이너에서 그 레지스트리가 막혀 있어 같은 바이너리의 미러를 썼다
+          image: bitnamilegacy/kube-state-metrics:2.15.0
+          args: ["--resources=nodes,pods,resourcequotas,namespaces,deployments,replicasets"]
+          ports: [{ name: http, containerPort: 8080 }]
+          resources:
+            requests: { cpu: 20m, memory: 64Mi }
+            limits: { memory: 256Mi }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: kube-state-metrics, namespace: monitoring }
+spec:
+  selector: { app: kube-state-metrics }
+  ports: [{ name: http, port: 8080, targetPort: http }]

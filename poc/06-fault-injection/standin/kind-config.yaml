@@ -1,0 +1,27 @@
+# 6단계 대역(stand-in) 클러스터 (Claude 작성, 완성본)
+# 언제 쓰나: 3·4단계 클러스터가 아직 없을 때, 또는 장애 실험으로 본 클러스터를 망가뜨리기 싫을 때.
+# 3단계 최종 모양(컨트롤 플레인 1 + 워커 system/build/exec)을 흉내 내되, exec 를 2대로 둔다.
+#   exec 가 1대면 "노드 다운 = 함수 전면 장애" 라서 시나리오 1 에서 볼 게 그것 하나뿐이다.
+#   2대여야 "쿠버네티스가 죽은 노드를 알아채고 옮기기까지 몇 초 걸리나" 를 잴 수 있다.
+# CNI 는 kindnet 그대로.
+#   kindnet 도 kind v0.24 부터 NetworkPolicy 를 강제한다 (kube-network-policies 내장). Cilium 만큼 관측(Hubble)은 안 된다.
+#   https://kind.sigs.k8s.io/docs/user/configuration/  ·  https://github.com/kubernetes-sigs/kind/releases/tag/v0.24.0
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: chaos
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.37.0
+  # 노드 풀 라벨 pool=... 은 3단계 가정과 같다. 다르면 scripts/env.sh 의 EXEC_LABEL 만 바꾸면 된다
+  - role: worker
+    image: kindest/node:v1.37.0
+    labels: { pool: system }
+  - role: worker
+    image: kindest/node:v1.37.0
+    labels: { pool: build }
+  - role: worker
+    image: kindest/node:v1.37.0
+    labels: { pool: exec }
+  - role: worker
+    image: kindest/node:v1.37.0
+    labels: { pool: exec }

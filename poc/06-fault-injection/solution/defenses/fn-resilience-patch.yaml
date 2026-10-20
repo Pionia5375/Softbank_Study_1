@@ -1,0 +1,33 @@
+# 시나리오 1 방어: 함수 파드가 노드 다운을 견디게 하는 설정 — 정답본
+# 이 파일은 Deployment 에 "덧붙일 조각"(strategic merge patch)이다. 대역 대상엔 kubectl patch 로 붙이고,
+# 진짜 함수(4단계 차트)엔 같은 필드를 차트의 Deployment(또는 Knative Service) template.spec 에 넣는다.
+#   https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/#taint-based-evictions
+#   https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/
+spec:
+  template:
+    spec:
+      # 노드가 NotReady/Unreachable 이 되면 쿠버네티스가 그 노드에 taint 를 붙인다.
+      # 파드가 그 taint 를 "몇 초까지 참을지" = tolerationSeconds. 안 쓰면 기본 300초(5분) 동안 죽은 노드에 묶여 있다.
+      # 20초: NotReady 판정(약 50초) 뒤 20초 더 = 노드가 정말 안 돌아오는지 한 번 더 보는 여유. 대역 실측 복구 352s → 약 70s
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 20
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 20
+      # 파드를 노드마다 고르게 흩어 놓는다. 한 노드에 몰려 있으면 그 노드 하나로 전부 죽는다.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          # DoNotSchedule = 흩을 수 없으면 안 띄운다 → 평소엔 반드시 1개씩 흩어진다
+          whenUnsatisfiable: DoNotSchedule
+          # Honor = taint 가 붙은 노드(죽은 노드, cordon 된 노드)는 "흩을 자리" 계산에서 뺀다.
+          # 이게 없으면(기본 Ignore) 죽은 노드도 자리로 세서 "고르게 못 흩으니 안 띄운다" → 새 파드가 Pending (README 8절 실측)
+          nodeTaintsPolicy: Honor
+          # 같은 리비전(pod-template-hash)끼리만 센다. 이게 없으면 배포 중에 옛 파드까지 세서, 배포가 끝나면 한 노드에 몰릴 수 있다
+          matchLabelKeys: [pod-template-hash]
+          labelSelector:
+            matchLabels: { app: hello }

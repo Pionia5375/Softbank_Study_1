@@ -1,0 +1,29 @@
+# 6단계 방어 설정(PDB)을 Git 으로 배포하는 Argo CD Application — 정답본
+# 진짜 클러스터에서만 쓴다 (대역 클러스터엔 Argo CD 가 없다). 1단계 App of Apps 에 붙이려면 이 파일을
+# poc/01-argocd/gitops/apps/ 에 복사해 push 하거나, 그냥 kubectl apply -f 로 붙인다.
+#   https://argo-cd.readthedocs.io/en/stable/user-guide/directory/
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fault-defenses
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1
+    targetRevision: main
+    path: poc/06-fault-injection/defenses
+    directory:
+      # 쿠버네티스 리소스가 아닌 파일 두 개를 뺀다: 패치 조각(apiVersion 없음), Helm values(알림, helm upgrade 로 넣음).
+      # 안 빼면 Argo CD 가 "이게 뭐냐" 하고 Sync 실패. 중괄호 = 여러 파일 이름 (glob)
+      exclude: '{fn-resilience-patch.yaml,prometheus-alerts-values.yaml}'
+  destination:
+    server: https://kubernetes.default.svc
+    # pdb.yaml 에 namespace(tenant-a)를 적어 뒀다. 여기 값은 namespace 를 안 적은 리소스의 기본값일 뿐
+    namespace: tenant-a
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
