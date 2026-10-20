@@ -2,7 +2,7 @@
 # Argo CD 도 이 파일을 그대로 쓴다 (Application 에서 따로 덮어쓰지 않으면).
 
 # TODO(human): 파드 몇 개 띄울지. 1 이면 업데이트 순간 잠깐 끊길 수 있고, 2 이상이면 하나씩 바꾼다.
-replicaCount: ___
+replicaCount: 2
 
 image:
   # http-echo = 받은 요청마다 -text 로 준 문자열을 돌려주는 아주 작은 서버 (약 4MB)

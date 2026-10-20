@@ -10,11 +10,11 @@
 # dex = GitHub·Google 로그인(SSO)을 Argo CD 에 붙여 주는 중개 서버.
 # 로컬에선 admin 계정 하나로 충분하니 끈다. 켜 두면 파드 1개와 메모리를 그냥 먹는다.
 dex:
-  enabled: ___    # TODO(human): true / false
+  enabled: false    # TODO(human): true / false
 
 # notifications = 동기화 결과를 Slack·메일로 보내는 컨트롤러. 오늘은 안 쓴다.
 notifications:
-  enabled: ___    # TODO(human)
+  enabled: false    # TODO(human)
 
 configs:
   # argocd-cmd-params-cm 이라는 ConfigMap 이 된다 (Argo CD 프로그램들의 실행 옵션)
@@ -23,7 +23,7 @@ configs:
     # 기본값이면 argocd-server 가 스스로 HTTPS(자체 서명 인증서)로 응답한다.
     # 우리는 맥에서 port-forward 로 http://localhost:8080 으로 볼 거라 HTTPS 를 끈다.
     # (본선 AWS 에선 앞단 로드밸런서가 HTTPS 를 맡고 이 값은 똑같이 true 로 둔다)
-    server.insecure: ___    # TODO(human): true / false
+    server.insecure: true    # TODO(human): true / false
 
   # argocd-cm 이라는 ConfigMap 이 된다 (Argo CD 동작 설정)
   cm:
@@ -35,5 +35,5 @@ configs:
     # 대안: GitHub webhook(푸시하면 GitHub 가 Argo CD 를 바로 깨움). 그런데 맥 안 kind 는
     #   GitHub 에서 접근할 주소가 없어서 터널(cloudflared 등)이 필요하다 → 오늘은 polling 으로 재 보고 비교.
     # 값을 고르고, 고른 이유를 이 단계 README 8절 결정 표에 한 줄 적는다.
-    timeout.reconciliation: ___           # TODO(human): 예) 180s / 60s / 30s 중 하나
-    timeout.reconciliation.jitter: ___    # TODO(human): 예) 60s / 10s / 0s
+    timeout.reconciliation: 120           # TODO(human): 예) 180s / 60s / 30s 중 하나
+    timeout.reconciliation.jitter: 60    # TODO(human): 예) 60s / 10s / 0s

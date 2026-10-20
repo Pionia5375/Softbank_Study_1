@@ -11,27 +11,27 @@ metadata:
   labels:
     app: {{ .Release.Name }}
 spec:
-  replicas: ___    # TODO(human): values.yaml 의 replicaCount 를 읽는 식
+  replicas: {{ .Values.replicaCount }}    # TODO(human): values.yaml 의 replicaCount 를 읽는 식
   selector:
     # 이 Deployment 가 "내 파드"로 셀 파드를 고르는 조건
     matchLabels:
-      app: ___     # TODO(human)
+      app: {{ .Release.Name }}     # TODO(human)
   template:
     metadata:
       labels:
         # 위 selector 와 같아야 한다. 다르면 무슨 일이 생길지는 5단계에서 직접 깨뜨려 본다
-        app: ___   # TODO(human)
+        app: {{ .Release.Name }}   # TODO(human)
     spec:
       containers:
         - name: fn
-          image: ___    # TODO(human): "저장소:태그" 모양. 두 값을 values.yaml 에서 읽는다 (따옴표로 감쌀 것)
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}    # TODO(human): "저장소:태그" 모양. 두 값을 values.yaml 에서 읽는다 (따옴표로 감쌀 것)
           # http-echo 실행 옵션: 돌려줄 문자열과 들을 포트
           args:
             - "-text={{ .Values.message }}"
             - "-listen=:{{ .Values.containerPort }}"
           ports:
             - name: http
-              containerPort: ___    # TODO(human)
+              containerPort: {{ .Values.containerPort }}    # TODO(human)
           # 작게 잡아 둔다. 10/23 ResourceQuota 날에 이 값이 "테넌트 한도" 계산의 기준이 된다
           resources:
             requests:

@@ -7,8 +7,8 @@ metadata:
 spec:
   # 요청을 보낼 파드를 라벨로 고른다. Deployment 의 파드 라벨과 같아야 한다
   selector:
-    app: ___          # TODO(human)
+    app: {{ .Release.Name }}          # TODO(human)
   ports:
     - name: http
-      port: ___       # TODO(human): Service 가 받는 포트 (values.yaml 의 service.port)
-      targetPort: ___ # TODO(human): 파드로 넘길 포트. 숫자 대신 Deployment 에서 붙인 포트 이름을 써도 된다
+      port: {{ .Values.service.port }}       # TODO(human): Service 가 받는 포트 (values.yaml 의 service.port)
+      targetPort: {{ .Values.containerPort }} # TODO(human): 파드로 넘길 포트. 숫자 대신 Deployment 에서 붙인 포트 이름을 써도 된다
