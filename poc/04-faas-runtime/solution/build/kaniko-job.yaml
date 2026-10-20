@@ -1,0 +1,77 @@
+# 함수 빌드 Job: 소스(ConfigMap) → Kaniko → 이미지 → kind-registry. Jeong 작성 (정답본)
+# 문서: https://kubernetes.io/docs/concepts/workloads/controllers/job/
+#       https://github.com/GoogleContainerTools/kaniko#additional-flags  (2025-06 보관(archived)됨, 아래 README 결정 2 참고)
+#
+# 직접 apply 하지 않는다. scripts/build.sh 가 이 파일을 읽어 이름·태그·풀만 바꿔서 만든다.
+#   - metadata.name                   → build-hello-<태그>
+#   - env[0] (IMAGE_TAG) 값            → 이번 태그
+#   (소스는 build.sh 가 functions/hello-src 를 tar.gz 로 묶어 ConfigMap hello-src 에 넣는다)
+#   - nodeSelector.pool / toleration  → POOL=exec 로 부르면 exec 로 바꿔서 "빌드가 함수 옆에서 돌 때"를 잰다
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: build-hello
+  namespace: fn-build
+  labels:
+    app: fn-build
+spec:
+  # 실패하면 다시 안 돌린다. 빌드 실패는 재시도해도 같은 이유로 또 실패하는 경우가 대부분이고, 로그를 남겨 보는 게 먼저다
+  backoffLimit: 0
+  # 10분 넘게 걸리면 강제 종료 (베이스 이미지 다운로드가 멈춰서 노드를 붙잡고 있는 경우)
+  activeDeadlineSeconds: 600
+  # 끝나고 10분 뒤 Job·Pod 를 자동 삭제 (빌드가 쌓이면 노드 디스크와 etcd 를 먹는다)
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: fn-build
+    spec:
+      restartPolicy: Never
+      # ---- 어디서 돌까: build 풀에만 ----
+      nodeSelector:
+        pool: build
+      tolerations:
+        - key: pool
+          operator: Equal
+          value: build
+          effect: NoSchedule
+      containers:
+        - name: kaniko
+          image: gcr.io/kaniko-project/executor:v1.23.2
+          env:
+            # build.sh 가 env 의 0번째 값을 바꾼다. 순서를 바꾸지 말 것
+            - name: IMAGE_TAG
+              value: dev
+          args:
+            # 빌드 재료 = 소스 폴더를 묶은 tar.gz 한 개 (build.sh 가 ConfigMap hello-src 에 넣는다)
+            # dir:///workspace 로 폴더를 바로 쓰면 안 된다: ConfigMap 볼륨의 파일은 전부 심볼릭 링크(..data/ 를 가리킴)라서
+            # Kaniko 가 COPY 할 때 링크만 복사하고 → 이미지 안에서 go.mod 를 못 찾는다 ("go.mod file not found")
+            - --context=tar:///workspace/context.tar.gz
+            # context 안에서의 Dockerfile 위치
+            - --dockerfile=Dockerfile
+            # $(IMAGE_TAG) = 위 env 값으로 바뀐다 (쿠버네티스가 args 안의 $(변수) 를 채워 준다)
+            - --destination=kind-registry:5000/fn/hello:$(IMAGE_TAG)
+            # 레이어 캐시: 이미 만든 단계(RUN go build 등)를 레지스트리에 저장해 두고 다음 빌드에서 재사용
+            - --cache=true
+            - --cache-repo=kind-registry:5000/fn/cache
+            # kind-registry 는 TLS 없는 http 레지스트리
+            - --insecure
+            - --insecure-registry=kind-registry:5000
+            # 파일 변경 감지 방식. redo = 파일 시간·크기만 보고 판단 → 기본(full, 내용 해시)보다 빠르다
+            - --snapshot-mode=redo
+          resources:
+            # 스케줄러가 자리를 계산하는 값. 빌드는 짧고 굵게 → requests 는 작게, limits 는 크게
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      volumes:
+        - name: workspace
+          configMap:
+            # build.sh 가 만든다: tar -czf context.tar.gz -C functions/hello-src . → kubectl create configmap hello-src --from-file=context.tar.gz
+            name: hello-src

@@ -1,0 +1,48 @@
+# hello-gvisor 와 같고, 항상 1개는 켜 둔다 (웜 1개). Jeong 작성 (빈칸 3개, 막히면 solution/functions/ksvc/hello-gvisor-warm.yaml)
+# 차이 = min-scale 한 줄. 콜드 스타트가 사라지는 대신, 요청이 0일 때도 Pod 1개 몫의 자리(메모리)를 계속 쓴다
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: hello-gvisor-warm
+  namespace: fn-runtime
+spec:
+  template:
+    metadata:
+      annotations:
+        # 0 으로 안 내려간다. 이 값만큼은 요청이 없어도 켜 둔다 = 웜 풀의 가장 단순한 형태
+        autoscaling.knative.dev/min-scale: "___"   # TODO(human)
+        autoscaling.knative.dev/max-scale: "5"
+        autoscaling.knative.dev/target: "10"
+        autoscaling.knative.dev/window: "6s"
+    spec:
+      # ---- 무엇으로 돌까: gVisor (platform/runtimeclass-gvisor.yaml 의 metadata.name) ----
+      runtimeClassName: ___
+      nodeSelector:
+        pool: exec
+      tolerations:
+        - key: pool
+          operator: Equal
+          value: exec
+          effect: NoSchedule
+      containers:
+        - image: ___
+          ports:
+            - containerPort: 8080
+          env:
+            - name: FN_NAME
+              value: hello-gvisor-warm
+          # 3단계 테넌트 namespace 의 Pod Security(restricted) 기준을 미리 맞춘다. 안 쓰면 apply 때 경고가 4줄 나온다
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi

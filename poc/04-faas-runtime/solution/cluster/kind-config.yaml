@@ -1,0 +1,66 @@
+# 4단계 클러스터 = 3단계 설정(poc/03-tenant-isolation/cluster/kind-config.yaml) + 아래 3가지. Jeong 작성 (정답본)
+#   1) build·exec 풀에 taint (출입 금지 표시). system 풀은 일부러 안 건다
+#   2) 맥 8081 → 노드 31080 포트 연결 (Knative 입구 Kourier 로 들어가는 길)
+#   3) containerd 가 kind-registry 설정 폴더(certs.d)를 읽게 하는 한 줄 (Claude 몫, 그대로 둔다)
+# 비교: diff poc/03-tenant-isolation/cluster/kind-config.yaml poc/04-faas-runtime/cluster/kind-config.yaml
+# 문서: https://kind.sigs.k8s.io/docs/user/configuration/#nodes
+#       https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/
+#       https://kind.sigs.k8s.io/docs/user/local-registry/
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: faas
+networking:
+  # 3단계와 같다: kindnet 을 빼고 Cilium. 3단계를 건너뛰고 이 단계만 하면 false 로 (이 단계 검증은 false 로 했다)
+  disableDefaultCNI: true
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.37.0
+    extraPortMappings:
+      # 맥 8081 → 노드 31080 (setup.sh 가 Kourier Service 를 NodePort 31080 으로 바꾼다).
+      # 8080 은 Argo CD port-forward 가 이미 쓴다
+      - containerPort: 31080
+        hostPort: 8081
+        protocol: TCP
+
+  # system 풀: Argo CD, Knative, Kourier, CoreDNS 같은 플랫폼 부품.
+  # taint 를 안 건다 → toleration 이 없는 부품(설치 차트 대부분)이 알아서 여기로 온다
+  - role: worker
+    image: kindest/node:v1.37.0
+    labels:
+      pool: system
+
+  # build 풀: Kaniko 빌드 Job 만. CPU·디스크를 크게 쓰고 잠깐 돌고 끝난다 (클라우드면 스팟 + CPU 큰 기계)
+  - role: worker
+    image: kindest/node:v1.37.0
+    labels:
+      pool: build
+    kubeadmConfigPatches:
+      # kind 설정엔 taint 칸이 없다 → 노드가 클러스터에 들어올 때(kubeadm join) 쓰는 설정에 끼워 넣는다
+      - |
+        kind: JoinConfiguration
+        nodeRegistration:
+          taints:
+            - key: pool
+              value: build
+              effect: NoSchedule
+
+  # exec 풀: 사용자 함수만. gVisor 는 이 풀에만 설치한다 (scripts/install-gvisor.sh)
+  - role: worker
+    image: kindest/node:v1.37.0
+    labels:
+      pool: exec
+    kubeadmConfigPatches:
+      - |
+        kind: JoinConfiguration
+        nodeRegistration:
+          taints:
+            - key: pool
+              value: exec
+              effect: NoSchedule
+
+# 노드의 containerd 가 /etc/containerd/certs.d/<레지스트리>/hosts.toml 을 읽게 한다.
+# 그 파일은 setup.sh 가 노드마다 넣는다 (kind-registry:5000, localhost:5001 → http://kind-registry:5000)
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry]
+      config_path = "/etc/containerd/certs.d"

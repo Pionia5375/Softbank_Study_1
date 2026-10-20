@@ -1,0 +1,48 @@
+# hello-runc 와 같고, 실행 런타임만 gVisor. Jeong 작성 (빈칸 2개, 막히면 solution/functions/ksvc/hello-gvisor.yaml)
+# 차이 = runtimeClassName 한 줄. nodeSelector·toleration 은 RuntimeClass 의 scheduling 이 붙여 주지만,
+# 같은 이유로 둘 다 써 두면 RuntimeClass 를 빼먹었을 때도 exec 풀에 간다 → 그대로 둔다
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: hello-gvisor
+  namespace: fn-runtime
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/min-scale: "0"
+        autoscaling.knative.dev/max-scale: "5"
+        autoscaling.knative.dev/target: "10"
+        autoscaling.knative.dev/window: "6s"
+    spec:
+      # ---- 무엇으로 돌까: gVisor (platform/runtimeclass-gvisor.yaml 의 metadata.name) ----
+      runtimeClassName: ___     # TODO(human): 이 한 줄이 이 파일의 전부다
+      nodeSelector:
+        pool: exec
+      tolerations:
+        - key: pool
+          operator: Equal
+          value: exec
+          effect: NoSchedule
+      containers:
+        - image: ___          # TODO(human): hello-runc 와 같은 이미지
+          ports:
+            - containerPort: 8080
+          env:
+            - name: FN_NAME
+              value: hello-gvisor
+          # 3단계 테넌트 namespace 의 Pod Security(restricted) 기준을 미리 맞춘다. 안 쓰면 apply 때 경고가 4줄 나온다
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi

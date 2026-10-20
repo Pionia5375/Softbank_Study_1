@@ -1,0 +1,24 @@
+# RuntimeClass = "이 이름을 고른 Pod 는 노드의 어떤 저수준 런타임으로 띄워라" 한 장. Jeong 작성 (빈칸 5개, 막히면 solution/platform/runtimeclass-gvisor.yaml)
+# 문서: https://kubernetes.io/docs/concepts/containers/runtime-class/
+#       https://gvisor.dev/docs/user_guide/containerd/quick_start/
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  # Pod(ksvc) 쪽에서 runtimeClassName: gvisor 로 고른다
+  name: gvisor
+# handler = 노드 containerd 설정의 runtimes.<이름>. install-gvisor.sh 가 exec 노드에 runsc 라는 이름으로 등록했다
+handler: ___          # TODO(human): install-gvisor.sh 가 containerd 에 등록한 런타임 이름
+# scheduling: 이 RuntimeClass 를 고른 Pod 에 nodeSelector·toleration 을 자동으로 붙인다.
+# runsc 는 exec 풀에만 깔려 있으니, 다른 노드로 가면 "no runtime for runsc" 로 실패한다 → 여기서 막는다
+scheduling:
+  nodeSelector:
+    pool: ___            # TODO(human)
+  tolerations:
+    # TODO(human): exec 풀 taint 를 통과하는 toleration 한 개 (key / operator / value / effect)
+    - ___
+# overhead: 앱 컨테이너 말고 gVisor 자체(Sentry 프로세스)가 먹는 몫. 스케줄러가 자리 계산에 더한다.
+# 값은 추정치 → 측정 후 고친다 (kubectl top pod 로 runc 대비 차이)
+overhead:
+  podFixed:
+    cpu: ___             # TODO(human) 결정: 일단 추정치를 넣고, 측정 후 고친다
+    memory: ___

@@ -1,0 +1,27 @@
+# 4단계 함수들(ksvc 3개)을 Argo CD 가 Git 에서 깔게 하는 Application. Jeong 작성 (정답본)
+# 1단계 hello-fn Application 과 같은 모양. 다른 점: 차트가 아니라 YAML 폴더, namespace 가 fn-runtime.
+# kubectl apply -f poc/04-faas-runtime/gitops/faas-functions.yaml 로 붙인다 (1단계 root 의 apps/ 폴더는 건드리지 않는다)
+# 문서: https://argo-cd.readthedocs.io/en/stable/user-guide/directory/
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: faas-functions
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1
+    targetRevision: main
+    # Chart.yaml 이 없는 폴더 → YAML 파일 묶음으로 읽는다
+    path: poc/04-faas-runtime/functions/ksvc
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: fn-runtime
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
