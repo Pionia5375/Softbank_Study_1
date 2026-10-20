@@ -1,0 +1,22 @@
+# hello-fn 차트 기본값. Jeong 작성. 템플릿은 {{ .Values.<이름> }} 으로 이 값을 읽는다.
+# Argo CD 도 이 파일을 그대로 쓴다 (Application 에서 따로 덮어쓰지 않으면).
+
+# TODO(human): 파드 몇 개 띄울지. 1 이면 업데이트 순간 잠깐 끊길 수 있고, 2 이상이면 하나씩 바꾼다.
+replicaCount: 2
+
+image:
+  # http-echo = 받은 요청마다 -text 로 준 문자열을 돌려주는 아주 작은 서버 (약 4MB)
+  # https://hub.docker.com/r/hashicorp/http-echo
+  repository: hashicorp/http-echo
+  tag: "1.0"
+
+# 함수가 돌려줄 문자열. scripts/measure-sync.sh 가 이 줄을 바꿔서 git push → 반영까지 시간을 잰다.
+# (스크립트가 `message:` 로 시작하는 줄을 찾으니 줄 모양은 그대로 둘 것)
+message: "hello v1"
+
+# http-echo 가 컨테이너 안에서 듣는 포트. 기본 5678
+containerPort: 5678
+
+service:
+  # 클러스터 안에서 이 Service 를 부를 때 쓰는 포트
+  port: 80

@@ -1,0 +1,9 @@
+# hello-fn: PoC 의 첫 "함수". 지금은 문자열 하나 돌려주는 HTTP 서버(http-echo)다.
+# 10/22 엔 이 차트의 Deployment 를 Argo Rollouts 의 Rollout 으로 바꾸고,
+# 10/24 엔 Knative Service 로 바꿔 0↔N 스케일을 붙인다. 오늘은 평범한 Deployment + Service.
+apiVersion: v2          # Helm 3 차트 형식
+name: hello-fn
+description: PoC 샘플 함수 (http-echo)
+type: application
+version: 0.1.0          # 차트 자체의 버전. 템플릿을 고치면 올린다
+appVersion: "1.0"       # 안에 든 앱(http-echo)의 버전. 표시용

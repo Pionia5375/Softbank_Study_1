@@ -1,0 +1,39 @@
+# Argo CD Helm 차트(argo/argo-cd, 차트 10.10.5 = Argo CD v3.5.5)에 넘길 설정. Jeong 작성.
+# 여기 적은 칸만 차트 기본값을 덮어쓴다. 기본값 전체 보기:
+#   helm show values argo/argo-cd --version 10.10.5 | less
+# 문서: https://github.com/argoproj/argo-helm/tree/main/charts/argo-cd
+#       https://argo-cd.readthedocs.io/en/stable/operator-manual/argocd-cm-yaml/
+#
+# 빈칸은 밑줄 세 개로 표시했다. 다 채우면 README 2단계의 grep 출력이 없어야 한다.
+
+# ---- 1) 안 쓰는 컴포넌트 끄기 ----
+# dex = GitHub·Google 로그인(SSO)을 Argo CD 에 붙여 주는 중개 서버.
+# 로컬에선 admin 계정 하나로 충분하니 끈다. 켜 두면 파드 1개와 메모리를 그냥 먹는다.
+dex:
+  enabled: false
+
+# notifications = 동기화 결과를 Slack·메일로 보내는 컨트롤러. 오늘은 안 쓴다.
+notifications:
+  enabled: false
+
+configs:
+  # argocd-cmd-params-cm 이라는 ConfigMap 이 된다 (Argo CD 프로그램들의 실행 옵션)
+  params:
+    # ---- 2) 접속 방식 ----
+    # 기본값이면 argocd-server 가 스스로 HTTPS(자체 서명 인증서)로 응답한다.
+    # 우리는 맥에서 port-forward 로 http://localhost:8080 으로 볼 거라 HTTPS 를 끈다.
+    # (본선 AWS 에선 앞단 로드밸런서가 HTTPS 를 맡고 이 값은 똑같이 true 로 둔다)
+    server.insecure: true
+
+  # argocd-cm 이라는 ConfigMap 이 된다 (Argo CD 동작 설정)
+  cm:
+    # ---- 3) 핵심 결정 TODO(human): Git 을 얼마나 자주 보러 갈지 ----
+    # Argo CD 는 기본적으로 "polling"(주기적으로 Git 에 새 커밋 있나 묻기)으로 변경을 알아챈다.
+    #   실제 간격 = timeout.reconciliation + 0 ~ jitter 사이 무작위
+    #   차트 기본값: 120s + 최대 60s → git push 후 최악 3분 동안 아무 일도 안 일어난다.
+    # 짧게 하면: 반영이 빨라짐 / 대신 Git 서버에 요청이 늘고(GitHub 요청 한도), repo-server 가 바빠진다.
+    # 대안: GitHub webhook(푸시하면 GitHub 가 Argo CD 를 바로 깨움). 그런데 맥 안 kind 는
+    #   GitHub 에서 접근할 주소가 없어서 터널(cloudflared 등)이 필요하다 → 오늘은 polling 으로 재 보고 비교.
+    # 값을 고르고, 고른 이유를 이 단계 README 8절 결정 표에 한 줄 적는다.
+    timeout.reconciliation: 60s           # 정답 예시. 데모 중 push 후 최악 1분 대기, 앱 몇 개라 Git 부담은 무시할 수준
+    timeout.reconciliation.jitter: 0s     # jitter 는 앱이 수백 개일 때 Git 요청을 흩는 용도. 지금은 필요 없음

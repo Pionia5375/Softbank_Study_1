@@ -1,0 +1,41 @@
+# Deployment = "이 이미지로 파드 N개를 항상 띄워 둬라". Jeong 작성.
+# 힌트: labs/04-k8s-rollout-hpa/chart/hello/templates/deployment.yaml 에서 이미 한 번 써 봤다.
+# 문서: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
+# 빈칸(밑줄 세 개)을 Helm 템플릿 식(중괄호 두 겹) 또는 값으로 채운다.
+# 주의: 템플릿 파일에선 주석 안의 중괄호 두 겹도 Helm 이 해석한다. 그래서 주석에도 쓰면 안 된다
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  # .Release.Name = 설치 이름. Argo CD 로 깔면 Application 이름(hello-fn)이 된다
+  name: {{ .Release.Name }}
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  replicas: ___    # TODO(human): values.yaml 의 replicaCount 를 읽는 식
+  selector:
+    # 이 Deployment 가 "내 파드"로 셀 파드를 고르는 조건
+    matchLabels:
+      app: ___     # TODO(human)
+  template:
+    metadata:
+      labels:
+        # 위 selector 와 같아야 한다. 다르면 무슨 일이 생길지는 5단계에서 직접 깨뜨려 본다
+        app: ___   # TODO(human)
+    spec:
+      containers:
+        - name: fn
+          image: ___    # TODO(human): "저장소:태그" 모양. 두 값을 values.yaml 에서 읽는다 (따옴표로 감쌀 것)
+          # http-echo 실행 옵션: 돌려줄 문자열과 들을 포트
+          args:
+            - "-text={{ .Values.message }}"
+            - "-listen=:{{ .Values.containerPort }}"
+          ports:
+            - name: http
+              containerPort: ___    # TODO(human)
+          # 작게 잡아 둔다. 10/23 ResourceQuota 날에 이 값이 "테넌트 한도" 계산의 기준이 된다
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 32Mi

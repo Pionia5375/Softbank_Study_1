@@ -1,0 +1,20 @@
+# poc/01-argocd 실습용 kind 클러스터 (Claude 작성, 완성본)
+# kind = 쿠버네티스 노드를 Docker 컨테이너로 흉내 내는 도구. 노드 2개 = 컨테이너 2개.
+#
+# 10/23 (Cilium 날)에 아래 networking.disableDefaultCNI 를 true 로 바꾸고 클러스터를 새로 만든다.
+#   CNI(파드끼리 네트워크를 이어 주는 플러그인)는 클러스터를 만들 때만 정할 수 있어서다.
+#   그날 "클러스터를 통째로 지워도 Argo CD만 다시 깔면 Git에서 전부 돌아온다"를 시간 재는 게 덤으로 생긴다.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+# kubectl 컨텍스트 이름이 kind-faas 가 된다
+name: faas
+nodes:
+  # 컨트롤 플레인: API 서버·스케줄러·etcd 가 사는 노드
+  - role: control-plane
+    image: kindest/node:v1.37.0
+  # 워커: 우리 파드(Argo CD, 함수)가 주로 뜨는 노드. 10/24 노드 풀 날에 2개 더 늘리고 라벨을 붙인다
+  - role: worker
+    image: kindest/node:v1.37.0
+networking:
+  # false = kind 기본 CNI(kindnet)를 쓴다. kindnet 은 NetworkPolicy 를 강제하지 않는다 → 10/23 에 바꿀 이유
+  disableDefaultCNI: false

@@ -1,0 +1,27 @@
+# App of Apps 의 "뿌리" Application. Jeong 작성 (6단계).
+# 이 Application 이 가리키는 폴더(gitops/apps/)에는 차트가 아니라 "Application YAML 들"이 들어 있다.
+# 그래서 root 하나만 kubectl apply 하면, Argo CD 가 apps/ 안의 Application 들을 만들고,
+# 그 Application 들이 각자 함수·플랫폼을 깐다. 새 함수 = apps/ 에 파일 하나 추가 + git push.
+# 문서: https://argo-cd.readthedocs.io/en/stable/operator-manual/cluster-bootstrapping/
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: ___         # TODO(human): hello-fn 과 같은 레포
+    targetRevision: ___
+    path: ___            # TODO(human): Application YAML 들이 든 폴더
+    # Chart.yaml 이 없는 폴더면 Argo CD 는 "그냥 YAML 파일 묶음(directory)"으로 읽는다
+  destination:
+    server: https://kubernetes.default.svc
+    # Application 오브젝트들은 argocd namespace 에 만들어져야 Argo CD 가 알아본다
+    namespace: ___       # TODO(human)
+  syncPolicy:
+    automated:
+      prune: ___         # TODO(human): hello-fn 과 같게 할지, 다르게 할지 이유와 함께
+      selfHeal: ___
