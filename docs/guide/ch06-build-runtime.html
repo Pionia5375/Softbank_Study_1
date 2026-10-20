@@ -21,15 +21,23 @@
 <header class="chapter-head">
   <p class="eyebrow">06장 · 관련 폴더 poc/04-faas-runtime, poc/05-control-plane-mcp, poc/07-ec2-k3s</p>
   <h1>이미지 빌드와 gVisor</h1>
-  <p class="lede">사용자가 올린 코드가 "이미지"라는 상자가 되어 레지스트리에 들어가고, 노드가 그 상자를 받아 "샌드박스" 안에서 돌리기까지를 바이트 단위로 따라간다. 다 읽고 나면 OCI 이미지·레지스트리 프로토콜·Kaniko·digest 고정·CRI와 containerd·RuntimeClass·gVisor 를 한 장의 그림으로 설명하고, 어디가 깨졌는지 증상만 보고 짚을 수 있다.</p>
+  <p class="lede">사용자가 올린 코드가 "이미지"라는 상자가 되어 레지스트리에 들어가고, 노드가 그 상자를 받아 "샌드박스" 안에서 돌리기까지를 바이트 단위로 따라간다. 다 읽고 나면 OCI 이미지(컨테이너 이미지의 표준 형식)·레지스트리 프로토콜(이미지를 올리고 받는 HTTP 규약)·kaniko(클러스터 안에서 이미지를 만드는 도구)·digest 고정(내용의 해시로 이미지를 못 박기)·CRI 와 containerd(쿠버네티스가 컨테이너를 띄우는 통로)·RuntimeClass(파드마다 런타임을 고르는 쿠버네티스 리소스)·gVisor(샌드박스 런타임)를 한 장의 그림으로 설명하고, 어디가 깨졌는지 증상만 보고 짚을 수 있다.</p>
   <div class="chapter-meta">
     <span class="chip">PoC 폴더 <b>poc/04-faas-runtime · poc/05-control-plane-mcp · poc/07-ec2-k3s</b></span>
-    <span class="chip">핵심 기술 <b>OCI 이미지 · Registry v2 · Kaniko · containerd · RuntimeClass · gVisor</b></span>
+    <span class="chip">핵심 기술 <b>OCI 이미지 · Registry v2 · kaniko · containerd · RuntimeClass · gVisor</b></span>
   </div>
 </header>
 
 <h2 id="map">이 장의 지도</h2>
 <p>FaaS 플랫폼이 하는 일 네 가지(빌드, 배포, 스케일, 격리) 중에서 이 장은 <strong>빌드</strong>와 <strong>격리</strong>를 맡는다. 배포·스케일(Knative)은 05장, 테넌트 울타리(네트워크·RBAC)는 03·04장, 컨트롤 플레인 코드는 07장이 다룬다. 아래 그림에서 점선 초록 영역이 이 장의 범위다.</p>
+<p>그림과 본문에 계속 나오는 말을 먼저 한 줄씩 정의해 둔다. 모두 뒤에서 다시 자세히 다룬다.</p>
+<dl class="terms">
+  <dt>컨테이너 (container) · 이미지 (image) · 레지스트리 (registry)</dt><dd>컨테이너는 프로그램을 필요한 파일과 함께 격리된 칸에서 돌리는 리눅스 프로세스다. 이미지는 그 칸에 들어갈 파일 묶음과 실행 방법을 적은 "설치본" 이고, 레지스트리는 이미지를 올리고 받는 HTTP 서버다(1·2절).</dd>
+  <dt>노드 (node) · 파드 (Pod) · kubelet · API 서버</dt><dd>노드는 파드를 실제로 돌리는 기계다(우리는 kind 가 Docker 컨테이너로 흉내 낸 가짜 기계). 파드는 쿠버네티스가 띄우는 최소 단위로, 컨테이너 한 개 이상을 같은 네트워크 공간에 묶은 것이다. kubelet 은 노드마다 하나씩 있는 에이전트로, API 서버(쿠버네티스의 중심 REST 서버, 모든 리소스의 출입구)에서 "이 파드를 띄워라" 를 받아 컨테이너 런타임에 시킨다.</dd>
+  <dt>kind · 노드 풀 (pool) · namespace · 테넌트 (tenant)</dt><dd>kind(Kubernetes in Docker)는 노드 하나를 Docker 컨테이너 하나로 띄워 노트북에서 쿠버네티스를 돌리는 도구다. 노드 풀은 노드에 라벨(<code>pool=build</code> 등)과 taint(출입 제한 표시)를 붙여 나눈 묶음으로 우리는 system·build·exec 세 풀을 쓴다(<a href="ch03-tenancy.html#nodepools">03장</a>). namespace 는 리소스 이름을 나누는 칸막이이고, 테넌트(플랫폼을 같이 쓰는 고객 단위)마다 하나씩 준다.</dd>
+  <dt>Job · Knative · ksvc · Revision</dt><dd>Job 은 "파드를 띄워 성공으로 끝날 때까지 책임지는" 쿠버네티스 리소스다(7절). Knative Serving 은 쿠버네티스 위에서 함수를 HTTP 로 받고 요청이 없으면 파드를 0 까지 줄이는 서버리스 계층이다(05장). ksvc(Knative Service)는 함수 하나를 나타내는 Knative 리소스이고, ksvc 의 템플릿이 바뀔 때마다 Knative 가 <strong>Revision</strong> 이라는 불변 버전을 만든다.</dd>
+  <dt>컨트롤 플레인 (control plane) · RBAC</dt><dd>이 책에서 "컨트롤 플레인" 은 사용자 요청(코드 업로드)을 받아 빌드 Job 과 ksvc 를 만드는 우리 Spring 서버다(07장). 쿠버네티스 자체의 control plane(API 서버·스케줄러·컨트롤러)과 구별해 쓴다. RBAC(Role-Based Access Control)는 "누가 어떤 리소스에 무엇을 할 수 있나" 를 역할로 정하는 쿠버네티스 권한 체계다(03장).</dd>
+</dl>
 
 <figure>
   <div class="fig scroll">
@@ -75,16 +83,16 @@
 <div class="table-wrap"><table><thead><tr><th>절</th><th>한 줄 요약</th></tr></thead><tbody>
 <tr><td><a href="#image">1. 컨테이너 이미지란</a></td><td>OCI 매니페스트·설정·레이어, 이미지 인덱스, digest 는 내용의 sha256, 태그는 움직이는 이름표</td></tr>
 <tr><td><a href="#registry">2. 레지스트리 프로토콜</a></td><td>push = blob 업로드 후 매니페스트 PUT, pull = 매니페스트 GET 후 blob GET</td></tr>
-<tr><td><a href="#topology">3. 우리 레지스트리 배치</a></td><td>kind-registry 하나를 <code>localhost:5001</code> 과 <code>kind-registry:5000</code> 두 이름으로 부르는 이유, hosts.toml, Knative 태그 해석 건너뛰기</td></tr>
+<tr><td><a href="#topology">3. 우리 레지스트리 배치</a></td><td>kind-registry 하나를 <code>localhost:5001</code> 과 <code>kind-registry:5000</code> 두 이름으로 부르는 이유, hosts.toml, containerd 설정 version 2/3, kind 의 DNS 마법, Knative 태그 해석 건너뛰기</td></tr>
 <tr><td><a href="#dockerfile">4. Dockerfile 과 멀티 스테이지</a></td><td>Go hello(빌드 단계 + scratch)와 Python 런타임 이미지를 줄 단위로</td></tr>
-<tr><td><a href="#kaniko">5. Kaniko</a></td><td>Docker 데몬 없이 컨테이너 안에서 베이스 FS 를 풀고, RUN 하고, 스냅샷을 레이어로 만들어 push</td></tr>
+<tr><td><a href="#kaniko">5. kaniko</a></td><td>Docker 데몬 없이 컨테이너 안에서 베이스 FS 를 풀고, RUN 하고, 스냅샷을 레이어로 만들어 push. 캐시 규칙, gVisor 안에서 돌리기</td></tr>
 <tr><td><a href="#context">6. 빌드 재료(ConfigMap)</a></td><td>04 는 tar.gz, 05 는 initContainer <code>cp -L</code>. ConfigMap 볼륨의 심볼릭 링크가 왜 문제인가</td></tr>
-<tr><td><a href="#job">7. 빌드 Job 설계</a></td><td>namespace, build 풀, backoffLimit, activeDeadlineSeconds, ttlSecondsAfterFinished, resources</td></tr>
-<tr><td><a href="#digest">8. digest 고정</a></td><td>termination-log → 컨트롤 플레인 → <code>image@sha256</code>. 태그가 거짓말하는 경우</td></tr>
+<tr><td><a href="#job">7. 빌드 Job 설계</a></td><td>namespace, build 풀, backoffLimit, activeDeadlineSeconds, ttlSecondsAfterFinished, resources, Job 조건(conditions)과 라벨</td></tr>
+<tr><td><a href="#digest">8. digest 고정</a></td><td>termination-log → 컨트롤 플레인 → <code>image@sha256</code>. 태그가 거짓말하는 경우, 노드 이미지 캐시와 imagePullPolicy</td></tr>
 <tr><td><a href="#build-alt">9. 빌드 방식의 대안</a></td><td>BuildKit rootless, Buildpacks, 외부 CI, Docker 소켓(왜 위험한가)</td></tr>
 <tr><td><a href="#runtime">10. 컨테이너 런타임 스택</a></td><td>kubelet → CRI → containerd → shim v2 → runc/runsc, OCI 런타임 스펙, 리눅스 격리 기본 기능</td></tr>
 <tr><td><a href="#runtimeclass">11. RuntimeClass</a></td><td>handler, scheduling, overhead 와 containerd 가 <code>runsc</code> 를 찾는 길</td></tr>
-<tr><td><a href="#gvisor">12. gVisor</a></td><td>Sentry, Gofer/directfs, 플랫폼(systrap·ptrace·KVM), netstack, 보안 모델과 비용</td></tr>
+<tr><td><a href="#gvisor">12. gVisor</a></td><td>Sentry, Gofer/directfs, 플랫폼(systrap·ptrace·KVM), netstack, 보안 모델과 비용, runsc.toml 설정</td></tr>
 <tr><td><a href="#install">13. gVisor 설치 (kind 와 EC2)</a></td><td>install-gvisor.sh 한 줄씩, 07 의 user_data 판</td></tr>
 <tr><td><a href="#sandbox-alt">14. 다른 샌드박스</a></td><td>Kata·Firecracker 가 kind 에서 안 되는 이유(중첩 가상화), WASM 의 득실</td></tr>
 <tr><td><a href="#break">15. 깨지면</a></td><td>Docker Hub 429, FailedCreatePodSandBox, aarch64, runsc 없는 노드, 같은 태그 덮어쓰기</td></tr>
@@ -96,14 +104,14 @@
 
 <div class="tier" data-tier="1">
   <h3>이미지 = "파일 묶음 몇 개 + 실행 방법 메모 + 목차"</h3>
-  <p>컨테이너 이미지(container image)는 마법 같은 것이 아니다. 세 종류의 파일을 레지스트리에 올려 둔 것이다.</p>
+  <p>컨테이너(container)는 프로그램 하나를 "자기만의 파일 시스템과 프로세스 목록이 있는 칸" 안에서 돌리는 리눅스 프로세스다. 그 칸에 들어갈 파일과 실행 방법을 미리 묶어 둔 것이 컨테이너 이미지(container image)이고, 마법 같은 것이 아니다. 세 종류의 파일을 레지스트리에 올려 둔 것이다.</p>
   <ul>
     <li><strong>레이어(layer)</strong>: 파일 시스템 조각. 각각 하나의 tar 묶음(보통 gzip 압축)이다. "이 레이어에서 추가·변경·삭제된 파일"만 들어 있다.</li>
     <li><strong>설정(config)</strong>: JSON 한 장. 어떤 CPU 종류(architecture)·OS 용인지, 실행할 명령(Entrypoint/Cmd), 환경 변수, 실행 사용자(User), 레이어 순서(diff_ids).</li>
-    <li><strong>매니페스트(manifest)</strong>: JSON 한 장. "이 이미지는 이 설정 + 이 레이어들" 이라는 목차. 각 항목을 이름이 아니라 <strong>digest</strong>(내용의 sha256 해시)로 가리킨다.</li>
+    <li><strong>매니페스트(manifest)</strong>: JSON 한 장. "이 이미지는 이 설정 + 이 레이어들" 이라는 목차. 각 항목을 이름이 아니라 <strong>digest</strong>(내용의 sha256 해시)로 가리킨다. 해시(hash)는 임의 길이의 바이트를 고정 길이의 "지문" 으로 바꾸는 함수이고, SHA-256 은 그중 32바이트(16진수 64자) 지문을 내는 알고리즘이다.</li>
   </ul>
-  <p>이 형식은 OCI(Open Container Initiative)의 <em>Image Format Specification</em> 이 표준으로 정했다. Docker 이미지 형식(Docker Image Manifest V2 Schema 2)과 거의 같고, containerd·Docker·kaniko·레지스트리가 모두 이 형식을 주고받는다.</p>
-  <p>Java 개발자에게 익숙한 비유: 레이어는 jar 안의 파일 묶음, 설정은 <code>MANIFEST.MF</code> 의 <code>Main-Class</code>, 매니페스트는 "이 버전은 이 체크섬의 jar 들로 이루어진다"는 Maven 의 lock 파일과 비슷하다. 단 하나 다른 점은, 이미지의 모든 연결이 <strong>체크섬 자체가 주소</strong>라는 것이다(내용 주소 지정, content-addressable).</p>
+  <p>이 형식은 OCI(Open Container Initiative)의 <em>Image Format Specification</em> 이 표준으로 정했다. Docker 이미지 형식(Docker Image Manifest V2 Schema 2)과 거의 같고, containerd(노드에서 이미지를 받고 컨테이너를 띄우는 데몬, 10절)·Docker·kaniko·레지스트리가 모두 이 형식을 주고받는다.</p>
+  <p>Java 개발자에게 익숙한 비유: 레이어는 jar 안의 파일 묶음, 설정은 <code>MANIFEST.MF</code> 의 <code>Main-Class</code>, 매니페스트는 "이 버전은 이 체크섬의 jar 들로 이루어진다"는 Gradle 의 dependency lock 파일과 비슷하다. 단 하나 다른 점은, 이미지의 모든 연결이 <strong>체크섬 자체가 주소</strong>라는 것이다(내용 주소 지정, content-addressable).</p>
   <dl class="terms">
     <dt>digest</dt><dd><code>sha256:</code> + 바이트의 SHA-256 해시 16진수 64자. 내용이 1비트라도 바뀌면 다른 값. 그래서 "이름"이자 "무결성 검사"다.</dd>
     <dt>태그(tag)</dt><dd><code>v1</code>, <code>latest</code> 같은 사람용 이름. 레지스트리 안에서 "태그 → 매니페스트 digest" 를 가리키는 포인터일 뿐이고, 언제든 다른 매니페스트로 옮길 수 있다.</dd>
@@ -163,7 +171,7 @@
     <figcaption><b>그림 6-2.</b> OCI 이미지의 세 객체. 매니페스트가 설정과 레이어를 digest 로 가리키고, 매니페스트 자신의 digest 가 이미지의 진짜 이름이 된다. 태그는 그 위에 얹힌 이름표다.</figcaption>
   </figure>
 
-  <p>레이어는 "전체 파일 시스템"이 아니라 <strong>차이(diff)</strong> 다. 컨테이너를 띄울 때 노드의 containerd 는 레이어들을 아래에서 위로 겹쳐(overlayfs 같은 스냅샷 도구, snapshotter) 하나의 루트 파일 시스템으로 보여 준다. 아래 레이어의 파일을 지우려면, 위 레이어에 <code>.wh.</code> 로 시작하는 빈 파일(whiteout, 삭제 표시)을 넣는다.</p>
+  <p>레이어는 "전체 파일 시스템"이 아니라 <strong>차이(diff)</strong> 다. 컨테이너를 띄울 때 노드의 containerd 는 레이어들을 아래에서 위로 겹쳐 하나의 루트 파일 시스템으로 보여 준다. 겹치는 일은 overlayfs(여러 폴더를 포개어 하나처럼 보이게 하는 리눅스 파일 시스템)가 하고, containerd 안에서 그 일을 맡는 부품을 snapshotter 라고 부른다. 아래 레이어의 파일을 지우려면, 위 레이어에 <code>.wh.</code> 로 시작하는 빈 파일(whiteout, 삭제 표시)을 넣는다.</p>
 
   <figure>
     <div class="fig scroll">
@@ -297,10 +305,17 @@ flowchart LR
   </pre>
   <h4>레이어 tar 의 세부</h4>
   <ul>
-    <li>tar 안의 경로는 루트 기준 상대 경로(<code>app/server.py</code>). 파일 권한·소유자(uid/gid)·수정 시각이 tar 헤더에 들어간다. 그래서 같은 파일이라도 시각이 다르면 다른 레이어 digest 가 된다. 재현 가능한 빌드(reproducible build)를 원하면 시각을 고정해야 한다(kaniko <code>--reproducible</code>).</li>
+    <li>tar 안의 경로는 루트 기준 상대 경로(<code>app/server.py</code>). 파일 권한·소유자(uid/gid, 리눅스 사용자·그룹 번호)·수정 시각이 tar 헤더에 들어간다. 그래서 같은 파일이라도 시각이 다르면 다른 레이어 digest 가 된다. 재현 가능한 빌드(reproducible build)를 원하면 시각을 고정해야 한다(kaniko <code>--reproducible</code>).</li>
     <li>삭제: 위 레이어에 <code>경로/.wh.파일이름</code>. 폴더 안 전체를 지우고 새로 채우려면 불투명 표시 <code>폴더/.wh..wh..opq</code>.</li>
     <li>매니페스트의 <code>layers</code> 배열 순서 = 적용 순서(첫 번째가 맨 아래). 설정의 <code>diff_ids</code> 순서와 같아야 한다.</li>
     <li>컨테이너 실행 정보(<code>Cmd</code>, <code>Env</code>, <code>User</code>, <code>WorkingDir</code>, <code>ExposedPorts</code>)는 레이어가 아니라 설정에 들어간다. 그래서 Dockerfile 의 <code>ENV</code>, <code>USER</code>, <code>CMD</code> 는 레이어를 만들지 않는다(4절 그림 6-8).</li>
+  </ul>
+  <h4>이미지가 아닌 것도 레지스트리에: OCI 1.1 아티팩트와 referrers</h4>
+  <p>OCI Image Spec 1.1(2024)부터 매니페스트에 칸이 두 개 더 생겼다. 서명(Sigstore 의 cosign 같은 이미지 서명 도구가 만든다), SBOM(Software Bill of Materials, 이미지 안 부품 목록), 취약점 보고서처럼 "이미지에 붙는 문서" 를 같은 레지스트리에 두기 위해서다. PoC 에서는 쓰지 않는다. 본선에서 "빌드한 이미지에 서명하고 배포 전에 검증한다" 를 설계 문장으로 넣을 때 이 구조를 떠올리면 된다.</p>
+  <ul>
+    <li><code>artifactType</code>: 이 매니페스트가 무엇인지 알리는 mediaType 문자열. 이미지가 아닌 아티팩트는 <code>config</code> 칸에 빈 디스크립터(<code>application/vnd.oci.empty.v1+json</code>, 내용은 <code>{}</code> 두 글자)를 넣는다.</li>
+    <li><code>subject</code>: "이 아티팩트는 저 매니페스트에 붙는다" 를 digest 로 가리키는 디스크립터. 서명 매니페스트의 subject 가 이미지 매니페스트의 digest 다. 위 클래스도의 <code>ImageManifest.subject</code> 가 이것이다.</li>
+    <li>referrers API: <code>GET /v2/&lt;name&gt;/referrers/&lt;digest&gt;</code> 로 "이 digest 를 subject 로 하는 매니페스트 목록" 을 이미지 인덱스 모양으로 받는다(2절 표). 레지스트리가 지원하지 않으면 클라이언트가 digest 를 태그 이름으로 바꾼 폴백 태그(<code>sha256-&lt;hex&gt;</code>)에 목록을 둔다.</li>
   </ul>
   <pre class="pseudo"><code><span class="k">함수</span> 이미지_digest(이미지):
   설정_바이트 = JSON(arch, os, config, rootfs.diff_ids, history)
@@ -347,7 +362,7 @@ flowchart LR
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
 <ul>
-<li>04: kaniko 가 <code>kind-registry:5000/fn/hello:&lt;태그&gt;</code> 로 올리고, ksvc 3개가 <strong>태그</strong> <code>:v1</code> 로 참조한다. 그래서 같은 태그를 다시 쓰면 위 그림의 함정에 빠질 수 있다 (15절).</li>
+<li>04: kaniko 가 <code>kind-registry:5000/fn/hello:&lt;태그&gt;</code> 로 올리고, ksvc(Knative Service, 함수 하나를 나타내는 리소스) 3개가 <strong>태그</strong> <code>:v1</code> 로 참조한다. 그래서 같은 태그를 다시 쓰면 위 그림의 함정에 빠질 수 있다 (15절).</li>
 <li>05: kaniko 가 <code>kind-registry:5000/tenant-a/hello:hello-3f2a9c01be</code> 로 올린 뒤 매니페스트 digest 를 내보내고, 컨트롤 플레인이 ksvc 에 <code>localhost:5001/tenant-a/hello@sha256:...</code> 로 넣는다 (8절).</li>
 <li>둘 다 인덱스 없이 단일 매니페스트. 애플 실리콘 맥이면 빌드 노드가 arm64 라서 arm64 이미지가 나온다. 07(EC2, x86_64)에서는 그래서 <code>docker buildx build --platform linux/amd64</code> 로 따로 만든다(<code>poc/07-ec2-k3s/scripts/gvisor-ec2.sh image</code>).</li>
 </ul></aside>
@@ -355,7 +370,7 @@ flowchart LR
 <aside class="callout fact"><p class="callout-title">공식 문서</p>
 <ul>
 <li><a href="https://github.com/opencontainers/image-spec/blob/main/spec.md">OCI Image Format Specification</a> · <a href="https://github.com/opencontainers/image-spec/blob/main/manifest.md">Image Manifest</a> · <a href="https://github.com/opencontainers/image-spec/blob/main/image-index.md">Image Index</a> · <a href="https://github.com/opencontainers/image-spec/blob/main/config.md">Image Configuration</a> · <a href="https://github.com/opencontainers/image-spec/blob/main/layer.md">Image Layer Filesystem Changeset</a> · <a href="https://github.com/opencontainers/image-spec/blob/main/descriptor.md">Descriptors (digest 규칙)</a></li>
-<li><a href="https://distribution.github.io/distribution/spec/manifest-v2-2/">Docker Image Manifest V2, Schema 2</a></li>
+<li><a href="https://distribution.github.io/distribution/spec/manifest-v2-2/">Docker Image Manifest V2, Schema 2</a> · <a href="https://github.com/opencontainers/image-spec/blob/main/artifacts-guidance.md">OCI Artifacts guidance (artifactType, subject)</a></li>
 </ul></aside>
 
 <!-- ============================================================ 2. 레지스트리 프로토콜 -->
@@ -363,7 +378,7 @@ flowchart LR
 
 <div class="tier" data-tier="1">
   <h3>레지스트리는 "digest 로 찾는 파일 서버 + 태그 표"</h3>
-  <p>레지스트리(registry)는 이미지를 저장하고 나눠 주는 HTTP 서버다. Docker Hub, Amazon ECR, GitHub Container Registry, 그리고 우리 PoC 의 <code>registry:2</code> 컨테이너가 모두 같은 HTTP 규약을 말한다. 이 규약이 Docker Registry HTTP API v2 이고, 지금은 OCI <em>Distribution Specification</em> 으로 표준화됐다.</p>
+  <p>1절에서 이미지가 세 객체(매니페스트·설정·레이어)와 digest 로 엮인다는 것을 보았다. 이 절은 그 객체들을 어디에 어떻게 올리고 받는지, 즉 레지스트리와 말하는 규약이다. 레지스트리(registry)는 이미지를 저장하고 나눠 주는 HTTP 서버다. Docker Hub, Amazon ECR, GitHub Container Registry, 그리고 우리 PoC 의 <code>registry:2</code> 컨테이너가 모두 같은 HTTP 규약을 말한다. 이 규약이 Docker Registry HTTP API v2 이고, 지금은 OCI <em>Distribution Specification</em> 으로 표준화됐다.</p>
   <p>레지스트리 안에는 두 가지만 있다.</p>
   <ul>
     <li><strong>blob</strong>: digest 로 찾는 바이트 덩어리. 레이어와 설정이 여기 들어간다. 경로 <code>/v2/&lt;저장소&gt;/blobs/&lt;digest&gt;</code>.</li>
@@ -438,6 +453,7 @@ sequenceDiagram
   <tr><td>매니페스트 올리기</td><td><code>PUT /v2/&lt;name&gt;/manifests/&lt;태그 또는 digest&gt;</code></td><td>201 + <code>Docker-Content-Digest</code></td><td>가리키는 blob 이 없으면 <code>MANIFEST_BLOB_UNKNOWN</code>. 같은 태그에 PUT 하면 <strong>덮어쓴다</strong></td></tr>
   <tr><td>태그 목록</td><td><code>GET /v2/&lt;name&gt;/tags/list</code></td><td>200</td><td>04 README 의 <code>curl -s localhost:5001/v2/fn/hello/tags/list</code></td></tr>
   <tr><td>저장소 목록</td><td><code>GET /v2/_catalog</code></td><td>200</td><td>Docker Registry 확장. OCI 표준에는 없다</td></tr>
+  <tr><td>붙은 아티팩트 목록</td><td><code>GET /v2/&lt;name&gt;/referrers/&lt;digest&gt;</code></td><td>200 (이미지 인덱스 모양)</td><td>OCI Distribution 1.1. 서명·SBOM 찾기(1절). 미지원 레지스트리는 404 → 클라이언트가 폴백 태그를 본다</td></tr>
   <tr><td>지우기</td><td><code>DELETE .../manifests/&lt;digest&gt;</code></td><td>202</td><td>registry:2 는 설정으로 켜야 하고, 디스크 회수는 별도 GC</td></tr>
   </tbody></table></div>
   <p>에러 응답은 JSON <code>{"errors":[{"code": ..., "message": ...}]}</code> 모양이다. 자주 보는 코드: <code>BLOB_UNKNOWN</code>, <code>MANIFEST_UNKNOWN</code>, <code>NAME_UNKNOWN</code>, <code>UNAUTHORIZED</code>, <code>DENIED</code>, <code>TOOMANYREQUESTS</code>(HTTP 429, Docker Hub 다운로드 한도).</p>
@@ -460,7 +476,7 @@ sequenceDiagram
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
-<p>레지스트리는 인증도 TLS 도 없는 <code>registry:2</code>(Docker 의 오픈소스 레지스트리 구현, 지금 이름은 CNCF Distribution) 컨테이너 하나다. 맥에서 <code>curl -s localhost:5001/v2/_catalog</code> 로 저장소 목록을, <code>curl -s localhost:5001/v2/fn/hello/tags/list</code> 로 태그 목록을 본다. 매니페스트 digest 를 직접 보고 싶으면:</p>
+<p>레지스트리는 인증도 TLS(HTTPS 의 암호화 계층)도 없는 <code>registry:2</code>(Docker 의 오픈소스 레지스트리 구현, 지금 이름은 CNCF Distribution. CNCF 는 쿠버네티스를 관리하는 재단) 컨테이너 하나다. 맥에서 <code>curl -s localhost:5001/v2/_catalog</code> 로 저장소 목록을, <code>curl -s localhost:5001/v2/fn/hello/tags/list</code> 로 태그 목록을 본다. 매니페스트 digest 를 직접 보고 싶으면:</p>
 <div class="code-head"><span>맥 터미널 (읽기 전용 확인)</span><span>예시</span></div>
 <pre><code>curl -sI -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
      -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
@@ -472,7 +488,7 @@ sequenceDiagram
 <ul>
 <li><a href="https://github.com/opencontainers/distribution-spec/blob/main/spec.md">OCI Distribution Specification</a> (pull, push, content discovery, 에러 코드)</li>
 <li><a href="https://distribution.github.io/distribution/spec/api/">Docker Registry HTTP API V2</a> · <a href="https://distribution.github.io/distribution/about/deploying/">registry:2 배포</a></li>
-<li><a href="https://docs.docker.com/docker-hub/usage/">Docker Hub 사용 한도</a></li>
+<li><a href="https://docs.docker.com/docker-hub/usage/pulls/">Docker Hub pull 한도</a></li>
 </ul></aside>
 
 <!-- ============================================================ 3. 레지스트리 배치 -->
@@ -480,10 +496,10 @@ sequenceDiagram
 
 <div class="tier" data-tier="1">
   <h3>왜 이름이 둘인가</h3>
-  <p>kind 클러스터의 "노드"는 맥(정확히는 Docker Desktop 의 리눅스 VM) 위의 Docker 컨테이너다. 레지스트리도 같은 VM 위의 Docker 컨테이너 <code>kind-registry</code> 다. 같은 저장소를 누가 어디서 부르느냐에 따라 보이는 주소가 다르다.</p>
+  <p>2절의 규약은 어느 레지스트리든 같다. 이 절은 우리 PoC 의 레지스트리 하나가 왜 두 이름을 갖는지, 그 이름을 누가 어떻게 푸는지를 다룬다. kind 클러스터의 "노드"는 맥(정확히는 Docker Desktop 의 리눅스 VM) 위의 Docker 컨테이너다. 레지스트리도 같은 VM 위의 Docker 컨테이너 <code>kind-registry</code> 다. 같은 저장소를 누가 어디서 부르느냐에 따라 보이는 주소가 다르다.</p>
   <ul>
     <li><strong>맥에서</strong>: <code>localhost:5001</code>. <code>docker run -p 127.0.0.1:5001:5000</code> 포트 매핑 덕분이다. <code>curl</code>, <code>docker push</code>(Docker Hub 미러 채우기)가 쓴다.</li>
-    <li><strong>클러스터 안 파드(kaniko)에서</strong>: <code>kind-registry:5000</code>. 레지스트리를 kind 노드들과 같은 Docker 네트워크 <code>kind</code> 에 붙였기 때문에, Docker 의 내장 DNS 가 컨테이너 이름을 풀어 준다. 파드 안의 <code>localhost</code> 는 파드 자신이라 <code>localhost:5001</code> 은 거기서 아무 뜻이 없다.</li>
+    <li><strong>클러스터 안 파드(kaniko)에서</strong>: <code>kind-registry:5000</code>. 레지스트리를 kind 노드들과 같은 Docker 네트워크 <code>kind</code> 에 붙였기 때문에, Docker 의 내장 DNS(Docker 가 네트워크마다 두는 작은 이름 풀이 서버. 같은 네트워크의 컨테이너 이름을 IP 로 바꿔 준다)가 컨테이너 이름을 풀어 준다. 파드의 질의가 그 DNS 까지 가는 길은 kind 가 노드 안에 만들어 둔 것인데, 아래 3단계에서 따라간다. 파드 안의 <code>localhost</code> 는 파드 자신이라 <code>localhost:5001</code> 은 거기서 아무 뜻이 없다.</li>
     <li><strong>노드의 containerd 에서</strong>: 둘 다 쓸 수 있다. <code>setup.sh</code> 가 노드마다 <code>hosts.toml</code> 을 넣어 "<code>localhost:5001</code> 도 <code>kind-registry:5000</code> 도 실제로는 <code>http://kind-registry:5000</code> 에서 받아라" 라고 알려 두었다.</li>
   </ul>
   <p>05 가 "push 는 <code>kind-registry:5000</code>, ksvc 에는 <code>localhost:5001</code>" 로 쓰는 것은 kind 공식 문서(local registry)의 관례를 따른 것이다. 04 의 ksvc 는 <code>kind-registry:5000</code> 을 그대로 쓴다. 노드에서는 둘 다 같은 곳으로 간다.</p>
@@ -537,9 +553,9 @@ sequenceDiagram
         <text x="346" y="308" class="d-ttl-s">kaniko 파드</text>
         <text x="346" y="332" class="d-mono">--destination=</text>
         <text x="346" y="352" class="d-mono">  kind-registry:5000/...</text>
-        <text x="328" y="398" class="d-sub">파드 DNS → CoreDNS → 노드</text>
-        <text x="328" y="422" class="d-sub">→ Docker 내장 DNS 가 이름을 품</text>
-        <text x="328" y="446" class="d-lbl">【확인 필요】 정확한 DNS 경로</text>
+        <text x="328" y="398" class="d-sub">파드 DNS → CoreDNS → 노드 resolv.conf</text>
+        <text x="328" y="422" class="d-sub">→ iptables DNAT → Docker 내장 DNS</text>
+        <text x="328" y="446" class="d-lbl">(127.0.0.11) 가 컨테이너 이름을 품</text>
         <path d="M600 280 L580 195" class="d-e-prov" marker-end="url(#f66-prov)"/>
         <text x="540" y="222" class="d-lbl">push</text>
         <rect x="670" y="230" width="380" height="330" rx="12" class="d-card"/>
@@ -570,7 +586,7 @@ sequenceDiagram
     <li><strong>setup.sh 의 hosts.toml</strong>: 그 폴더 아래 레지스트리 이름마다 폴더를 만들고 <code>hosts.toml</code> 을 둔다. 내용은 "이 이름의 이미지는 <code>http://kind-registry:5000</code> 에서 pull·resolve".</li>
     <li><strong>Knative config-deployment</strong>: <code>registries-skipping-tag-resolving</code> 에 두 이름을 넣어 Knative 가 태그를 digest 로 바꾸려고 레지스트리에 묻지 않게.</li>
   </ol>
-  <p>3번이 왜 필요한가: Knative Serving 은 Revision 을 만들 때 <code>image: ...:v1</code> 처럼 태그로 적힌 이미지를 레지스트리에 물어 digest 로 바꿔 Revision 에 고정한다(태그가 나중에 바뀌어도 그 Revision 은 같은 이미지를 쓰게). 이 일은 노드의 containerd 가 아니라 <strong>knative-serving 의 controller 파드</strong>가 직접 HTTP 로 하는데, 기본이 https 라서 http 전용 kind-registry 에 실패하고 Revision 이 Ready 가 되지 않는다. 그래서 이 두 레지스트리는 건너뛰게 했다. 대가는 04 처럼 태그로 적은 ksvc 의 Revision 이 태그에 묶인다는 것이다.</p>
+  <p>3번이 왜 필요한가: Knative Serving 은 Revision(ksvc 의 템플릿이 바뀔 때마다 만들어지는 불변 버전)을 만들 때 <code>image: ...:v1</code> 처럼 태그로 적힌 이미지를 레지스트리에 물어 digest 로 바꿔 Revision 에 고정한다(태그가 나중에 바뀌어도 그 Revision 은 같은 이미지를 쓰게). 이 일은 노드의 containerd 가 아니라 <strong>knative-serving 의 controller 파드</strong>가 직접 HTTP 로 하는데, 기본이 https 라서 http 전용 kind-registry 에 실패하고 Revision 이 Ready 가 되지 않는다. 한 번의 해석에 허용되는 시간은 같은 ConfigMap 의 <code>digest-resolution-timeout</code>(기본 10s)이다. 그래서 이 두 레지스트리는 건너뛰게 했다. 대가는 04 처럼 태그로 적은 ksvc 의 Revision 이 태그에 묶인다는 것이다.</p>
   <pre class="mermaid">
 flowchart TD
   A["Revision 생성<br/>image = 레지스트리/저장소:태그"] --> B{"이미 @sha256 형식인가"}
@@ -600,7 +616,7 @@ docker network connect kind kind-registry 2&gt;/dev/null || true
   <span class="k">done</span>
 <span class="k">done</span></code></pre>
   <ul>
-    <li><code>docker inspect ... || true</code>: 이미 떠 있으면 다시 만들지 않는다(멱등). 클러스터를 재생성해도 레지스트리와 그 안의 이미지는 남는다.</li>
+    <li><code>docker inspect ... || true</code>: 이미 떠 있으면 다시 만들지 않는다(멱등, idempotent: 여러 번 실행해도 한 번 실행한 것과 결과가 같음). 클러스터를 재생성해도 레지스트리와 그 안의 이미지는 남는다.</li>
     <li><code>-p 127.0.0.1:5001:5000</code>: 맥의 루프백에만 연다. 같은 와이파이의 다른 기기에서는 안 보인다.</li>
     <li><code>--network bridge</code> 로 만들고 <code>network connect kind</code> 로 하나 더 붙인다. 컨테이너가 두 네트워크에 동시에 있는다.</li>
     <li>바깥 루프: 노드 4개 전부. 안쪽 루프: 이름 두 개. 결과적으로 노드마다 폴더 두 개, 내용은 같은 파일.</li>
@@ -613,7 +629,7 @@ docker network connect kind kind-registry 2&gt;/dev/null || true
   - |-
     [plugins."io.containerd.grpc.v1.cri".registry]
       config_path = "/etc/containerd/certs.d"</code></pre>
-  <p>이 플러그인 이름(<code>io.containerd.grpc.v1.cri</code>)은 containerd 1.x 설정(version = 2) 형식이다. containerd 2.x 의 설정 version 3 에서는 <code>io.containerd.cri.v1.images</code> 로 바뀌었다. kind 공식 문서도 이 모양을 쓰고 containerd 2 는 옛 형식 설정을 자동 변환한다고 알려져 있지만, <code>kindest/node:v1.37.0</code> 안의 containerd 버전과 변환 동작은 【확인 필요】 (<code>docker exec faas-worker3 containerd config dump | grep config_path</code> 로 확인).</p>
+  <p>이 플러그인 이름(<code>io.containerd.grpc.v1.cri</code>)은 containerd 설정 <code>version = 2</code> 형식의 이름이다. containerd 2.x 가 새로 만든 <code>version = 3</code> 형식에서는 CRI 플러그인이 둘로 나뉘어, 레지스트리 설정은 <code>io.containerd.cri.v1.images</code> 아래로, 런타임 표(13절)는 <code>io.containerd.cri.v1.runtime</code> 아래로 간다. 그런데도 우리 패치가 그대로 먹는 이유는 둘이다. (1) <code>kindest/node:v1.37.0</code>(kind v0.33.0 의 기본 노드 이미지)에는 containerd 2.3 계열이 들어 있지만, kind 가 노드에 써 두는 <code>/etc/containerd/config.toml</code> 은 여전히 <code>version = 2</code> 로 시작한다. (2) containerd 2.0 릴리스 문서가 "데몬 설정은 시작할 때 자동으로 최신 version 으로 변환된다" 고 못 박는다. 그래서 kind 공식 local-registry 예시도 옛 이름을 그대로 쓴다. 확인 명령: <code>docker exec faas-worker3 containerd --version</code>, <code>docker exec faas-worker3 head -1 /etc/containerd/config.toml</code>, <code>docker exec faas-worker3 containerd config dump | grep config_path</code>(dump 는 변환된 모양으로 나온다).</p>
 
   <h4>containerd 가 이미지 주소를 실제 접속처로 바꾸는 순서</h4>
   <pre class="mermaid">
@@ -641,8 +657,27 @@ flowchart TD
   <ul>
     <li><code>kind.local,ko.local,dev.local</code>: Knative 기본값. 덮어쓰기라서 기본값을 다시 적어 둔다.</li>
     <li><code>--type merge</code>: ConfigMap 의 다른 키는 그대로.</li>
-    <li>대안: Knative controller 에 레지스트리 CA 를 넣고 kind-registry 를 TLS 로 띄우면 해석을 건너뛰지 않아도 된다. PoC 에서는 간단함을 골랐다.</li>
+    <li>대안: Knative controller 에 레지스트리 CA(인증 기관 인증서. 레지스트리의 TLS 인증서를 믿게 하는 뿌리)를 넣고 kind-registry 를 TLS 로 띄우면 해석을 건너뛰지 않아도 된다. PoC 에서는 간단함을 골랐다.</li>
   </ul>
+  <h4>kind 의 DNS 마법: 파드가 <code>kind-registry</code> 를 찾는 길</h4>
+  <p>파드 안의 <code>/etc/resolv.conf</code> 는 클러스터 DNS(CoreDNS, kube-system 의 파드)를 가리킨다. CoreDNS 는 <code>kind-registry</code> 가 클러스터 안 Service(파드 묶음에 고정 이름과 IP 를 주는 쿠버네티스 리소스) 이름이 아니므로 노드의 <code>/etc/resolv.conf</code> 에 적힌 상위 DNS 로 넘긴다. 여기서 kind 가 손을 쓴다. Docker 는 컨테이너마다 내장 DNS 를 루프백 주소 <code>127.0.0.11</code> 에 두는데, 이 주소는 노드 컨테이너 자신 안에서만 통하고 파드(다른 네트워크 namespace)가 보낸 질의는 닿지 않는다. 그래서 kind 노드의 시작 스크립트(<code>entrypoint</code> 의 <code>enable_network_magic</code>)는 노드 <code>/etc/resolv.conf</code> 의 <code>127.0.0.11</code> 을 Docker 호스트 쪽 IP(기본 게이트웨이)로 바꿔 쓰고, iptables(리눅스 커널의 패킷 규칙표)로 "그 IP 의 53번 포트로 가는 패킷은 <code>127.0.0.11:53</code> 으로 돌려라"(DNAT, 목적지 주소 바꾸기)를 노드 자신의 트래픽(OUTPUT)과 파드에서 온 트래픽(PREROUTING) 둘 다에 걸어 둔다. Docker 내장 DNS 는 같은 Docker 네트워크의 컨테이너 이름을 알고 있으므로 <code>kind-registry</code> 의 IP 를 돌려준다.</p>
+  <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant P as kaniko 파드 (build 노드)
+  participant C as CoreDNS 파드
+  participant N as 노드 커널 (iptables)
+  participant D as Docker 내장 DNS 127.0.0.11
+  P->>C: kind-registry 의 IP 는?
+  C->>C: 클러스터 안 이름 아님 → 노드 resolv.conf 의 상위 DNS 로
+  C->>N: 질의 → 게이트웨이 IP 의 53번 (kind 가 127.0.0.11 대신 적어 둔 값)
+  N->>D: DNAT → 127.0.0.11 의 53번 (PREROUTING 규칙, 파드 트래픽 포함)
+  D-->>N: kind 네트워크 안 kind-registry 의 IP
+  N-->>C: 응답 (SNAT 로 출처를 되돌림)
+  C-->>P: 응답
+  P->>P: http 로 그 IP 의 5000번에 push
+  </pre>
+  <p>이 경로는 <code>docker network connect kind kind-registry</code> 가 선행돼야 한다. 레지스트리가 <code>bridge</code> 네트워크에만 있으면 <code>kind</code> 네트워크의 내장 DNS 가 그 이름을 모르고, kaniko 는 <code>no such host</code> 를 본다(아래 "깨지면" 세 번째).</p>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
@@ -654,7 +689,7 @@ flowchart TD
 
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
 <ul>
-<li><strong>증상</strong>: 함수 파드가 <code>ErrImagePull</code> / <code>ImagePullBackOff</code>, 이벤트에 <code>http: server gave HTTP response to HTTPS client</code> 또는 <code>dial tcp ... localhost:5001: connect: connection refused</code>. <strong>볼 곳</strong>: <code>docker exec faas-worker3 cat /etc/containerd/certs.d/localhost:5001/hosts.toml</code>, <code>docker network inspect kind | grep kind-registry</code>. <strong>고치는 법</strong>: <code>setup.sh</code> 1/5단계만 다시(노드를 새로 만들면 hosts.toml 이 사라진다).</li>
+<li><strong>증상</strong>: 함수 파드가 <code>ErrImagePull</code> / <code>ImagePullBackOff</code>(kubelet 이 이미지를 못 받아 점점 긴 간격으로 재시도 중이라는 파드 상태), 이벤트에 <code>http: server gave HTTP response to HTTPS client</code> 또는 <code>dial tcp ... localhost:5001: connect: connection refused</code>. <strong>볼 곳</strong>: <code>docker exec faas-worker3 cat /etc/containerd/certs.d/localhost:5001/hosts.toml</code>, <code>docker network inspect kind | grep kind-registry</code>. <strong>고치는 법</strong>: <code>setup.sh</code> 1/5단계만 다시(노드를 새로 만들면 hosts.toml 이 사라진다).</li>
 <li><strong>증상</strong>: ksvc 가 <code>RevisionMissing</code>, 메시지에 레지스트리 https 오류. <strong>볼 곳</strong>: <code>kubectl -n knative-serving get cm config-deployment -o yaml</code>. <strong>고치는 법</strong>: <code>registries-skipping-tag-resolving</code> 에 레지스트리 이름 추가.</li>
 <li><strong>증상</strong>: kaniko 로그 <code>dial tcp: lookup kind-registry ... no such host</code>. <strong>볼 곳</strong>: 레지스트리가 <code>kind</code> 네트워크에 붙었나. <strong>고치는 법</strong>: <code>docker network connect kind kind-registry</code>.</li>
 </ul></aside>
@@ -662,15 +697,15 @@ flowchart TD
 <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
 <ul>
 <li><strong>클러스터 밖 Docker 컨테이너 레지스트리</strong>: 클러스터를 지워도 이미지가 남고, 맥에서 curl 로 바로 본다. kind 공식 문서가 권하는 모양이라 자료가 많다.</li>
-<li>대안 (가) <strong>클러스터 안 레지스트리(Deployment)</strong>: 노드의 containerd 는 클러스터 DNS 를 모른다(containerd 는 파드가 아니다) → NodePort 나 hostNetwork 로 열어야 하고, 클러스터 재생성 때 이미지가 같이 사라진다.</li>
+<li>대안 (가) <strong>클러스터 안 레지스트리(Deployment)</strong>: Deployment(파드를 정해진 수만큼 유지하는 쿠버네티스 리소스)로 레지스트리를 띄우는 방법. 노드의 containerd 는 클러스터 DNS 를 모른다(containerd 는 파드가 아니다) → NodePort(노드 IP 의 포트로 여는 Service 종류)나 hostNetwork(파드가 노드의 네트워크를 그대로 쓰는 설정)로 열어야 하고, 클러스터 재생성 때 이미지가 같이 사라진다.</li>
 <li>대안 (나) <strong><code>kind load docker-image</code></strong>: 레지스트리 없이 노드에 직접 복사. 05 의 컨트롤 플레인 이미지는 이 방식이다. 하지만 클러스터 안 kaniko 는 push 할 곳이 필요하다.</li>
-<li>대안 (다) <strong>Harbor 같은 TLS + 인증 레지스트리</strong>: 운영에 맞고 Knative 태그 해석·취약점 스캔·불변 태그를 쓸 수 있지만, 해커톤 셋업 시간을 넘긴다. 설계 문서에는 "운영은 ECR + immutable tag" 로 적는다.</li>
+<li>대안 (다) <strong>Harbor(오픈소스 사설 레지스트리) 같은 TLS + 인증 레지스트리</strong>: 운영에 맞고 Knative 태그 해석·취약점 스캔·불변 태그를 쓸 수 있지만, 해커톤 셋업 시간을 넘긴다. 설계 문서에는 "운영은 ECR + immutable tag" 로 적는다.</li>
 </ul></aside>
 
 <aside class="callout fact"><p class="callout-title">공식 문서</p>
 <ul>
-<li><a href="https://kind.sigs.k8s.io/docs/user/local-registry/">kind: Local Registry</a></li>
-<li><a href="https://github.com/containerd/containerd/blob/main/docs/hosts.md">containerd: Registry Configuration (hosts.toml)</a> · <a href="https://github.com/containerd/containerd/blob/main/docs/cri/config.md">containerd CRI 설정</a></li>
+<li><a href="https://kind.sigs.k8s.io/docs/user/local-registry/">kind: Local Registry</a> · <a href="https://kind.sigs.k8s.io/docs/user/configuration/">kind: Configuration (containerdConfigPatches)</a> · <a href="https://github.com/kubernetes-sigs/kind/blob/main/images/base/files/usr/local/bin/entrypoint">kind 노드 entrypoint (enable_network_magic)</a></li>
+<li><a href="https://github.com/containerd/containerd/blob/main/docs/hosts.md">containerd: Registry Configuration (hosts.toml)</a> · <a href="https://github.com/containerd/containerd/blob/main/docs/cri/config.md">containerd CRI 설정 (version 3 플러그인 이름)</a> · <a href="https://github.com/containerd/containerd/blob/main/docs/containerd-2.0.md">containerd 2.0 변경 사항 (설정 자동 변환)</a></li>
 <li><a href="https://knative.dev/docs/serving/tag-resolution/">Knative: Tag resolution</a> · <a href="https://knative.dev/docs/serving/configuration/deployment/">Knative: config-deployment</a></li>
 </ul></aside>
 
@@ -679,12 +714,12 @@ flowchart TD
 
 <div class="tier" data-tier="1">
   <h3>Dockerfile = 레이어를 만드는 조리법</h3>
-  <p>Dockerfile 의 한 줄 한 줄은 "이전 상태 위에서 무언가를 하고, 바뀐 파일을 레이어로 남겨라" 또는 "설정에 이 값을 적어라" 둘 중 하나다.</p>
+  <p>레지스트리에 올릴 이미지는 어떻게 만드나. 조리법은 Dockerfile(이미지를 어떤 순서로 만들지 적은 텍스트 파일)이고, 5절의 kaniko 가 이 파일을 읽어 1절의 레이어를 만든다. Dockerfile 의 한 줄 한 줄은 "이전 상태 위에서 무언가를 하고, 바뀐 파일을 레이어로 남겨라" 또는 "설정에 이 값을 적어라" 둘 중 하나다.</p>
   <ul>
     <li>레이어를 만드는 줄: <code>RUN</code>, <code>COPY</code>, <code>ADD</code> (그리고 <code>WORKDIR</code> 이 새 폴더를 만들 때).</li>
     <li>설정만 바꾸는 줄: <code>ENV</code>, <code>USER</code>, <code>CMD</code>, <code>ENTRYPOINT</code>, <code>EXPOSE</code>, <code>LABEL</code>.</li>
   </ul>
-  <p><strong>멀티 스테이지 빌드(multi-stage build)</strong>는 <code>FROM</code> 을 여러 번 써서, 앞 단계(컴파일러가 든 큰 이미지)에서 만든 결과물만 뒤 단계(작은 실행용 이미지)로 <code>COPY --from</code> 하는 방법이다. 최종 이미지에는 마지막 단계만 남는다. 컴파일러·소스·캐시는 버려진다. 함수 플랫폼에서는 이미지가 작을수록 콜드 스타트 때 받는 바이트가 줄고, 공격 표면(셸·패키지 관리자)도 줄어든다.</p>
+  <p><strong>멀티 스테이지 빌드(multi-stage build)</strong>는 <code>FROM</code> 을 여러 번 써서, 앞 단계(컴파일러가 든 큰 이미지)에서 만든 결과물만 뒤 단계(작은 실행용 이미지)로 <code>COPY --from</code> 하는 방법이다. 최종 이미지에는 마지막 단계만 남는다. 컴파일러·소스·캐시는 버려진다. 함수 플랫폼에서는 이미지가 작을수록 콜드 스타트(요청이 왔는데 파드가 0개라 새로 띄우며 생기는 지연) 때 받는 바이트가 줄고, 공격 표면(셸·패키지 관리자)도 줄어든다.</p>
 </div>
 
 <div class="tier" data-tier="2">
@@ -775,10 +810,10 @@ flowchart TD
   <ul>
     <li><code>AS build</code>: 단계에 이름을 붙인다. 아래에서 <code>--from=build</code> 로 부른다.</li>
     <li><code>COPY go.mod main.go ./</code>: <code>go.sum</code> 이 없다. 외부 의존성이 없어서다(<code>main.go</code> 는 표준 라이브러리만). 의존성이 생기면 <code>COPY go.mod go.sum</code> → <code>RUN go mod download</code> → <code>COPY . .</code> 순서로 나눠 의존성 레이어를 캐시한다.</li>
-    <li><code>CGO_ENABLED=0</code>: glibc/musl 에 동적 링크하지 않는 정적 바이너리. scratch 에는 libc 가 없으니 필수다.</li>
+    <li><code>CGO_ENABLED=0</code>: glibc/musl(리눅스 C 표준 라이브러리의 두 구현. debian 계열은 glibc, alpine 은 musl)에 동적 링크하지 않는 정적 바이너리. scratch 에는 libc 가 없으니 필수다.</li>
     <li><code>-trimpath</code>: 빌드한 경로(<code>/src</code>)를 바이너리에서 지운다. 재현성과 정보 노출 감소. <code>-ldflags="-s -w"</code>: 심볼 표와 DWARF 디버그 정보를 빼서 크기를 줄인다.</li>
     <li><code>RUN mkdir -p /out/tmp</code>: scratch 에는 <code>mkdir</code> 명령도 없어서 앞 단계에서 만든다. 함수의 <code>?work=io</code> 가 <code>os.TempDir()</code>(=<code>/tmp</code>)에 파일을 쓴다.</li>
-    <li><code>--chown=65532:65532</code>: /tmp 의 주인을 실행 사용자와 같게. 65532 는 distroless 의 <code>nonroot</code> 관례 번호.</li>
+    <li><code>--chown=65532:65532</code>: /tmp 의 주인을 실행 사용자와 같게. 65532 는 distroless(Google 이 만드는, 셸도 패키지 관리자도 없는 최소 베이스 이미지)의 <code>nonroot</code> 사용자 관례 번호.</li>
     <li><code>USER 65532:65532</code>: ksvc 의 <code>runAsNonRoot: true</code> 를 통과하려면 이미지가 숫자 UID 를 가져야 한다(이름이면 kubelet 이 root 여부를 확인할 수 없어 거절한다).</li>
     <li><code>ENTRYPOINT ["/hello"]</code>: JSON 배열(exec form). 셸이 없으니 문자열 형식(shell form)은 못 쓴다.</li>
   </ul>
@@ -794,6 +829,7 @@ flowchart TD
   <ul>
     <li><code>FROM python:3.12-slim</code>: Docker Hub 의 공식 이미지(인덱스). 빌드 노드의 arch 항목이 골라진다. 태그로 적었으니 Docker Hub 쪽에서 3.12 패치가 나오면 다음 빌드에 새 베이스가 들어온다. 재현성을 원하면 <code>python:3.12-slim@sha256:...</code> 로 고정.</li>
     <li><code>COPY server.py handler.py ./</code>: 빌드 재료(ConfigMap)에 이 두 파일과 Dockerfile 이 들어 있다(6절). <code>handler.py</code> 가 사용자 코드다.</li>
+    <li><code>USER 65532:65532</code>: 주석의 Pod Security 는 PSA(Pod Security Admission)다. namespace 에 라벨을 붙이면 API 서버가 그 namespace 의 파드 보안 설정을 <code>privileged</code>·<code>baseline</code>·<code>restricted</code> 세 단계 중 하나로 강제하는 쿠버네티스 기능이고, <code>restricted</code> 는 root 실행을 금지한다. 테넌트 namespace 는 restricted, 빌드 namespace 는 baseline 이다(7절).</li>
     <li><code>ENV PYTHONUNBUFFERED=1</code>: print 가 바로 표준 출력으로 → <code>kubectl logs</code> 에 즉시 보인다.</li>
     <li><code>CMD</code>: Knative 가 넣어 주는 <code>PORT</code> 를 <code>server.py</code> 가 읽는다.</li>
   </ul>
@@ -831,7 +867,7 @@ flowchart TD
 <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
 <ul>
 <li><strong>scratch</strong>(Go): 이미지가 가장 작고 셸이 없어 침입 후 할 수 있는 일이 적다. 대가는 디버깅 도구가 없다는 것(<code>kubectl exec</code> 로 들어가도 할 게 없다). 대안 <code>gcr.io/distroless/static</code> 은 CA 인증서·tzdata·<code>/etc/passwd</code> 가 있어 HTTPS 를 부르는 함수에 더 맞다.</li>
-<li><strong>python:3.12-slim</strong>: alpine(musl) 보다 크지만 C 확장 wheel 이 그대로 깔린다. distroless python 은 크기는 비슷하고 셸이 없다.</li>
+<li><strong>python:3.12-slim</strong>: alpine(musl) 보다 크지만 C 확장 wheel(미리 컴파일해 둔 파이썬 패키지 배포 형식)이 그대로 깔린다. distroless python 은 크기는 비슷하고 셸이 없다.</li>
 <li><strong>Dockerfile 을 플랫폼이 준다</strong>: 사용자는 Dockerfile 을 모른다(FaaS 의 약속). 언어가 늘면 런타임 폴더(<code>runtime/&lt;언어&gt;/</code>)를 하나씩 추가한다. Buildpacks 는 이 일을 자동화한 것이다(9절).</li>
 </ul></aside>
 
@@ -841,17 +877,17 @@ flowchart TD
 <li><a href="https://pkg.go.dev/cmd/go#hdr-Compile_packages_and_dependencies">go build 플래그</a> · <a href="https://github.com/GoogleContainerTools/distroless">distroless</a></li>
 </ul></aside>
 
-<!-- ============================================================ 5. Kaniko -->
-<h2 id="kaniko">5. Kaniko: Docker 데몬 없이 클러스터 안에서 빌드</h2>
+<!-- ============================================================ 5. kaniko -->
+<h2 id="kaniko">5. kaniko: Docker 데몬 없이 클러스터 안에서 빌드</h2>
 
 <div class="tier" data-tier="1">
   <h3>무엇이고 왜 쓰나</h3>
-  <p>맥에서 <code>docker build</code> 를 하면 실제 일은 Docker 데몬(dockerd, root 권한 프로세스)이 한다. 쿠버네티스 파드 안에는 데몬이 없다. 데몬을 쓰는 방법은 두 가지인데 둘 다 위험하다.</p>
+  <p>4절의 Dockerfile 을 누가 실행하나. 맥에서 <code>docker build</code> 를 하면 실제 일은 Docker 데몬(dockerd, root 권한 프로세스)이 한다. 쿠버네티스 파드 안에는 데몬이 없다. 데몬을 쓰는 방법은 두 가지인데 둘 다 위험하다.</p>
   <ul>
-    <li><strong>노드의 Docker 소켓을 파드에 마운트</strong>: 그 파드는 노드의 dockerd 에게 "호스트 / 를 마운트한 privileged 컨테이너를 띄워라" 를 시킬 수 있다 = 노드 root.</li>
-    <li><strong>Docker-in-Docker</strong>: 파드 안에 dockerd 를 띄운다. dockerd 가 cgroup·마운트를 만들려면 <code>privileged: true</code> 가 필요하다 = 역시 노드 root 에 가깝다.</li>
+    <li><strong>노드의 Docker 소켓을 파드에 마운트</strong>: 그 파드는 노드의 dockerd 에게 "호스트 / 를 마운트한 privileged 컨테이너(노드의 모든 장치와 커널 기능에 손댈 수 있는 컨테이너 설정)를 띄워라" 를 시킬 수 있다 = 노드 root.</li>
+    <li><strong>Docker-in-Docker</strong>: 파드 안에 dockerd 를 띄운다. dockerd 가 cgroup(프로세스 묶음의 CPU·메모리 사용량을 재고 제한하는 커널 기능)·마운트를 만들려면 <code>privileged: true</code> 가 필요하다 = 역시 노드 root 에 가깝다.</li>
   </ul>
-  <p><strong>Kaniko</strong>(Google 이 만든 도구, 원본 저장소는 2025-06-03 보관됨)는 데몬 없이 <strong>자기 컨테이너의 루트 파일 시스템 위에서 직접</strong> Dockerfile 을 실행한다. 베이스 이미지를 자기 <code>/</code> 에 풀고, <code>RUN</code> 을 자기 프로세스로 실행하고, 바뀐 파일을 tar 로 묶어 레이어를 만들고, 레지스트리 API 로 push 한다. 특권(privileged)이 필요 없고, 평범한 Job 파드 하나로 빌드가 끝난다.</p>
+  <p><strong>kaniko</strong>(Google 이 만든 도구, 원본 저장소는 2025-06-03 보관됨)는 데몬 없이 <strong>자기 컨테이너의 루트 파일 시스템 위에서 직접</strong> Dockerfile 을 실행한다. 베이스 이미지를 자기 <code>/</code> 에 풀고, <code>RUN</code> 을 자기 프로세스로 실행하고, 바뀐 파일을 tar 로 묶어 레이어를 만들고, 레지스트리 API 로 push 한다. 특권(privileged)이 필요 없고, 평범한 Job(파드를 한 번 띄워 끝날 때까지 책임지는 쿠버네티스 리소스, 7절) 파드 하나로 빌드가 끝난다.</p>
   <p>Java 로 비유하면, 빌드 서버에 원격 셸을 열어 주는 대신 "빌드만 하고 결과를 아티팩트 저장소에 올리고 끝나는 일회용 컨테이너" 를 띄우는 것이다.</p>
 </div>
 
@@ -860,7 +896,7 @@ flowchart TD
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 470" role="img" aria-labelledby="f610-t">
-        <title id="f610-t">Kaniko executor 내부: 베이스 파일 시스템을 자기 루트에 풀고 명령마다 스냅샷을 떠서 레이어로 만든 뒤 push</title>
+        <title id="f610-t">kaniko executor 내부: 베이스 파일 시스템을 자기 루트에 풀고 명령마다 스냅샷을 떠서 레이어로 만든 뒤 push</title>
         <defs>
           <marker id="f610-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
           <marker id="f610-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
@@ -959,17 +995,17 @@ flowchart TD
   <tr><td><code>--context</code></td><td>빌드 재료 위치. <code>dir://</code>(컨테이너 안 폴더), <code>tar://</code>(tar.gz 파일, <code>tar://stdin</code> 가능), <code>gs://</code>, <code>s3://</code>, <code>git://</code> 등</td><td><code>tar:///workspace/context.tar.gz</code></td><td><code>dir:///workspace</code></td></tr>
   <tr><td><code>--dockerfile</code></td><td>Dockerfile 경로 (context 기준 상대 또는 절대)</td><td><code>Dockerfile</code></td><td><code>/workspace/Dockerfile</code></td></tr>
   <tr><td><code>--destination</code></td><td>push 할 이미지 참조. 여러 번 줄 수 있다</td><td><code>kind-registry:5000/fn/hello:$(IMAGE_TAG)</code></td><td><code>${PUSH_IMAGE}</code></td></tr>
-  <tr><td><code>--cache</code>, <code>--cache-repo</code></td><td>RUN 결과 레이어 캐시를 원격 저장소에. cache-repo 를 안 주면 destination + <code>/cache</code></td><td>켬, <code>fn/cache</code></td><td>안 씀</td></tr>
+  <tr><td><code>--cache</code>, <code>--cache-repo</code></td><td>명령 결과 레이어 캐시를 원격 저장소에. 기본은 RUN 레이어만(<code>--cache-run-layers</code> 기본 true), COPY 레이어는 <code>--cache-copy-layers</code> 를 켜야. cache-repo 를 안 주면 destination + <code>/cache</code></td><td>켬, <code>fn/cache</code></td><td>안 씀</td></tr>
   <tr><td><code>--cache-ttl</code></td><td>캐시 유효 기간. 기본 2주</td><td>기본</td><td>-</td></tr>
   <tr><td><code>--digest-file</code></td><td>push 한 이미지의 digest 를 이 파일에. <code>/dev/termination-log</code> 로 주면 쿠버네티스가 종료 메시지로 보관</td><td>안 씀</td><td><code>/dev/termination-log</code></td></tr>
   <tr><td><code>--insecure</code></td><td>push 를 평문 HTTP 로</td><td>켬</td><td>켬</td></tr>
   <tr><td><code>--insecure-pull</code></td><td>pull 을 평문 HTTP 로</td><td>-</td><td>-</td></tr>
   <tr><td><code>--insecure-registry</code></td><td>이 레지스트리 하나는 push·pull 모두 HTTP 로 (여러 번 가능)</td><td><code>kind-registry:5000</code></td><td>-</td></tr>
   <tr><td><code>--registry-mirror</code></td><td>Docker Hub 이미지를 받을 때 먼저 볼 미러. 실패하면 기본 레지스트리로 (<code>--skip-default-registry-fallback</code> 이면 실패)</td><td>429 때 추가 (15절)</td><td>-</td></tr>
-  <tr><td><code>--snapshot-mode</code></td><td><code>full</code>(기본, 내용+메타데이터), <code>redo</code>(mtime·크기·모드·uid·gid), <code>time</code>(mtime 만, RUN 변경을 놓칠 수 있음)</td><td><code>redo</code></td><td>기본 full</td></tr>
+  <tr><td><code>--snapshot-mode</code></td><td><code>full</code>(기본, 내용+메타데이터), <code>redo</code>(mtime(파일 수정 시각)·크기·모드·uid·gid), <code>time</code>(mtime 만, RUN 변경을 놓칠 수 있음)</td><td><code>redo</code></td><td>기본 full</td></tr>
   </tbody></table></div>
   <ul>
-    <li><code>$(IMAGE_TAG)</code>: 쿠버네티스가 컨테이너의 <code>args</code> 안 <code>$(변수)</code> 를 같은 컨테이너의 env 값으로 바꿔 준다(셸이 아니라 kubelet 이 한다). build.sh 가 env 0번 값을 JSON Patch 로 바꾼다.</li>
+    <li><code>$(IMAGE_TAG)</code>: 쿠버네티스가 컨테이너의 <code>args</code> 안 <code>$(변수)</code> 를 같은 컨테이너의 env 값으로 바꿔 준다(셸이 아니라 kubelet 이 한다). build.sh 가 env 0번 값을 JSON Patch(JSON 문서의 특정 경로를 바꾸는 표준 형식, RFC 6902)로 바꾼다.</li>
     <li>05 는 캐시를 안 쓴다. 대신 같은 코드는 빌드 ID 가 같아 Job 자체를 재사용한다(8절). 베이스 이미지(python:3.12-slim)는 빌드마다 Docker Hub 에서 다시 받는다. Docker Hub 한도에 걸리기 쉬운 쪽이 05 다.</li>
   </ul>
   <h4>스냅샷의 실제 알고리즘</h4>
@@ -999,9 +1035,9 @@ flowchart LR
   L -- "예" --> M["그 레이어를 받아 씀<br/>명령은 실행 안 함"]
   L -- "아니오" --> N["실행 후 레이어를<br/>cache-repo:캐시키 로 push"]
   </pre>
-  <p>그래서 캐시는 "체인"이다. 위 줄의 키가 바뀌면 아래 줄 키도 전부 바뀐다(Dockerfile 레이어 순서 규칙과 같은 이유). 04 에서 <code>build.sh v1</code> 다음 <code>v1b</code> 를 같은 소스로 돌리면 <code>RUN go build</code> 줄이 캐시로 끝나고 로그에 <code>Using caching version of cmd</code> 가 보인다. 단 <code>FROM golang:1.25-alpine</code> 의 베이스 레이어는 매번 받아서 풀어야 한다(캐시는 "명령 결과" 레이어만 대상이고, 베이스 이미지 캐시는 별도의 <code>--cache-dir</code> + warmer 가 필요하다). 첫 빌드가 느린 이유 두 가지가 여기 있다: 캐시가 없어서, 그리고 커다란 golang 베이스를 처음 받아서.</p>
+  <p>그래서 캐시는 "체인"이다. 위 줄의 키가 바뀌면 아래 줄 키도 전부 바뀐다(Dockerfile 레이어 순서 규칙과 같은 이유). 04 에서 <code>build.sh v1</code> 다음 <code>v1b</code> 를 같은 소스로 돌리면 <code>RUN go build</code> 줄이 캐시로 끝나고 로그에 <code>Using caching version of cmd</code> 가 보인다. 단 <code>FROM golang:1.25-alpine</code> 의 베이스 레이어는 매번 받아서 풀어야 한다(캐시는 "명령 결과" 레이어만 대상이고, 베이스 이미지 캐시는 별도의 <code>--cache-dir</code> + warmer 가 필요하다). 첫 빌드가 느린 이유 두 가지가 여기 있다: 캐시가 없어서, 그리고 커다란 golang 베이스를 처음 받아서. README 가 못 박는 규칙 둘을 더 적어 둔다. (1) 캐시 대상은 기본값으로 <code>RUN</code> 레이어뿐이다(<code>--cache-run-layers</code> 기본 true, <code>--cache-copy-layers</code> 기본 false). (2) 한 번 캐시에서 못 찾으면(cache miss) 그 아래 명령들은 캐시를 아예 묻지 않고 전부 다시 만든다. 체인이 끊기는 지점부터는 push 만 하고 조회는 하지 않는다는 뜻이다.</p>
   <aside class="callout warn"><p class="callout-title">주의: kaniko 는 보안 경계가 아니다</p>
-  <p>kaniko README 는 "kaniko 혼자서 신뢰할 수 없는 빌드를 안전하게 만들지 않는다, 컨테이너 런타임의 보안 기능에 기댄다" 고 적는다. <code>RUN</code> 은 컨테이너 안 root 로 실행되고, 베이스 이미지를 자기 루트에 풀어 덮어쓴다(그래서 공식 executor 이미지가 아닌 다른 이미지에서 돌리는 걸 지원하지 않는다). 사용자 코드가 빌드 때 실행되는 언어(예: <code>pip install</code> 의 setup.py, <code>npm install</code> 의 postinstall)라면 빌드 파드도 "남의 코드를 실행하는 곳" 이다. 그래서 우리는 빌드를 테넌트 namespace 가 아닌 별도 namespace(PSA baseline)와 별도 노드 풀에 가두었다. 더 조이려면 빌드 파드에도 <code>runtimeClassName: gvisor</code> 를 줄 수 있다 【확인 필요: kaniko 가 gVisor 안에서 도는지는 이 PoC 에서 시험하지 않았다】.</p></aside>
+  <p>kaniko README 는 "kaniko 혼자서 신뢰할 수 없는 빌드를 안전하게 만들지 않는다, 컨테이너 런타임의 보안 기능에 기댄다" 고 적는다. <code>RUN</code> 은 컨테이너 안 root 로 실행되고, 베이스 이미지를 자기 루트에 풀어 덮어쓴다(그래서 공식 executor 이미지가 아닌 다른 이미지에서 돌리는 걸 지원하지 않는다). 사용자 코드가 빌드 때 실행되는 언어(예: <code>pip install</code> 의 setup.py, <code>npm install</code> 의 postinstall)라면 빌드 파드도 "남의 코드를 실행하는 곳" 이다. 그래서 우리는 빌드를 테넌트 namespace 가 아닌 별도 namespace(PSA baseline, 4절)와 별도 노드 풀에 가두었다. 더 조이려면 빌드 파드에도 <code>runtimeClassName: gvisor</code> 를 줄 수 있다. README 의 "Running kaniko in gVisor" 절이 이 조합을 공식으로 다루며, kaniko 가 "지금 컨테이너 안인가" 를 판별하는 검사가 gVisor 에서는 통하지 않으므로 <code>--force</code> 플래그를 더해야 한다고 적는다. 이 PoC 에서는 시험하지 않았다(빌드 풀 노드에는 gVisor 를 설치하지 않았다).</p></aside>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
@@ -1021,7 +1057,7 @@ flowchart LR
 
 <aside class="callout fact"><p class="callout-title">공식 문서</p>
 <ul>
-<li><a href="https://github.com/GoogleContainerTools/kaniko">kaniko README</a> (How does kaniko work, Additional flags, Caching, Security) · <a href="https://github.com/chainguard-dev/kaniko">chainguard-dev/kaniko 포크</a></li>
+<li><a href="https://github.com/GoogleContainerTools/kaniko">kaniko README</a> (How does kaniko work, Additional flags, Security) · <a href="https://github.com/GoogleContainerTools/kaniko#caching">Caching (RUN/COPY 레이어, cache miss 규칙)</a> · <a href="https://github.com/GoogleContainerTools/kaniko#running-kaniko-in-gvisor">Running kaniko in gVisor (--force)</a> · <a href="https://github.com/chainguard-dev/kaniko">chainguard-dev/kaniko 포크</a></li>
 <li><a href="https://kubernetes.io/docs/tasks/inject-data-application/define-interdependent-environment-variables/">쿠버네티스: args 안의 $(VAR) 치환</a></li>
 </ul></aside>
 
@@ -1030,11 +1066,11 @@ flowchart LR
 
 <div class="tier" data-tier="1">
   <h3>소스를 kaniko 파드에 어떻게 넘기나</h3>
-  <p>kaniko 는 빌드 재료(context)를 자기 컨테이너 안의 폴더나 tar 파일, 또는 S3·GCS·Git 에서 읽는다. PoC 는 외부 저장소 없이 끝내려고 <strong>ConfigMap</strong> 에 소스를 넣고 파드에 볼륨으로 붙인다. ConfigMap 한 개는 최대 1MiB 라서 함수 코드 몇 개에는 충분하다.</p>
-  <p>함정이 하나 있다. 쿠버네티스는 ConfigMap 볼륨의 파일을 "진짜 파일" 로 두지 않고 <strong>심볼릭 링크</strong>로 둔다(갱신을 원자적으로 하려고). kaniko 의 <code>COPY</code> 는 링크를 따라가지 않고 링크 자체를 이미지에 복사한다. 그러면 이미지 안에서 <code>go.mod</code> 가 "어디에도 없는 곳을 가리키는 링크" 가 되어 빌드가 깨진다. 04 와 05 는 이 같은 문제를 서로 다른 방법으로 피한다.</p>
+  <p>5절에서 kaniko 는 빌드 재료(context)를 읽는다고 했다. 이 절은 사용자 코드를 그 재료로 만들어 kaniko 파드에 넣는 방법이다. kaniko 는 재료를 자기 컨테이너 안의 폴더나 tar 파일, 또는 S3(AWS 객체 저장소)·GCS(Google Cloud Storage)·Git 에서 읽는다. PoC 는 외부 저장소 없이 끝내려고 <strong>ConfigMap</strong>(키-값 텍스트를 담는 쿠버네티스 리소스. 파드에 파일이나 환경 변수로 넣을 수 있다)에 소스를 넣고 파드에 볼륨으로 붙인다. ConfigMap 한 개는 최대 1MiB 라서 함수 코드 몇 개에는 충분하다.</p>
+  <p>함정이 하나 있다. 쿠버네티스는 ConfigMap 볼륨의 파일을 "진짜 파일" 로 두지 않고 <strong>심볼릭 링크</strong>(symbolic link, 다른 경로를 가리키기만 하는 바로 가기 파일)로 둔다(갱신을 원자적으로 하려고). kaniko 의 <code>COPY</code> 는 링크를 따라가지 않고 링크 자체를 이미지에 복사한다. 그러면 이미지 안에서 <code>go.mod</code> 가 "어디에도 없는 곳을 가리키는 링크" 가 되어 빌드가 깨진다. 04 와 05 는 이 같은 문제를 서로 다른 방법으로 피한다.</p>
   <div class="grid">
     <div class="item"><h4>04: tar.gz 하나로</h4><p>build.sh 가 소스 폴더를 <code>context.tar.gz</code> 로 묶어 ConfigMap 에 넣고, kaniko 에 <code>--context=tar://...</code>. kaniko 가 tar 를 열 때 파일 하나(링크)를 읽는 것은 문제가 없고, 압축을 푼 결과는 진짜 파일이다.</p></div>
-    <div class="item"><h4>05: initContainer cp -L</h4><p>busybox initContainer 가 <code>cp -L /src/* /workspace/</code> 로 링크를 따라가 내용을 복사(emptyDir)한 다음 kaniko 가 <code>dir:///workspace</code> 를 쓴다. 컨트롤 플레인이 파일별로 ConfigMap 키를 만들 수 있어 tar 를 만들 필요가 없다.</p></div>
+    <div class="item"><h4>05: initContainer cp -L</h4><p>initContainer(본 컨테이너보다 먼저, 순서대로 돌고 성공해야 하는 준비용 컨테이너)로 띄운 busybox(작은 리눅스 명령 모음 이미지)가 <code>cp -L /src/* /workspace/</code> 로 링크를 따라가 내용을 emptyDir(파드가 살아 있는 동안만 있는 빈 폴더 볼륨)에 복사한 다음 kaniko 가 <code>dir:///workspace</code> 를 쓴다. 컨트롤 플레인이 파일별로 ConfigMap 키를 만들 수 있어 tar 를 만들 필요가 없다.</p></div>
   </div>
 </div>
 
@@ -1079,7 +1115,7 @@ flowchart LR
     </div>
     <figcaption><b>그림 6-10.</b> ConfigMap 볼륨은 "보이는 이름 → <code>..data</code> → 시각 폴더의 진짜 파일" 2단 링크다. <code>cp -L</code>(링크를 따라가 내용 복사)로 emptyDir 에 진짜 파일을 만들면 kaniko 가 안전하게 COPY 한다. 링크를 그대로 COPY 하면 이미지 안에서 깨진다(빨강).</figcaption>
   </figure>
-  <p>05 에서 Job 과 ConfigMap 을 만드는 순서도 볼 만하다. <strong>Job 을 먼저</strong> 만들고, 그 Job 을 주인(ownerReference)으로 하는 ConfigMap 을 만든다. Job 이 TTL 로 지워지면 쿠버네티스 가비지 컬렉터가 ConfigMap 도 같이 지운다. 파드가 ConfigMap 보다 먼저 스케줄되면 kubelet 이 볼륨을 못 붙여 <code>ContainerCreating</code> 에서 잠깐 기다렸다가 다시 시도한다.</p>
+  <p>05 에서 Job 과 ConfigMap 을 만드는 순서도 볼 만하다. <strong>Job 을 먼저</strong> 만들고, 그 Job 을 주인(ownerReference)으로 하는 ConfigMap 을 만든다. Job 이 TTL(끝난 뒤 일정 시간이 지나면 자동 삭제, 7절의 <code>ttlSecondsAfterFinished</code>)로 지워지면 쿠버네티스 가비지 컬렉터가 ConfigMap 도 같이 지운다. Job 을 만들면 Job controller(Job 을 보고 파드를 만드는 쿠버네티스 컨트롤러)가 파드를 만들고 스케줄러(파드를 어느 노드에 둘지 정하는 구성 요소)가 노드를 배정하는데, 파드가 ConfigMap 보다 먼저 노드에 도착하면 kubelet 이 볼륨을 못 붙여 <code>ContainerCreating</code> 에서 잠깐 기다렸다가 다시 시도한다.</p>
   <pre class="mermaid">
 sequenceDiagram
   autonumber
@@ -1128,7 +1164,7 @@ kubectl -n "$BUILD_NS" create configmap hello-src --from-file="$ctx/context.tar.
         - <span class="k">name</span>: workspace
           <span class="k">emptyDir</span>: {}</code></pre>
   <ul>
-    <li><code>/src/*</code>: 셸 glob 은 점으로 시작하는 이름(<code>..data</code>, 시각 폴더)을 고르지 않는다 → 보이는 이름 세 개만 복사.</li>
+    <li><code>/src/*</code>: 셸 glob(와일드카드 패턴 확장)은 점으로 시작하는 이름(<code>..data</code>, 시각 폴더)을 고르지 않는다 → 보이는 이름 세 개만 복사.</li>
     <li><code>cp -L</code>: 원본이 링크면 링크가 가리키는 내용을 복사(dereference).</li>
     <li>emptyDir: 파드가 사는 동안만 있는 노드 디스크 폴더. initContainer 와 kaniko 가 같이 본다.</li>
     <li>(발췌는 한 줄 맵 형식으로 줄였다. 원본은 여러 줄 YAML.)</li>
@@ -1185,7 +1221,8 @@ kubectl -n "$BUILD_NS" create configmap hello-src --from-file="$ctx/context.tar.
 
 <div class="tier" data-tier="1">
   <h3>빌드는 "한 번 돌고 끝나는 일" → Job</h3>
-  <p>쿠버네티스 Job 은 "파드를 띄워서 성공으로 끝날 때까지 책임진다" 는 리소스다. 빌드 Job 을 설계할 때 정할 것은 다섯 가지다: <strong>어디서</strong>(namespace, 노드 풀), <strong>실패하면</strong>(backoffLimit), <strong>얼마나 오래</strong>(activeDeadlineSeconds), <strong>끝나면 언제 치우나</strong>(ttlSecondsAfterFinished), <strong>얼마나 쓰나</strong>(resources).</p>
+  <p>재료(6절)와 도구(5절)가 준비됐으니 그것을 돌릴 그릇을 정한다. 쿠버네티스 Job 은 "파드를 띄워서 성공으로 끝날 때까지 책임진다" 는 리소스다. Deployment 가 파드를 계속 살려 두는 것과 달리, Job 은 파드가 성공으로 끝나는 것을 목표로 하고 실패하면 정해진 횟수만큼 새 파드를 만든다. 빌드 Job 을 설계할 때 정할 것은 다섯 가지다: <strong>어디서</strong>(namespace, 노드 풀), <strong>실패하면</strong>(backoffLimit), <strong>얼마나 오래</strong>(activeDeadlineSeconds), <strong>끝나면 언제 치우나</strong>(ttlSecondsAfterFinished), <strong>얼마나 쓰나</strong>(resources).</p>
+  <p>"어디서" 에 나오는 세 낱말을 짧게 정리한다. taint 는 노드에 붙이는 "출입 제한" 표시이고, toleration 은 파드에 붙여 특정 taint 를 무시하게 하는 허가증이며, nodeSelector 는 파드가 갈 노드의 라벨 조건이다. taint 만으로는 "아무나 못 들어온다" 만 되고, nodeSelector 가 있어야 "꼭 거기로 간다" 가 된다. 왜 셋을 다 써야 하는지는 <a href="ch03-tenancy.html#taints">03장</a>이 다룬다.</p>
   <div class="table-wrap"><table><thead><tr><th>항목</th><th>04 (<code>build/kaniko-job.yaml</code>)</th><th>05 (<code>templates/build-job.yaml</code>)</th><th>이유</th></tr></thead><tbody>
   <tr><td>namespace</td><td><code>fn-build</code></td><td><code>faas-build</code> (PSA baseline)</td><td>테넌트 namespace 와 분리. kaniko 는 컨테이너 안 root 가 필요해서 restricted 를 못 쓴다</td></tr>
   <tr><td>노드</td><td colspan="2"><code>nodeSelector pool: build</code> + toleration <code>pool=build:NoSchedule</code></td><td>빌드의 CPU·디스크 폭주가 함수(exec 풀)에 번지지 않게</td></tr>
@@ -1193,7 +1230,7 @@ kubectl -n "$BUILD_NS" create configmap hello-src --from-file="$ctx/context.tar.
   <tr><td>activeDeadlineSeconds</td><td>600</td><td>600</td><td>베이스 다운로드가 멈추거나 무한 루프 RUN 이면 강제 종료</td></tr>
   <tr><td>ttlSecondsAfterFinished</td><td>600</td><td>3600</td><td>05 는 상태 조회(BUILD_FAILED 의 로그 안내)와 빌드 재사용에 Job 이 더 오래 필요</td></tr>
   <tr><td>requests</td><td>cpu 500m, mem 512Mi</td><td>cpu 500m, mem 512Mi</td><td>작게 → 스케줄이 잘 된다</td></tr>
-  <tr><td>limits</td><td>cpu 2, mem 2Gi</td><td>mem 1Gi (CPU limit 없음)</td><td>크게 → 빨리 끝난다. 05 는 CPU 를 throttling 없이 노드 여유만큼</td></tr>
+  <tr><td>limits</td><td>cpu 2, mem 2Gi</td><td>mem 1Gi (CPU limit 없음)</td><td>크게 → 빨리 끝난다. 05 는 CPU 를 throttling(한도에 닿으면 강제로 늦추기) 없이 노드 여유만큼</td></tr>
   <tr><td>restartPolicy</td><td colspan="2"><code>Never</code></td><td>재시도는 Job 이 새 파드로(backoffLimit). 같은 파드 재시작은 하지 않음</td></tr>
   </tbody></table></div>
 </div>
@@ -1240,12 +1277,20 @@ stateDiagram-v2
 <div class="tier" data-tier="3">
   <h3>필드별 세부 (Job 공식 문서 기준)</h3>
   <ul>
-    <li><strong>backoffLimit</strong>: 실패한 파드 수가 이 값을 넘으면 Job 을 Failed 로. 기본 6. 재시도 간격은 10초, 20초, 40초 … 최대 6분의 지수 백오프. 0 이면 첫 실패가 곧 Job 실패. <code>podFailurePolicy</code> 로 "종료 코드 1 은 재시도 안 함, 노드 장애(DisruptionTarget)는 재시도" 처럼 나눌 수 있다. 빌드에 쓰기 좋은 확장안이다.</li>
+    <li><strong>backoffLimit</strong>: 실패한 파드 수가 이 값을 넘으면 Job 을 Failed 로. 기본 6. 재시도 간격은 10초, 20초, 40초 … 최대 10분까지 늘어나는 지수 백오프(공식 문서 "capped at ten minutes"). 0 이면 첫 실패가 곧 Job 실패. <code>podFailurePolicy</code> 로 "종료 코드 1 은 재시도 안 함, 노드 장애(DisruptionTarget)는 재시도" 처럼 나눌 수 있다. 빌드에 쓰기 좋은 확장안이다.</li>
     <li><strong>activeDeadlineSeconds</strong>: Job 이 시작된 뒤 전체 경과 시간. 파드가 Pending 인 시간도 포함한다. 넘으면 실행 중 파드를 모두 종료하고 reason <code>DeadlineExceeded</code>. backoffLimit 보다 우선한다.</li>
     <li><strong>ttlSecondsAfterFinished</strong>: Complete 또는 Failed 가 된 시각부터 셈. TTL 컨트롤러가 Job 을 지우고, 연쇄 삭제(cascading)로 파드도 지운다. 05 는 ConfigMap 의 owner 가 Job 이라 ConfigMap 도 지워진다. 0 이면 끝나자마자 삭제(그러면 05 의 digest 읽기가 경쟁에 진다).</li>
     <li><strong>restartPolicy: Never</strong>: Job 의 파드는 <code>Always</code> 를 쓸 수 없다. <code>OnFailure</code> 는 같은 파드에서 컨테이너를 다시 띄워 로그가 덮이고, termination-log 도 마지막 시도 것만 남는다.</li>
-    <li><strong>requests / limits</strong>: 스케줄러는 requests 만 보고 자리를 계산한다. build 노드에 빌드 N개가 동시에 들어가려면 <code>N × 500m ≤ 노드 할당 가능 CPU</code>. limits.cpu 는 CFS quota(100ms 마다 상한)로 지켜지고, limits.memory 를 넘으면 OOMKilled(종료 코드 137) → backoffLimit 0 이라 바로 BUILD_FAILED. Go 컴파일은 메모리를 꽤 쓰므로 04 는 2Gi 로 넉넉하게 잡았다.</li>
-    <li><strong>labels</strong>: 05 는 <code>faas.poc/tenant</code>, <code>faas.poc/function</code>, <code>faas.poc/build-id</code> 를 Job 과 파드 템플릿 둘 다에 붙인다. 상태 조회가 Job 을 라벨로 찾고(<code>latestBuild</code>), digest 읽기는 Job controller 가 자동으로 붙이는 <code>job-name</code> 라벨로 파드를 찾는다.</li>
+    <li><strong>requests / limits</strong>: 스케줄러는 requests 만 보고 자리를 계산한다. build 노드에 빌드 N개가 동시에 들어가려면 <code>N × 500m ≤ 노드 할당 가능 CPU</code>. limits.cpu 는 CFS quota(리눅스 CPU 스케줄러의 시간 할당량. 100ms 마다 상한)로 지켜지고, limits.memory 를 넘으면 OOMKilled(메모리 초과로 커널이 프로세스를 죽임, 종료 코드 137) → backoffLimit 0 이라 바로 BUILD_FAILED. Go 컴파일은 메모리를 꽤 쓰므로 04 는 2Gi 로 넉넉하게 잡았다.</li>
+    <li><strong>labels</strong>: 05 는 <code>faas.poc/tenant</code>, <code>faas.poc/function</code>, <code>faas.poc/build-id</code> 를 Job 과 파드 템플릿 둘 다에 붙인다. 상태 조회가 Job 을 라벨로 찾고(<code>latestBuild</code>), digest 읽기는 Job controller 가 자동으로 붙이는 라벨로 파드를 찾는다(아래).</li>
+  </ul>
+  <h4>Job 의 조건(conditions), 라벨, 파드 수</h4>
+  <ul>
+    <li><code>completions</code>·<code>parallelism</code>: 둘 다 비우면 기본 1, 즉 "파드 하나가 성공하면 끝" 인 비병렬 Job 이다. 빌드 Job 은 이 모양이다.</li>
+    <li><code>status.conditions</code>: 끝난 Job 은 <code>Complete</code> 또는 <code>Failed</code> 조건(<code>status: "True"</code>)을 갖는다. 05 의 <code>waitUntilCondition</code> 이 보는 값이고, 04 의 build.sh 는 <code>status.succeeded</code>/<code>status.failed</code> 숫자를 본다. 1.31 부터 Job controller 는 파드가 모두 종료된 뒤에야 이 둘을 붙이고, 끝내기로 결정한 순간에는 <code>FailureTarget</code>(실패 확정) 또는 <code>SuccessCriteriaMet</code>(성공 확정) 조건을 먼저 붙인다. 더 빨리 반응해야 하면 앞의 둘을 본다.</li>
+    <li>라벨: Job controller 는 파드에 <code>batch.kubernetes.io/job-name</code> 과 <code>batch.kubernetes.io/controller-uid</code> 를 붙인다(1.27 부터, 공식 문서가 적는 이름). 접두사 없는 <code>job-name</code>, <code>controller-uid</code> 도 호환용으로 함께 붙는다(API 소스의 <code>LegacyJobNameLabel</code>). 05 의 <code>readDigest</code> 는 옛 이름 <code>job-name</code> 으로 찾는다. 지금은 동작하지만 공식 이름으로 바꿔 두는 편이 안전하다.</li>
+    <li>initContainer 실패: <code>copy-source</code> 가 실패해도 파드 실패로 세어 backoffLimit 에 들어간다. restartPolicy Never 라 파드는 Failed 로 남고, backoffLimit 0 이라 새 파드도 없다.</li>
+    <li><code>podReplacementPolicy</code>(기본 <code>TerminatingOrFailed</code>): 파드가 아직 종료 중(terminating)일 때 이미 대체 파드를 만든다. <code>Failed</code> 로 두면 완전히 끝난 뒤에만 만든다. backoffLimit 0 인 우리 Job 에는 영향이 없고, 재시도를 켜는 확장안에서 "빌드 두 개가 겹쳐 도는" 일을 막을 때 쓴다.</li>
   </ul>
   <div class="code-head"><span>poc/04-faas-runtime/scripts/build.sh</span><span>발췌 (Job 만들기와 기다리기)</span></div>
   <pre><code>patch='[
@@ -1302,7 +1347,7 @@ kubectl patch --local -f "$JOB_FILE" --type=json -p "$patch" -o yaml | kubectl c
 
 <div class="tier" data-tier="1">
   <h3>태그는 거짓말을 할 수 있다</h3>
-  <p>"Revision 3 = 이 코드" 가 영원히 참이어야 롤백을 믿을 수 있다. 그런데 Revision 이 <code>hello:latest</code> 같은 태그를 가리키면, 누군가 그 태그에 다른 이미지를 push 한 순간부터 Revision 3 의 파드가 새로 뜰 때(스케일 아웃, 노드 장애 후 재배치, 콜드 스타트) <strong>다른 코드</strong>를 받는다. 쿠버네티스는 이것을 알아채지 못한다. 그래서 05 는 kaniko 가 push 한 매니페스트의 digest 를 받아 ksvc 에 <code>image@sha256:...</code> 로 넣는다.</p>
+  <p>빌드가 끝나면 이미지는 레지스트리에 있다. 이 절은 그 이미지를 Knative Revision 에 어떻게 "못 박는가" 다. "Revision 3 = 이 코드" 가 영원히 참이어야 롤백을 믿을 수 있다. 그런데 Revision 이 <code>hello:latest</code> 같은 태그를 가리키면, 누군가 그 태그에 다른 이미지를 push 한 순간부터 Revision 3 의 파드가 새로 뜰 때(스케일 아웃, 노드 장애 후 재배치, 콜드 스타트) <strong>다른 코드</strong>를 받는다. 쿠버네티스는 이것을 알아채지 못한다. 그래서 05 는 kaniko 가 push 한 매니페스트의 digest 를 받아 ksvc 에 <code>image@sha256:...</code> 로 넣는다.</p>
   <p>태그가 거짓말하는 경우를 정리하면:</p>
   <ul>
     <li>같은 태그로 다시 push(04 에서 <code>build.sh v1</code> 을 두 번).</li>
@@ -1408,7 +1453,7 @@ sequenceDiagram
             .orElseThrow(() -&gt; <span class="k">new</span> IllegalStateException(<span class="s">"빌드 파드에서 digest 를 못 찾았다. ..."</span>));
 }</code></pre>
   <ul>
-    <li><code>withLabel("job-name", jobName)</code>: Job controller 가 파드에 붙이는 라벨. 템플릿에 따로 적을 필요가 없다.</li>
+    <li><code>withLabel("job-name", jobName)</code>: Job controller 가 파드에 붙이는 라벨. 템플릿에 따로 적을 필요가 없다. 공식 문서의 현재 이름은 <code>batch.kubernetes.io/job-name</code> 이고 접두사 없는 <code>job-name</code> 은 호환용으로 함께 붙는다(7절).</li>
     <li>initContainer(<code>copy-source</code>)도 containerStatuses 가 아닌 <code>initContainerStatuses</code> 에 있어서 섞이지 않는다. 그래도 이름 <code>kaniko</code> 로 한 번 더 거른다.</li>
     <li><code>trim()</code> + <code>startsWith("sha256:")</code>: 줄바꿈이나 다른 에러 문구가 들어 있으면 버린다. 실패한 컨테이너의 termination message 는 에러 문구일 수 있다.</li>
     <li>못 찾으면 예외 → 감사 로그 <code>deploy.apply error</code>. 템플릿에서 컨테이너 이름을 바꾸거나 <code>--digest-file</code> 을 빼면 바로 여기서 터진다(테스트가 이걸 검사한다).</li>
@@ -1421,13 +1466,34 @@ knativeServices(tenant).resource(ksvc).fieldManager(FIELD_MANAGER).forceConflict
   <ul>
     <li>push 는 <code>kind-registry:5000/tenant-a/hello:hello-3f2a9c01be</code>(태그 = 빌드 ID), ksvc 는 <code>localhost:5001/tenant-a/hello@sha256:...</code>. 저장소 경로가 같고 레지스트리 이름만 다르다(3절). digest 는 레지스트리 이름과 무관하게 같은 바이트를 가리킨다.</li>
     <li>태그도 빌드 ID(코드 해시)라서 사실상 "내용 기반" 이다. 그래도 digest 를 쓰는 이유: 태그는 레지스트리가 덮어쓰기를 허용하고, Knative 가 이 레지스트리의 태그 해석을 건너뛰므로 digest 를 직접 넣는 것이 유일한 고정 수단이다.</li>
+    <li><code>serverSideApply()</code>: server-side apply 는 API 서버가 "어느 필드를 누가(fieldManager) 썼는지" 를 기억하며 합치는 갱신 방식이다. <code>forceConflicts()</code> 는 다른 관리자가 쓴 필드라도 우리 값으로 덮는다. 같은 내용이면 아무것도 바뀌지 않아 새 Revision 도 생기지 않는다(멱등).</li>
   </ul>
   <h4>termination message 의 규칙</h4>
   <ul>
     <li>기본 경로 <code>/dev/termination-log</code>(<code>terminationMessagePath</code> 로 바꿀 수 있다). kubelet 은 컨테이너가 끝나면 이 파일을 읽어 <code>state.terminated.message</code> 에 넣는다.</li>
-    <li>크기 제한: 컨테이너 하나 4096바이트, 파드 전체 12KiB. sha256 digest(71자)는 여유가 있다.</li>
-    <li><code>terminationMessagePolicy: FallbackToLogsOnError</code> 로 두면 파일이 비고 실패했을 때 로그 끝부분을 대신 넣는다. 05 는 기본(<code>File</code>)이다.</li>
+    <li>크기 제한: 파드 전체 12KiB 를 컨테이너 수로 똑같이 나눈 값이 컨테이너 하나의 몫이고, 어느 경우에도 4096바이트를 넘는 부분은 kubelet 이 잘라 낸다(05 의 빌드 파드는 initContainer 를 포함해 컨테이너 둘). sha256 digest(71자)는 여유가 있다.</li>
+    <li><code>terminationMessagePolicy: FallbackToLogsOnError</code> 로 두면 파일이 비고 실패했을 때 로그 끝부분(2048바이트 또는 80줄 중 작은 쪽)을 대신 넣는다. 05 는 기본(<code>File</code>)이다.</li>
   </ul>
+  <h4>노드의 이미지 캐시와 imagePullPolicy</h4>
+  <p>digest 로 고정해도 "노드가 이미 받아 둔 이미지를 다시 쓰느냐" 는 별개의 규칙이 정한다. kubelet 은 받은 이미지를 노드 디스크(containerd 의 content store(받은 blob 을 digest 이름으로 보관하는 곳)와 풀어 둔 snapshot)에 두고, 파드가 새로 뜰 때 컨테이너의 <code>imagePullPolicy</code> 에 따라 다시 받을지 정한다.</p>
+  <ul>
+    <li>비워 두면 API 서버가 생성 시점에 값을 채운다: 참조가 digest 면 <code>IfNotPresent</code>, 태그가 없거나 <code>:latest</code> 면 <code>Always</code>, 그 밖의 태그면 <code>IfNotPresent</code>. 생성 뒤 이미지 참조를 바꿔도 이 값은 다시 계산되지 않는다.</li>
+    <li><code>Always</code> 라도 매번 전체를 다시 받지는 않는다. kubelet 이 레지스트리에 물어 digest 를 알아낸 뒤, 노드에 같은 digest 가 있으면 그것을 쓴다.</li>
+    <li>digest 참조 + <code>IfNotPresent</code> 가 가장 싸고 가장 정확하다. 같은 digest = 같은 바이트이므로 "있으면 쓴다" 가 곧 올바르다. 04 처럼 태그 참조 + <code>IfNotPresent</code> 는 15절 장면 5 의 원인이 된다.</li>
+    <li>이미지 GC: kubelet 은 이미지 디스크 사용률이 <code>imageGCHighThresholdPercent</code>(기본 85)를 넘으면 가장 오래 안 쓴 이미지부터 지워 <code>imageGCLowThresholdPercent</code>(기본 80)까지 내린다. 받은 지 <code>imageMinimumGCAge</code>(기본 2분)가 안 된 이미지는 건드리지 않는다. 함수가 많아지면 exec 노드의 이미지 캐시가 돌아가며 비워지고, 그 함수의 다음 콜드 스타트에 pull 시간이 더해진다.</li>
+    <li>본선 확장안: 어드미션 플러그인 <code>AlwaysPullImages</code> 를 켜면 모든 파드가 <code>Always</code> 가 되어, 멀티테넌트에서 "남이 받아 둔 비공개 이미지를 이름만 알고 가져다 쓰는" 일을 막는다(매번 레지스트리 자격 증명을 다시 검사하게 되므로).</li>
+  </ul>
+  <pre class="mermaid">
+flowchart TD
+  A["파드 생성, imagePullPolicy 비움"] --> B{"이미지 참조 모양"}
+  B -- "digest (@sha256)" --> C["IfNotPresent<br/>노드에 있으면 안 받음"]
+  B -- "태그 없음 또는 :latest" --> D["Always"]
+  B -- "그 밖의 태그 (v1 등)" --> C
+  C --> E{"노드에 같은 참조의<br/>이미지가 이미 있나"}
+  E -- "있음" --> F["pull 생략<br/>태그 참조면 옛 바이트일 수 있음 (장면 5)"]
+  E -- "없음" --> G["레지스트리에서 pull"]
+  D --> H["매번 레지스트리에 digest 를 묻고<br/>노드에 같은 digest 가 있으면 안 받음"]
+  </pre>
   <h4>멱등성: 같은 코드 두 번</h4>
   <div class="code-head"><span>poc/05-control-plane-mcp/control-plane/src/main/java/com/example/controlplane/deploy/BuildIds.java</span><span>발췌</span></div>
   <pre><code><span class="k">public static</span> String of(String tenant, String name, String code) {
@@ -1438,7 +1504,7 @@ knativeServices(tenant).resource(ksvc).fieldManager(FIELD_MANAGER).forceConflict
   <ul>
     <li>입력에 테넌트를 넣어 "다른 테넌트의 같은 코드" 가 같은 Job 을 공유하지 않게 한다(빌드 Job 은 한 namespace 에 모이니까).</li>
     <li>앞 10자(40비트)라 충돌 확률은 낮지만 0 은 아니다. 충돌하면 남의 빌드를 재사용하게 되는데 테넌트·이름이 입력에 있어 실제 피해 범위는 "같은 테넌트의 같은 함수" 안이다.</li>
-    <li>빌드 ID 는 런타임 파일(server.py, Dockerfile) 변경을 반영하지 않는다. 플랫폼이 런타임을 고쳐도 같은 사용자 코드는 옛 Job 을 재사용한다(TTL 1시간 안). 【확인 필요: 의도인지. 런타임 버전을 해시 입력에 넣는 것이 안전하다】</li>
+    <li>빌드 ID 는 런타임 파일(server.py, Dockerfile) 변경을 반영하지 않는다. 플랫폼이 런타임을 고쳐도 같은 사용자 코드는 옛 Job 을 재사용한다(TTL 1시간 안). 【확인 필요: 의도인지. 공식 문서로 정해지는 문제가 아니라 설계 결정이다. <code>BuildIds.of</code> 의 입력에 런타임 파일 해시(또는 런타임 버전 문자열)를 넣을지는 07장(컨트롤 플레인) 담당과 05 README 의 결정 목록에서 확정한다】</li>
   </ul>
   <pre class="pseudo"><code><span class="k">함수</span> 배포(테넌트, 이름, 코드):
   id = 이름 + "-" + sha256(테넌트, 이름, 코드)[:10]
@@ -1468,7 +1534,7 @@ knativeServices(tenant).resource(ksvc).fieldManager(FIELD_MANAGER).forceConflict
 <aside class="callout fact"><p class="callout-title">공식 문서</p>
 <ul>
 <li><a href="https://kubernetes.io/docs/tasks/debug/debug-application/determine-reason-pod-failure/">Determine the Reason for Pod Failure (termination message)</a></li>
-<li><a href="https://kubernetes.io/docs/concepts/containers/images/#image-names">Container images: 태그와 digest</a> · <a href="https://knative.dev/docs/serving/tag-resolution/">Knative tag resolution</a></li>
+<li><a href="https://kubernetes.io/docs/concepts/containers/images/#image-names">Container images: 태그와 digest</a> · <a href="https://kubernetes.io/docs/concepts/containers/images/#updating-images">imagePullPolicy 기본 규칙</a> · <a href="https://kubernetes.io/docs/concepts/architecture/garbage-collection/#container-image-garbage-collection">kubelet 이미지 GC</a> · <a href="https://knative.dev/docs/serving/tag-resolution/">Knative tag resolution</a></li>
 <li><a href="https://github.com/GoogleContainerTools/kaniko#flag---digest-file">kaniko --digest-file</a></li>
 </ul></aside>
 
@@ -1477,6 +1543,7 @@ knativeServices(tenant).resource(ksvc).fieldManager(FIELD_MANAGER).forceConflict
 
 <div class="tier" data-tier="1">
   <h3>"빌드 파드가 노드에 무엇을 요구하나" 로 비교</h3>
+  <p>5절부터 8절까지 "kaniko 로 빌드해서 digest 로 고정" 하는 우리 길을 따라왔다. 여기서 잠깐 멈춰 다른 길과 비교한다. 비교의 축은 하나다: <strong>빌드 파드가 노드에 무엇을 요구하나</strong>. 노드의 커널(kernel, 운영체제의 핵심으로 프로세스·메모리·파일·네트워크를 관리하는 부분)은 그 노드의 모든 파드가 함께 쓴다. 파드가 커널에 무언가를 시키는 통로가 시스템 콜(system call, 파일 열기·소켓 만들기 같은 부탁)이고, 보통 파드는 허용된 시스템 콜만 쓸 수 있다. "특권(privileged)" 이나 "노드 root" 를 요구하는 빌드 방식은 그 제한을 풀어 달라는 뜻이고, 그 파드가 뚫리면 노드 전체가 뚫린다.</p>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 400" role="img" aria-labelledby="f611-t">
@@ -1532,10 +1599,10 @@ knativeServices(tenant).resource(ksvc).fieldManager(FIELD_MANAGER).forceConflict
 <div class="tier" data-tier="2">
   <h3>네 가지 대안의 동작 원리</h3>
   <dl class="terms">
-    <dt>BuildKit (rootless)</dt><dd>Docker 의 새 빌드 엔진. 빌드를 DAG(의존 그래프)로 풀어 독립 단계를 병렬로 돌리고, 캐시를 내용 해시로 정교하게 관리한다(<code>--export-cache type=registry</code>). rootless 모드는 <code>buildkitd</code> 를 일반 사용자로 띄우고 user namespace 안에서 "가짜 root" 로 파일 소유자를 다룬다. 파드에서 돌리려면 공식 예시대로 seccomp·AppArmor 를 <code>Unconfined</code> 로 풀어야 한다(user namespace 와 마운트를 만들 시스템 콜이 기본 프로필에 막혀 있어서). 04 결정 2 에서 "본선에서 바꿀 1순위 후보".</dd>
+    <dt>BuildKit (rootless)</dt><dd>Docker 의 새 빌드 엔진. 빌드를 DAG(의존 그래프)로 풀어 독립 단계를 병렬로 돌리고, 캐시를 내용 해시로 정교하게 관리한다(<code>--export-cache type=registry</code>). rootless 모드는 <code>buildkitd</code> 를 일반 사용자로 띄우고 user namespace(컨테이너 안의 uid 0 을 호스트의 일반 uid 로 바꿔 보이게 하는 커널 기능, 10절) 안에서 "가짜 root" 로 파일 소유자를 다룬다. 파드에서 돌리려면 공식 예시(<code>examples/kubernetes/job.rootless.yaml</code>)대로 <code>securityContext</code> 의 <code>seccompProfile.type</code> 과 <code>appArmorProfile.type</code> 을 <code>Unconfined</code> 로 풀어야 한다. seccomp 는 시스템 콜 허용 목록 필터, AppArmor 는 프로그램별 파일·기능 접근 제한인데, user namespace 와 마운트를 만들 시스템 콜이 기본 프로필에 막혀 있어서다(<code>appArmorProfile</code> 필드는 1.30 부터, 그전에는 주석으로). 04 결정 2 에서 "본선에서 바꿀 1순위 후보".</dd>
     <dt>Cloud Native Buildpacks</dt><dd>Dockerfile 없이 소스를 보고 언어를 감지(detect)해서 "빌더 이미지"가 정해진 레이어를 만든다(Heroku·Cloud Foundry 계보, <code>pack</code>, kpack). 베이스 OS 레이어만 갈아 끼우는 rebase 가 된다. FaaS 의 "코드만 올리면 된다" 와 가장 잘 맞지만 빌더 이미지가 크고 첫 빌드가 무겁다. Knative Functions(<code>func</code>)가 이 방식을 쓴다.</dd>
     <dt>외부 CI (GitHub Actions 등)</dt><dd>클러스터 밖에서 <code>docker build</code> 후 push. 클러스터에 빌드 부하가 없고 도구가 성숙했다. 하지만 사용자 코드가 Git 에 있어야 하고(우리는 HTTP 로 코드를 받는다), 왕복이 길고, "남의 코드를 실행하는 곳" 이 CI 러너로 옮겨 갈 뿐 격리 문제는 그대로다.</dd>
-    <dt>Docker 소켓</dt><dd>가장 쉽고 가장 위험하다. 소켓에 쓸 수 있는 파드는 <code>docker run --privileged -v /:/host</code> 를 시킬 수 있다. 또 쿠버네티스 1.24 에서 dockershim 이 빠진 뒤 노드에는 보통 dockerd 자체가 없다(kind 노드도 containerd 만 있다).</dd>
+    <dt>Docker 소켓</dt><dd>가장 쉽고 가장 위험하다. 소켓에 쓸 수 있는 파드는 <code>docker run --privileged -v /:/host</code> 를 시킬 수 있다. 또 쿠버네티스 1.24 에서 dockershim(kubelet 이 Docker 데몬을 직접 부르던 어댑터)이 빠진 뒤 노드에는 보통 dockerd 자체가 없다(kind 노드도 containerd 만 있다).</dd>
   </dl>
 </div>
 
@@ -1572,15 +1639,15 @@ knativeServices(tenant).resource(ksvc).fieldManager(FIELD_MANAGER).forceConflict
 
 <div class="tier" data-tier="1">
   <h3>컨테이너는 "칸막이 친 프로세스" 다</h3>
-  <p>컨테이너는 VM 이 아니다. 리눅스 프로세스 하나에 커널 기능 몇 가지로 칸막이를 친 것이다. 컨테이너 안 프로그램이 파일을 열거나 소켓을 만들면 그 시스템 콜(system call, 커널에 하는 부탁)은 <strong>노드의 커널이 직접</strong> 받는다. 그래서 커널에 버그가 하나 있으면, 그 버그를 건드리는 컨테이너 하나가 노드 전체를 차지할 수 있다(컨테이너 탈출, container escape).</p>
+  <p>여기까지가 빌드(이 장의 전반부)다. 후반부는 격리다. 레지스트리에 있는 이미지를 노드가 받아 프로세스로 띄울 때 어떤 층을 지나는지부터 본다. 컨테이너는 VM 이 아니다. 리눅스 프로세스 하나에 커널 기능 몇 가지로 칸막이를 친 것이다. 컨테이너 안 프로그램이 파일을 열거나 소켓을 만들면 그 시스템 콜(system call, 커널에 하는 부탁)은 <strong>노드의 커널이 직접</strong> 받는다. 그래서 커널에 버그가 하나 있으면, 그 버그를 건드리는 컨테이너 하나가 노드 전체를 차지할 수 있다(컨테이너 탈출, container escape).</p>
   <p>쿠버네티스에서 파드가 실제 프로세스가 되기까지는 여러 층을 거친다.</p>
   <ol>
     <li><strong>kubelet</strong>: 노드의 에이전트. "이 파드를 띄워라" 를 API 서버에서 받는다.</li>
-    <li><strong>CRI</strong>(Container Runtime Interface): kubelet 이 런타임에게 말하는 gRPC 규약. 쿠버네티스는 이 규약만 알고 구현은 모른다.</li>
+    <li><strong>CRI</strong>(Container Runtime Interface): kubelet 이 런타임에게 말하는 gRPC(HTTP/2 위의 원격 호출 규약) 규약. 쿠버네티스는 이 규약만 알고 구현은 모른다.</li>
     <li><strong>containerd</strong>: CRI 를 구현한 데몬. 이미지 pull, 스냅샷, 컨테이너 수명을 관리한다.</li>
     <li><strong>shim</strong>(containerd-shim-*-v2): 컨테이너(정확히는 파드 샌드박스)마다 하나씩 뜨는 작은 중간 프로세스. containerd 가 재시작해도 컨테이너가 살아 있게 한다.</li>
     <li><strong>OCI 런타임</strong>: 실제로 칸막이를 치고 프로세스를 띄우는 도구. 기본은 <strong>runc</strong>, gVisor 는 <strong>runsc</strong>.</li>
-    <li><strong>리눅스 커널</strong>: namespace, cgroup, capability, seccomp, LSM(AppArmor/SELinux).</li>
+    <li><strong>리눅스 커널</strong>: namespace(무엇이 보이나), cgroup(얼마나 쓰나), capability(root 권한을 잘게 쪼갠 조각), seccomp(시스템 콜 필터), LSM(Linux Security Module, AppArmor/SELinux 같은 접근 통제). 아래 그림 6-15 에서 하나씩 본다.</li>
   </ol>
   <p>RuntimeClass(11절)는 4~5층의 "어느 shim/런타임을 쓸까" 를 파드마다 고르게 해 주는 장치다.</p>
 </div>
@@ -1671,7 +1738,7 @@ sequenceDiagram
   <h3>규약과 커널 기능 세부</h3>
   <h4>CRI 의 두 서비스</h4>
   <div class="table-wrap"><table><thead><tr><th>서비스</th><th>대표 RPC</th><th>뜻</th></tr></thead><tbody>
-  <tr><td>RuntimeService</td><td><code>RunPodSandbox</code>, <code>StopPodSandbox</code>, <code>RemovePodSandbox</code></td><td>파드 단위 환경(네트워크 namespace, pause 컨테이너, gVisor 면 Sentry). 요청에 <code>runtime_handler</code> 문자열이 들어간다</td></tr>
+  <tr><td>RuntimeService</td><td><code>RunPodSandbox</code>, <code>StopPodSandbox</code>, <code>RemovePodSandbox</code></td><td>파드 단위 환경(네트워크 namespace, pause 컨테이너(파드의 namespace 를 붙들고 있기만 하는 빈 컨테이너), gVisor 면 Sentry). 요청에 <code>runtime_handler</code> 문자열이 들어간다</td></tr>
   <tr><td></td><td><code>CreateContainer</code>, <code>StartContainer</code>, <code>StopContainer</code>, <code>ExecSync</code>, <code>ContainerStatus</code></td><td>샌드박스 안 컨테이너 수명</td></tr>
   <tr><td>ImageService</td><td><code>PullImage</code>, <code>ImageStatus</code>, <code>ListImages</code>, <code>RemoveImage</code>, <code>ImageFsInfo</code></td><td>이미지 받기와 디스크 관리(이미지 GC)</td></tr>
   </tbody></table></div>
@@ -1742,7 +1809,7 @@ sequenceDiagram
   <tr><td>root 금지</td><td><code>runAsNonRoot</code></td><td><code>true</code> + 이미지 <code>USER 65532</code></td></tr>
   <tr><td>seccomp</td><td><code>seccompProfile.type</code></td><td><code>RuntimeDefault</code> (containerd 기본 프로필)</td></tr>
   <tr><td>cgroup</td><td><code>resources.requests/limits</code></td><td>cpu 50m~500m, memory 32Mi~128Mi (04)</td></tr>
-  <tr><td>user namespace</td><td><code>hostUsers: false</code></td><td>안 씀 (kind/노드 커널 지원과 기능 단계에 따라 다름)</td></tr>
+  <tr><td>user namespace</td><td><code>hostUsers: false</code></td><td>안 씀. 기능 자체는 1.33 부터 기본 켜짐, 1.36 부터 GA 로 고정. 노드에 Linux 6.3 이상(idmap 마운트를 지원하는 파일 시스템), runc 1.2 이상 또는 crun 1.9 이상, containerd 2.0 이상이 필요하다. kind 노드의 containerd·runc 는 조건을 넘고, Docker Desktop VM 의 커널 버전이 남는 조건이다</td></tr>
   </tbody></table></div>
   <pre class="pseudo"><code><span class="k">runc create</span>(번들):
   clone(CLONE_NEWNS | NEWPID | NEWNET(샌드박스 것에 join) | NEWIPC | NEWUTS ...)
@@ -1755,7 +1822,7 @@ sequenceDiagram
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
-<p>kind 노드(<code>kindest/node:v1.37.0</code>)는 containerd 를 쓴다. 확인: <code>docker exec faas-worker3 crictl info | head</code>, <code>docker exec faas-worker3 ls /usr/local/bin</code>(gVisor 설치 뒤 runsc 와 shim 이 보임). 함수 응답의 <code>kernel</code> 칸이 runc 면 노드 커널, gVisor 면 다른 값이 나오는 이유가 이 그림의 두 갈래다(<code>main.go</code> 의 <code>syscall.Uname</code>).</p></aside>
+<p>kind 노드(<code>kindest/node:v1.37.0</code>)는 containerd 를 쓴다. 확인: <code>docker exec faas-worker3 crictl info | head</code>(crictl 은 CRI 로 런타임에 직접 묻는 명령줄 도구), <code>docker exec faas-worker3 ls /usr/local/bin</code>(gVisor 설치 뒤 runsc 와 shim 이 보임). 함수 응답의 <code>kernel</code> 칸이 runc 면 노드 커널, gVisor 면 다른 값이 나오는 이유가 이 그림의 두 갈래다(<code>main.go</code> 의 <code>syscall.Uname</code>).</p></aside>
 
 <aside class="callout fact"><p class="callout-title">공식 문서</p>
 <ul>
@@ -1769,7 +1836,7 @@ sequenceDiagram
 
 <div class="tier" data-tier="1">
   <h3>이름 하나로 "어떤 샌드박스" 를 고른다</h3>
-  <p><strong>RuntimeClass</strong> 는 클러스터 전체 리소스(namespace 없음)로, "이 이름을 고른 파드는 노드의 이 런타임 설정(handler)으로 띄워라" 를 정의한다. 파드(우리는 ksvc 의 template)에 <code>runtimeClassName: gvisor</code> 한 줄을 쓰면 그 파드만 gVisor 로 돈다. 나머지 파드는 기본(runc)이다.</p>
+  <p>10절의 스택에서 shim 과 OCI 런타임은 노드 설정(containerd 의 런타임 표)에 여러 개 있을 수 있다. 파드가 그중 어느 것을 쓸지 고르는 장치가 이 절이다. <strong>RuntimeClass</strong> 는 클러스터 전체 리소스(namespace 없음)로, "이 이름을 고른 파드는 노드의 이 런타임 설정(handler)으로 띄워라" 를 정의한다. 파드(우리는 ksvc 의 template)에 <code>runtimeClassName: gvisor</code> 한 줄을 쓰면 그 파드만 gVisor 로 돈다. 나머지 파드는 기본(runc)이다.</p>
   <p>필드는 세 개뿐이다.</p>
   <ul>
     <li><code>handler</code>: 노드의 CRI 런타임 설정 이름. containerd 에서는 <code>runtimes.&lt;handler&gt;</code> 표의 이름. 우리는 <code>runsc</code>.</li>
@@ -1780,6 +1847,7 @@ sequenceDiagram
 
 <div class="tier" data-tier="2">
   <h3>파드 생성부터 노드의 runsc 까지</h3>
+  <p>RuntimeClass 는 파드가 API 서버에 들어오는 순간 한 번 일한다. 그 순간을 어드미션(admission)이라 부른다: API 서버가 요청을 저장소(etcd, 클러스터 상태를 담는 키-값 데이터베이스)에 기록하기 전에 플러그인들이 검사하고 고치는 단계다. RuntimeClass 어드미션 플러그인이 파드 스펙에 scheduling 과 overhead 를 합쳐 넣고, 그 뒤로는 스케줄러와 kubelet 이 합쳐진 스펙만 본다.</p>
   <figure>
     <div class="fig scroll-l">
       <svg viewBox="0 0 1100 400" role="img" aria-labelledby="f617-t">
@@ -1874,11 +1942,11 @@ flowchart TD
     <span class="k">cpu</span>: 50m
     <span class="k">memory</span>: 64Mi</code></pre>
   <ul>
-    <li><code>apiVersion: node.k8s.io/v1</code>: RuntimeClass 는 1.20 에 GA. namespace 가 없는 리소스라 모든 테넌트가 같은 이름을 쓴다.</li>
+    <li><code>apiVersion: node.k8s.io/v1</code>: RuntimeClass 는 1.20 에 GA, <code>overhead</code> 필드(Pod Overhead)는 1.24 에 GA. namespace 가 없는 리소스라 모든 테넌트가 같은 이름을 쓴다.</li>
     <li><code>handler</code>: DNS 레이블 규칙(소문자, 숫자, <code>-</code>)을 따라야 하고, 만든 뒤에는 바꿀 수 없다(immutable). 노드 쪽 이름과 글자 하나라도 다르면 위 순서도의 마지막 실패가 난다.</li>
     <li><code>scheduling.nodeSelector</code>: 어드미션이 파드의 nodeSelector 와 합친다. 같은 키에 다른 값이면 파드 생성이 거절된다. 우리 hello-gvisor 는 같은 값(<code>pool: exec</code>)을 직접도 적어 두어 충돌이 없다.</li>
     <li><code>scheduling.tolerations</code>: 파드의 tolerations 에 합집합으로 더해진다.</li>
-    <li><code>overhead.podFixed</code>: 어드미션이 <code>pod.spec.overhead</code> 에 복사한다. 스케줄러, ResourceQuota, kubelet 의 파드 cgroup 크기 계산에 들어간다. 컨테이너 limits 가 다 있는 파드라면 파드 cgroup 한도 = limits 합 + overhead. 값 50m/64Mi 는 04 README 가 "추정치, 측정 후 고친다" 로 남긴 값이다.</li>
+    <li><code>overhead.podFixed</code>: 어드미션이 <code>pod.spec.overhead</code> 에 복사한다. 스케줄러, ResourceQuota(namespace 별 자원 총량 상한), kubelet 의 파드 cgroup 크기 계산에 들어간다. 컨테이너 limits 가 다 있는 파드라면 파드 cgroup 한도 = limits 합 + overhead. 값 50m/64Mi 는 04 README 가 "추정치, 측정 후 고친다" 로 남긴 값이다. 파드에 overhead 가 이미 적혀 있을 때의 처리는 문서와 코드의 표현이 조금 다르다: 공식 문서는 "이미 정의돼 있으면 거절" 로 적고, 어드미션 코드는 "이미 있고 RuntimeClass 의 값과 다를 때" 거절한다(같으면 통과, 그림 6-16 과 순서도는 코드 쪽). 어느 쪽이든 사용자가 overhead 를 직접 적을 이유는 없다.</li>
   </ul>
   <div class="code-head"><span>poc/04-faas-runtime/functions/ksvc/hello-gvisor.yaml</span><span>발췌</span></div>
   <pre><code>    <span class="k">spec</span>:
@@ -1934,11 +2002,11 @@ flowchart TD
 
 <div class="tier" data-tier="1">
   <h3>컨테이너와 커널 사이에 "가짜 커널" 을 하나 더</h3>
-  <p><strong>gVisor</strong>(Google 오픈소스, OCI 런타임 이름 <code>runsc</code>)는 Go 로 작성된 <strong>애플리케이션 커널</strong>(application kernel)이다. 리눅스와 비슷한 인터페이스(시스템 콜, <code>/proc</code>, 파일 시스템, 네트워크 스택)를 <strong>사용자 공간 프로세스</strong>로 구현한다. 이 프로세스가 <strong>Sentry</strong> 다.</p>
+  <p>RuntimeClass <code>gvisor</code> 가 가리키는 <code>runsc</code> 의 정체가 이 절이다. <strong>gVisor</strong>(Google 오픈소스, OCI 런타임 이름 <code>runsc</code>)는 Go 로 작성된 <strong>애플리케이션 커널</strong>(application kernel)이다. 리눅스와 비슷한 인터페이스(시스템 콜, <code>/proc</code>, 파일 시스템, 네트워크 스택)를 <strong>사용자 공간 프로세스</strong>로 구현한다. 이 프로세스가 <strong>Sentry</strong> 다.</p>
   <ul>
     <li>앱이 <code>open()</code>, <code>socket()</code> 같은 시스템 콜을 하면 호스트 커널이 아니라 Sentry 가 받아서 직접 처리한다. 공식 문서 표현으로 "Sentry 는 시스템 콜을 호스트 커널로 넘기지 않는다".</li>
     <li>Sentry 자신은 호스트 커널에 <strong>좁고 정해진 목록</strong>의 시스템 콜만 쓸 수 있다(seccomp 로 묶임). 앱이 커널 버그를 노리려면 먼저 Sentry 를 뚫고, 그다음 좁은 목록으로 호스트 커널을 뚫어야 한다 → <strong>심층 방어</strong>(defense in depth).</li>
-    <li>파일 접근은 별도 프로세스 <strong>Gofer</strong> 가 중개한다(또는 directfs 모드에서 Gofer 가 넘겨준 파일 디스크립터로 Sentry 가 직접).</li>
+    <li>파일 접근은 별도 프로세스 <strong>Gofer</strong> 가 중개한다(또는 directfs 모드에서 Gofer 가 넘겨준 파일 디스크립터(FD, 열린 파일을 가리키는 번호)로 Sentry 가 직접).</li>
   </ul>
   <p>VM(Kata, Firecracker)처럼 하드웨어 가상화를 쓰지 않으므로 중첩 가상화가 없는 곳(일반 클라우드 VM, Docker Desktop 의 리눅스 VM 안 kind 노드)에서도 돈다. 대신 시스템 콜이 많은 일(파일·네트워크 I/O)은 느려지고, 리눅스의 모든 기능을 구현하지는 않아 일부 프로그램과 호환되지 않는다.</p>
   <p>FaaS 에 맞는 이유: "남이 올린 코드" 를 "우리 노드" 에서 돌린다. 작년 본선 2위 팀(Green)도 Knative + gVisor 조합이었다(04 README).</p>
@@ -2036,8 +2104,8 @@ flowchart TD
         <text x="353" y="108" class="d-sub">추적하며 시스템 콜마다</text>
         <text x="353" y="132" class="d-sub">멈춰 Sentry 가 처리</text>
         <text x="353" y="176" class="d-lbl">문맥 전환 비용이 큼</text>
-        <text x="353" y="206" class="d-sub">어디서나 돌지만 지원 종료</text>
-        <text x="353" y="230" class="d-sub">예정 (공식 문서)</text>
+        <text x="353" y="206" class="d-sub">어디서나 돌지만 더는 지원 안 함</text>
+        <text x="353" y="230" class="d-sub">제거 예정 (공식 문서)</text>
         <text x="353" y="274" class="d-mono">04 README 9절의 비상 수단</text>
         <rect x="650" y="20" width="290" height="320" rx="12" class="d-warn-box"/>
         <text x="668" y="52" class="d-ttl">KVM</text>
@@ -2082,13 +2150,13 @@ sequenceDiagram
   <h4>파일 시스템: Gofer 와 directfs</h4>
   <ul>
     <li>원래 구조: Sentry 는 파일을 직접 열 수 없고, 컨테이너마다 뜨는 Gofer 프로세스에게 프로토콜(예전 9P, 지금 LISAFS)로 요청한다. Gofer 가 호스트에서 열고 결과를 돌려준다.</li>
-    <li><strong>directfs</strong>: Gofer 가 컨테이너 rootfs 의 디렉터리 FD 를 Sentry 에 넘겨주고, Sentry 가 그 FD 아래에서 <code>openat</code> 류를 직접 한다(seccomp 로 상대 경로 열기만 허용). 왕복이 줄어 빠르다. 최근 릴리스에서 기본으로 켜져 있다고 알려져 있다 【확인 필요: 20261012.0 기본값】.</li>
-    <li>오버레이: rootfs 위에 메모리 기반 쓰기 레이어(overlay)를 두어, 컨테이너가 쓴 파일이 호스트 디스크로 가지 않게 하는 설정이 있다. 그래서 함수의 <code>?work=io</code>(작은 파일 만들고 지우기)가 gVisor 에서 어느 경로를 타는지가 성능 차이를 결정한다 【확인 필요: 우리 설정의 overlay 기본값】.</li>
+    <li><strong>directfs</strong>: Gofer 가 컨테이너 rootfs 의 디렉터리 FD 를 Sentry 에 넘겨주고, Sentry 가 그 FD 아래에서 <code>openat</code> 류를 직접 한다(seccomp 로 상대 경로 열기만 허용). 왕복이 줄어 빠르다. 공식 파일 시스템 문서 기준으로 기본값은 켜짐이고, 끄려면 <code>--directfs=false</code> 를 준다. 우리는 runsc 설정 파일을 두지 않으므로 켜진 상태다.</li>
+    <li>오버레이: rootfs 위에 쓰기 레이어(overlay)를 두어 컨테이너가 쓴 파일이 호스트 디스크의 스냅샷으로 가지 않게 한다. 기본값은 <code>--overlay2=root:self</code>, 즉 rootfs 에만 오버레이를 두고 그 내용은 rootfs 안의 숨긴 파일에 담는다(문서: "self 방식 rootfs 오버레이는 성능을 위해 기본으로 켜져 있다"). <code>root:memory</code> 는 메모리에, <code>none</code> 은 오버레이 없이 호스트 파일에 직접 쓴다. 그래서 기본 설정에서 함수의 <code>?work=io</code>(작은 파일 만들고 지우기)는 Sentry 안의 오버레이 경로를 타고, 호스트 디스크로는 가지 않는다.</li>
   </ul>
   <h4>네트워크: netstack vs host</h4>
   <ul>
     <li>기본은 <strong>netstack</strong>: Sentry 안의 사용자 공간 TCP/IP 스택. 앱의 소켓은 Sentry 안에만 있고, Sentry 는 파드 네트워크 namespace 의 인터페이스에 패킷 단위로 읽고 쓴다(AF_PACKET 등). 호스트 커널의 TCP 코드가 앱 입력에 노출되지 않는다.</li>
-    <li><code>--network=host</code>: 소켓 시스템 콜을 호스트로 넘긴다. 빠르지만 격리가 약해진다. 쿠버네티스 파드는 CNI(우리 Cilium)가 만든 namespace 안이므로 netstack 이 그 namespace 의 veth 에 붙는다. Cilium 의 eBPF 정책은 veth 바깥(호스트 쪽)에서 적용되므로 gVisor 와 같이 동작한다 【확인 필요: Cilium + gVisor 조합에서 소켓 단위 기능(socket LB)의 동작】.</li>
+    <li><code>--network=host</code>: 소켓 시스템 콜을 호스트로 넘긴다. 빠르지만 격리가 약해진다. 쿠버네티스 파드는 CNI(Container Network Interface, 파드에 네트워크를 붙이는 플러그인 규약. 우리는 Cilium)가 만든 네트워크 namespace 안이므로 netstack 이 그 namespace 의 veth(가상 이더넷 쌍, 파드와 노드를 잇는 케이블)에 붙는다. Cilium 의 eBPF(커널 안에서 안전하게 도는 작은 프로그램) 정책은 veth 의 노드 쪽 끝에서 패킷 단위로 적용되므로 gVisor 와 같이 동작한다. 단, Cilium 이 kube-proxy 대신 쓰는 <strong>소켓 단위 로드밸런싱</strong>(파드의 <code>connect()</code> 시스템 콜을 eBPF 로 가로채 Service IP 를 파드 IP 로 바꿔치기)은 앱의 소켓이 Sentry 안에만 있어 작동하지 않는다. Cilium 공식 문서가 gVisor·Kata·KubeVirt 를 바로 이 경우로 꼽고, <code>socketLB.hostNamespaceOnly=true</code> 를 켜서 파드 namespace 에서는 소켓 LB 를 건너뛰고 패킷 단계(tc 훅)에서 Service 를 풀게 하라고 안내한다. 04 는 <code>cilium install</code> 기본값(Cilium 1.20.3 Helm 기본값은 <code>kubeProxyReplacement: "false"</code>, <code>socketLB.enabled: false</code>)이라 소켓 LB 가 꺼져 있고 Service 변환은 패킷 단계에서 일어나므로 이 문제가 바로 나타나지는 않는다. 본선에서 kube-proxy replacement 를 켤 때는 <code>socketLB.hostNamespaceOnly=true</code> 를 함께 켜야 gVisor 파드가 ClusterIP(예: 클러스터 DNS)에 닿는다. Cilium 의 네트워크 처리 자체는 <a href="ch04-network.html#cni">04장</a>.</li>
   </ul>
   <h4>보안 모델 (공식 Security Model 요약)</h4>
   <div class="table-wrap"><table><thead><tr><th>다루는 위협</th><th>다루지 않는 위협</th></tr></thead><tbody>
@@ -2097,7 +2165,7 @@ sequenceDiagram
   <tr><td></td><td>자원 고갈·DoS: 호스트 cgroup 에 맡긴다. 네트워크 정책도 컨테이너 수준에서 따로</td></tr>
   <tr><td></td><td>"샌드박스는 안전한 아키텍처를 대신하지 않는다"</td></tr>
   </tbody></table></div>
-  <p>원칙: (1) 앱의 시스템 콜은 Sentry 가 독자적으로 구현하고 호스트로 그대로 넘기지 않는다. (2) Sentry 가 쓸 수 있는 호스트 API 는 열거된 좁은 목록. (3) ioctl·raw 소켓 같은 특수 인터페이스는 넘기지 않는다(장치 에뮬레이션 없음). (4) 앱은 호스트 시스템 콜의 인자를 직접 만들 수 없다. (5) unsafe 코드는 <code>unsafe.go</code> 로 끝나는 파일에만, CGo 없음, 외부 의존성 제한. (6) 지속적인 퍼징.</p>
+  <p>원칙: (1) 앱의 시스템 콜은 Sentry 가 독자적으로 구현하고 호스트로 그대로 넘기지 않는다. (2) Sentry 가 쓸 수 있는 호스트 API 는 열거된 좁은 목록. (3) ioctl·raw 소켓 같은 특수 인터페이스는 넘기지 않는다(장치 에뮬레이션 없음). (4) 앱은 호스트 시스템 콜의 인자를 직접 만들 수 없다. (5) unsafe 코드는 <code>unsafe.go</code> 로 끝나는 파일에만, CGo 없음, 외부 의존성 제한. (6) 지속적인 퍼징(fuzzing, 무작위 입력을 퍼부어 버그를 찾는 자동 테스트).</p>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 380" role="img" aria-labelledby="f620-t">
@@ -2144,8 +2212,22 @@ sequenceDiagram
     <li><strong>시스템 콜이 많은 일</strong>: 모든 시스템 콜이 가로채기 + Sentry 처리를 거친다. 계산만 하는 함수(<code>?work=cpu</code>)는 거의 같고, 작은 파일을 많이 만들고 지우는 함수(<code>?work=io</code>)나 네트워크 왕복이 많은 함수는 느려진다. 04 의 hello 함수가 이 두 모드를 가진 이유다.</li>
     <li><strong>메모리</strong>: 파드마다 Sentry·Gofer 프로세스가 더 뜬다 → RuntimeClass <code>overhead</code>.</li>
     <li><strong>시작</strong>: 샌드박스(Sentry) 기동이 더해져 콜드 스타트가 길어진다.</li>
-    <li><strong>호환성</strong>: 리눅스 시스템 콜 전부를 구현하지 않는다(공식 문서의 호환성 표). 특수 ioctl, 일부 <code>/proc</code>·<code>/sys</code> 파일, 커널 모듈, eBPF 프로그램 로드 같은 것은 안 된다. 일반 웹 함수(Go net/http, 파이썬 http.server)는 문제가 없다.</li>
-    <li><strong>관측</strong>: <code>uname -r</code> 이 gVisor 가 흉내 내는 버전(04 README 의 추정 <code>4.4.0</code>)을 돌려주고, <code>dmesg</code> 에 gVisor 의 농담 같은 시작 메시지가 나온다. 함수 응답의 <code>kernel</code> 칸으로 runc/gVisor 를 구분하는 원리.</li>
+    <li><strong>호환성</strong>: 리눅스 시스템 콜 전부를 구현하지 않는다(공식 문서의 호환성 표). 특수 ioctl, 일부 <code>/proc</code>·<code>/sys</code> 파일, 커널 모듈, eBPF 프로그램 로드 같은 것은 안 된다. 공식 문서는 "구현 안 된 부분은 대부분 이미 지원하는 시스템 콜의 대안(예: <code>io_uring</code>)이라 언어 런타임이 스스로 다른 길을 고른다" 고 적고, Python·Java·Node.js·PHP·Go 의 회귀 테스트를 릴리스마다 돌린다. 일반 웹 함수(Go net/http, 파이썬 http.server)는 문제가 없다.</li>
+    <li><strong>관측</strong>: <code>uname -r</code> 이 호스트 커널이 아니라 gVisor 가 흉내 내는 버전을 돌려준다. 20261012.0 소스(<code>pkg/sentry/kernel/version/version.go</code>)의 기본값은 <code>4.19.0-gvisor</code> 다(04 README 가 추정한 <code>4.4.0</code> 은 옛 값. RDMA 지원을 켠 빌드만 <code>5.15.0-gvisor</code>). <code>dmesg</code> 에는 gVisor 의 농담 같은 시작 메시지가 나온다. 함수 응답의 <code>kernel</code> 칸으로 runc/gVisor 를 구분하는 원리.</li>
+  </ul>
+  <h4>runsc 설정: 플래그와 runsc.toml</h4>
+  <p>runsc 의 동작은 전부 플래그로 바꾼다. 쿠버네티스에서는 파드마다 플래그를 줄 수 없으므로, containerd 런타임 표의 <code>options</code> 에 설정 파일 경로(<code>TypeUrl = "io.containerd.runsc.v1.options"</code>, <code>ConfigPath = "/etc/containerd/runsc.toml"</code>)를 적고 그 파일의 <code>[runsc_config]</code> 표에 "플래그 이름 = 값" 을 쓴다. 우리 install-gvisor.sh 는 이 파일을 만들지 않으므로 전부 기본값이다.</p>
+  <ul>
+    <li><code>platform</code>: 기본 <code>systrap</code>. <code>kvm</code> 은 <code>/dev/kvm</code> 이 있을 때만. 15절 장면 2 의 <code>ptrace</code> 시도도 여기서 한다.</li>
+    <li><code>directfs</code>: 기본 true. <code>overlay2</code>: 기본 <code>root:self</code>(위). <code>network</code>: 기본 <code>sandbox</code>(netstack), <code>host</code> 는 호스트 소켓 그대로, <code>none</code> 은 루프백만.</li>
+    <li><code>debug = "true"</code>, <code>debug-log = "/var/log/runsc/%ID%/"</code>: 샌드박스가 왜 안 뜨는지 볼 때 켠다. 공식 containerd 문서의 "Debugging" 절 그대로.</li>
+    <li>containerd 표의 <code>pod_annotations = ["dev.gvisor.*"]</code> 를 적어 두면 파드 주석으로 일부 옵션(볼륨 마운트 힌트 등)을 파드마다 넘길 수 있다.</li>
+  </ul>
+  <h4>자원 모델 (공식 문서 기준)</h4>
+  <ul>
+    <li>Sentry 가 앱 대신 메모리를 할당하고 파일 페이지 캐시도 Sentry 안에 둔다. 그래서 파드 cgroup 의 메모리 사용량에는 앱과 Sentry 가 함께 잡힌다. RuntimeClass 의 <code>overhead</code> 가 이 몫을 스케줄에 미리 반영한다.</li>
+    <li>샌드박스 안에서 보이는 cgroup 은 회계용이다. 한도는 호스트 cgroup(파드 limits)이 지키고, 같은 샌드박스 안 프로세스끼리의 한도는 지켜지지 않는다.</li>
+    <li>블록 장치 파일 시스템(ext4 등) 마운트, 샌드박스 안에서 KVM 쓰기, 커널 모듈은 안 된다. <code>io_uring</code> 은 기본으로 꺼져 있고 <code>iptables</code> 는 일부만 지원한다.</li>
   </ul>
   <pre class="pseudo"><code><span class="k">Sentry</span> 이벤트 루프 (개념):
   <span class="k">반복</span>:
@@ -2160,7 +2242,7 @@ sequenceDiagram
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
 <ul>
-<li>04: <code>fn-runtime</code> 의 <code>hello-gvisor</code>(min-scale 0)와 <code>hello-gvisor-warm</code>(min-scale 1)이 gVisor, <code>hello-runc</code> 가 비교 기준. 같은 이미지·같은 자원, 다른 줄은 <code>runtimeClassName</code> 하나.</li>
+<li>04: <code>fn-runtime</code> 의 <code>hello-gvisor</code>(min-scale 0, 요청이 없으면 파드 0개)와 <code>hello-gvisor-warm</code>(min-scale 1, 늘 하나 유지)이 gVisor, <code>hello-runc</code> 가 비교 기준. 같은 이미지·같은 자원, 다른 줄은 <code>runtimeClassName</code> 하나.</li>
 <li>05: 테넌트 함수 템플릿에서 gVisor 는 꺼 둠(주석). 07: EC2 실행 풀에 <code>enable_gvisor=true</code> 면 설치되고, 4단계 ksvc 를 그대로 다시 써서 runc vs gVisor 를 같은 클러스터에서 비교한다.</li>
 <li>04 README 9절 기록: Claude 의 클라우드 컨테이너에서는 runsc 설치·등록·스케줄까지 되고 샌드박스 시작은 실패(CAP_SYS_RESOURCE 없음, cgroup v1). 맥 Docker Desktop 과 EC2 가 첫 실제 검증이다.</li>
 </ul></aside>
@@ -2176,7 +2258,8 @@ sequenceDiagram
 <aside class="callout fact"><p class="callout-title">공식 문서</p>
 <ul>
 <li><a href="https://gvisor.dev/docs/">gVisor 문서 개요</a> · <a href="https://gvisor.dev/docs/architecture_guide/intro/">Architecture Guide</a> · <a href="https://gvisor.dev/docs/architecture_guide/security/">Security Model</a> · <a href="https://gvisor.dev/docs/architecture_guide/platforms/">Platforms</a> · <a href="https://gvisor.dev/docs/architecture_guide/performance/">Performance</a></li>
-<li><a href="https://gvisor.dev/docs/user_guide/compatibility/">Compatibility</a> · <a href="https://gvisor.dev/docs/user_guide/networking/">Networking</a> · <a href="https://gvisor.dev/docs/user_guide/filesystem/">Filesystem</a> · <a href="https://gvisor.dev/blog/2023/04/28/systrap-release/">systrap 공개 글</a> · <a href="https://gvisor.dev/blog/2023/06/27/directfs/">directfs 글</a></li>
+<li><a href="https://gvisor.dev/docs/user_guide/compatibility/">Compatibility</a> · <a href="https://gvisor.dev/docs/user_guide/networking/">Networking</a> · <a href="https://gvisor.dev/docs/user_guide/filesystem/">Filesystem (directfs, overlay2 기본값)</a> · <a href="https://gvisor.dev/docs/architecture_guide/resources/">Resource Model</a> · <a href="https://gvisor.dev/docs/user_guide/production/">Production guide</a> · <a href="https://gvisor.dev/blog/2023/04/28/systrap-release/">systrap 공개 글</a> · <a href="https://gvisor.dev/blog/2023/06/27/directfs/">directfs 글</a></li>
+<li><a href="https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/#socket-loadbalancer-bypass-in-pod-namespace">Cilium: Socket LoadBalancer Bypass in Pod Namespace (gVisor 언급)</a> · uname 값: <a href="https://github.com/google/gvisor/blob/release-20261012.0/pkg/sentry/kernel/version/version.go">google/gvisor version.go</a></li>
 <li>원문 저장소: <a href="https://github.com/google/gvisor/tree/master/g3doc">google/gvisor g3doc</a></li>
 </ul></aside>
 
@@ -2185,12 +2268,13 @@ sequenceDiagram
 
 <div class="tier" data-tier="1">
   <h3>할 일은 세 가지</h3>
+  <p>12절의 구성 요소(runsc, shim, gvisor-bin)를 노드에 실제로 두는 일이다. kind 와 EC2 에서 손은 다르지만 할 일은 같다.</p>
   <ol>
-    <li>노드 CPU 종류에 맞는 gVisor 묶음(<code>runsc</code>, <code>containerd-shim-runsc-v1</code>, <code>gvisor-bin/</code>)을 받아 무결성(sha512)을 확인하고 노드의 <code>/usr/local/bin</code> 에 넣는다. 04 README 는 2026-07 부터 배포가 이 세 개 묶음이라 옛 블로그처럼 <code>runsc</code> 하나만 복사하면 안 돈다고 적었다(설치 문서 기준, 이 장에서 다시 확인하지는 못했다 【확인 필요】).</li>
+    <li>노드 CPU 종류에 맞는 gVisor 묶음(<code>runsc</code>, <code>containerd-shim-runsc-v1</code>, <code>gvisor-bin/</code>)을 받아 무결성(sha512)을 확인하고 노드의 <code>/usr/local/bin</code> 에 넣는다. gVisor 설치 문서가 못 박는 규칙: 2026-07 부터 릴리스는 이 세 묶음이고, <code>runsc</code> 는 자기 옆의 <code>gvisor-bin/</code> 을 찾으므로 셋을 같은 폴더에 둔다(옛 블로그처럼 <code>runsc</code> 하나만 복사하면 안 돈다). 빠진 것을 자동으로 내려받던 기능은 2026-09 말에 사라진다. 묶음은 <code>gvisor.tar.zstd</code> 가 기본이고 zstd 가 없는 곳을 위해 <code>gvisor.tar.bz2</code> 도 있다(우리 스크립트는 bz2). 또 하나의 조건: 노드 커널이 Linux 5.6 이상이어야 한다.</li>
     <li>노드 containerd 설정에 <code>runtimes.runsc</code> 표를 추가하고 containerd 를 재시작한다.</li>
     <li>클러스터에 RuntimeClass <code>gvisor</code> 를 만든다(11절).</li>
   </ol>
-  <p>kind 에서는 노드가 컨테이너라 맥에서 <code>docker cp</code>/<code>docker exec</code> 로 넣는다. EC2 에서는 노드가 진짜 VM 이라 첫 부팅 스크립트(user_data)가 노드 안에서 직접 한다.</p>
+  <p>kind 에서는 노드가 컨테이너라 맥에서 <code>docker cp</code>/<code>docker exec</code> 로 넣는다. EC2 에서는 노드가 진짜 VM 이라 첫 부팅 스크립트(user_data, EC2 가 처음 켜질 때 root 로 한 번 실행하는 스크립트. Terraform(인프라를 코드로 만드는 도구)이 넣어 준다)가 노드 안에서 직접 한다. 07 의 쿠버네티스는 kind 가 아니라 k3s(containerd 를 내장한 경량 쿠버네티스 배포판)다.</p>
 </div>
 
 <div class="tier" data-tier="2">
@@ -2295,7 +2379,7 @@ kubectl wait --for=condition=Ready node "${nodes[@]}" --timeout=120s</code></pre
     <li>sha512: 받은 파일이 중간에 바뀌지 않았는지(공급망). Linux 는 <code>sha512sum</code>, 맥은 <code>shasum -a 512</code>.</li>
     <li><code>docker cp</code> 세 번: OCI 런타임, shim, 보조 바이너리 폴더.</li>
     <li><code>grep -q 'runtimes.runsc]'</code>: 이미 등록됐으면 건너뜀 → 여러 번 돌려도 안전(멱등).</li>
-    <li>설정 덧붙이기: kind 노드의 containerd 설정이 version 2 형식이라는 전제(주석). containerd 2 의 version 3 형식이면 표 이름이 달라진다 → 07 의 템플릿은 두 형식을 모두 처리한다. kind 쪽은 【확인 필요】(3절과 같은 질문).</li>
+    <li>설정 덧붙이기: kind 노드의 <code>/etc/containerd/config.toml</code> 은 <code>version = 2</code> 로 시작하므로(3절) 옛 플러그인 이름 <code>io.containerd.grpc.v1.cri</code> 아래에 덧붙이는 것이 맞고, containerd 2.3 이 시작할 때 자동 변환해 <code>io.containerd.cri.v1.runtime</code> 의 런타임 표로 읽는다. 설정 파일이 <code>version = 3</code> 으로 바뀐 노드라면 표 이름을 바꿔야 한다 → 07 의 템플릿은 두 형식을 모두 처리한다.</li>
     <li><code>systemctl restart containerd</code>: 런타임 표는 재시작해야 읽힌다. 재시작 동안 그 노드의 kubelet 은 잠깐 런타임을 잃는다 → 마지막에 Ready 를 기다린다. 이미 떠 있던 컨테이너는 shim 이 붙잡고 있어서 죽지 않는다(shim 구조의 이유).</li>
   </ol>
   <div class="code-head"><span>poc/07-ec2-k3s/terraform/cluster/gvisor.sh.tftpl</span><span>발췌</span></div>
@@ -2320,11 +2404,11 @@ info=$(crictl_info) || { echo "[gvisor] containerd 가 안 뜸. journalctl -u k3
   systemctl restart k3s-agent
 <span class="k">fi</span></code></pre>
   <ul>
-    <li>k3s 는 자기 containerd 설정(<code>config.toml</code>)을 시작할 때마다 새로 만든다 → 직접 고치면 사라진다. 그래서 템플릿 파일을 둔다(k3s 문서 "Configuring containerd").</li>
+    <li>k3s 는 자기 containerd 설정(<code>config.toml</code>)을 시작할 때마다 새로 만든다 → 직접 고치면 사라진다. 그래서 템플릿 파일을 둔다(k3s 문서 "Configuring containerd"). k3s 는 2025-02 릴리스(v1.31.6+k3s1, v1.32.2+k3s1)부터 containerd 2.0 계열을 내장해 <code>config-v3.toml.tmpl</code>(version 3)이 기본 템플릿 이름이고, 옛 <code>config.toml.tmpl</code> 도 계속 읽는다.</li>
     <li><code>{{ template "base" . }}</code>: k3s 기본 설정 전체를 그대로 넣고 그 뒤에 runsc 표만 덧붙이는 Go 템플릿 문법.</li>
     <li>containerd 2(설정 version 3)에서는 런타임 표의 플러그인 이름이 <code>io.containerd.cri.v1.runtime</code> 이다. kind 판(install-gvisor.sh)과 가장 크게 다른 곳.</li>
-    <li>k3s 가 PATH 의 일부 런타임을 자동 등록하는데 runsc 가 그 대상인지는 07 README 가 【미확인】으로 남겼다. 그래서 "먼저 보고, 없을 때만 쓴다" 로 짰다.</li>
-    <li>스팟 노드가 회수돼 ASG 가 새 노드를 띄워도 같은 user_data 라서 gVisor 가 다시 깔린다. kind 판에 없는 성질이다.</li>
+    <li>k3s 가 PATH 에서 자동으로 찾아 등록하는 런타임은 문서에 목록이 있다: <code>crun, lunatic, nvidia, nvidia-cdi, nvidia-experimental, slight, spin, wasmedge, wasmer, wasmtime, wws</code>. <strong>runsc 는 없다.</strong> 07 README 가 【미확인】으로 둔 질문의 답은 "아니오" 이고, 스크립트는 항상 else 가지(템플릿 쓰기)로 간다. "먼저 보고, 없을 때만 쓴다" 구조는 그대로 두어도 해가 없다.</li>
+    <li>스팟(spot, 싸지만 AWS 가 회수할 수 있는 EC2) 노드가 회수돼 ASG(Auto Scaling Group, EC2 를 정해진 수로 유지하는 AWS 기능)가 새 노드를 띄워도 같은 user_data 라서 gVisor 가 다시 깔린다. kind 판에 없는 성질이다.</li>
   </ul>
   <h4>EC2 에서는 왜 될 것인가</h4>
   <p>EC2 인스턴스는 진짜 리눅스 커널을 가진 VM 이다. systrap 플랫폼이 필요로 하는 것(seccomp, 신호, 일반 프로세스 권한)은 VM 안에서 정상적으로 쓸 수 있고, k3s agent 는 root 로 돈다. 04 README 9절의 Claude 컨테이너 실패 원인(CAP_SYS_RESOURCE 없음, cgroup v1)이 EC2(Ubuntu 최신, cgroup v2, root)에는 없다. 다만 07 README 도 "【추정, 당일 확인】" 으로 적었다.</p>
@@ -2347,7 +2431,7 @@ sed "s#image: kind-registry:5000/fn/hello:[^[:space:]]*#image: $IMG#" "$F" | kub
 <aside class="callout fact"><p class="callout-title">공식 문서</p>
 <ul>
 <li><a href="https://gvisor.dev/docs/user_guide/install/">gVisor Installation</a> · <a href="https://gvisor.dev/docs/user_guide/containerd/quick_start/">containerd Quick Start</a> · <a href="https://gvisor.dev/docs/user_guide/containerd/configuration/">containerd 설정 (runsc.toml)</a></li>
-<li><a href="https://docs.k3s.io/advanced#configuring-containerd">k3s: Configuring containerd</a> · <a href="https://docs.docker.com/build/building/multi-platform/">Docker multi-platform builds</a></li>
+<li><a href="https://docs.k3s.io/advanced#configuring-containerd">k3s: Configuring containerd</a> · <a href="https://docs.k3s.io/advanced#alternative-container-runtime-support">k3s: Alternative Container Runtime Support (자동 등록 목록)</a> · <a href="https://docs.docker.com/build/building/multi-platform/">Docker multi-platform builds</a></li>
 </ul></aside>
 
 <!-- ============================================================ 14. 다른 샌드박스 -->
@@ -2355,11 +2439,12 @@ sed "s#image: kind-registry:5000/fn/hello:[^[:space:]]*#image: $IMG#" "$F" | kub
 
 <div class="tier" data-tier="1">
   <h3>격리 강도와 비용의 사다리</h3>
+  <p>gVisor 를 고른 이유를 뒤집으면 "다른 샌드박스는 왜 안 골랐나" 가 된다. 무엇으로 격리하는지, 그러려면 노드에 무엇이 있어야 하는지로 사다리를 그린다.</p>
   <div class="table-wrap"><table><thead><tr><th>방식</th><th>무엇으로 격리하나</th><th>필요한 것</th><th>kind 에서</th></tr></thead><tbody>
   <tr><td>runc</td><td>커널 기능(namespace, cgroup, seccomp)</td><td>없음</td><td>됨 (기본)</td></tr>
   <tr><td>gVisor</td><td>사용자 공간 커널 + 좁은 호스트 표면</td><td>seccomp, 일반 프로세스 권한 (systrap)</td><td>될 것으로 봄 (맥에서 첫 검증)</td></tr>
   <tr><td>Kata Containers</td><td>파드마다 경량 VM + 게스트 커널</td><td>하드웨어 가상화 (<code>/dev/kvm</code>)</td><td>중첩 가상화가 필요해 사실상 안 됨</td></tr>
-  <tr><td>Firecracker (microVM)</td><td>KVM 위 최소 VMM (AWS Lambda 의 기반)</td><td><code>/dev/kvm</code></td><td>같은 이유로 안 됨</td></tr>
+  <tr><td>Firecracker (microVM)</td><td>KVM(리눅스 커널의 하드웨어 가상화 기능) 위 최소 VMM(Virtual Machine Monitor, 하이퍼바이저. AWS Lambda 의 기반)</td><td><code>/dev/kvm</code></td><td>같은 이유로 안 됨</td></tr>
   <tr><td>WASM 런타임</td><td>바이트코드 샌드박스(메모리 안전, 기능 허가)</td><td>WASM 으로 다시 빌드한 코드</td><td>됨 (containerd shim 으로)</td></tr>
   </tbody></table></div>
 </div>
@@ -2416,7 +2501,7 @@ sed "s#image: kind-registry:5000/fn/hello:[^[:space:]]*#image: $IMG#" "$F" | kub
 <div class="tier" data-tier="3">
   <h3>대안별 세부와 판단</h3>
   <ul>
-    <li><strong>Kata Containers</strong>: 쿠버네티스에서 RuntimeClass handler <code>kata</code>(또는 <code>kata-qemu</code>, <code>kata-fc</code>)로 쓴다. containerd 의 <code>containerd-shim-kata-v2</code> 가 파드마다 경량 VM(QEMU, Cloud Hypervisor, Firecracker 중 하나)을 띄우고 그 안에서 게스트 커널 + kata-agent 가 컨테이너를 만든다. 우리 구조(RuntimeClass 한 줄)와 그대로 맞물리는 것이 장점이다. 맥의 Docker Desktop VM 은 중첩 가상화를 내주지 않는다 【확인 필요: Docker Desktop 최신판의 /dev/kvm 노출 여부】.</li>
+    <li><strong>Kata Containers</strong>: 쿠버네티스에서 RuntimeClass handler <code>kata</code>(또는 <code>kata-qemu</code>, <code>kata-fc</code>)로 쓴다. containerd 의 <code>containerd-shim-kata-v2</code> 가 파드마다 경량 VM(QEMU, Cloud Hypervisor, Firecracker 중 하나)을 띄우고 그 안에서 게스트 커널 + kata-agent 가 컨테이너를 만든다. 우리 구조(RuntimeClass 한 줄)와 그대로 맞물리는 것이 장점이다. 맥의 Docker Desktop VM 이 컨테이너에 <code>/dev/kvm</code> 을 내주는지는 공식 문서(Docker Desktop 설정·VMM 문서·릴리스 노트)에서 찾지 못했다 【확인 필요: 맥에서 <code>docker run --rm --privileged alpine ls -l /dev/kvm</code> 결과와 Docker Desktop 릴리스 노트의 "nested virtualization" 항목으로 확정. 없으면 Kata 는 kind 에서 불가로 확정】.</li>
     <li><strong>Firecracker</strong>: AWS Lambda·Fargate 의 기반 VMM. 부팅이 매우 빠르고 장치 모델이 최소다. 단독으로는 쿠버네티스 런타임이 아니고 Kata 의 하이퍼바이저나 firecracker-containerd 로 붙인다. EC2 에서는 <code>.metal</code> 인스턴스(또는 중첩 가상화를 허용하는 일부 유형)가 필요하다.</li>
     <li><strong>WASM</strong>(WebAssembly): 코드를 WASM 바이트코드로 빌드하고 Wasmtime·WasmEdge 같은 런타임이 실행한다. containerd 에는 runwasi 계열 shim 으로 붙어 RuntimeClass 로 고를 수 있다. 시작이 매우 빠르고 메모리가 작으며, 기능 기반 보안(파일·네트워크를 명시적으로 허가)이라 격리가 강하다. 대가: 사용자 코드를 WASM 으로 다시 빌드해야 하고, 파이썬처럼 인터프리터가 필요한 언어나 네이티브 라이브러리·스레드·소켓을 쓰는 코드는 제약이 크다. 작년 우승팀(Blue)이 WASM 을 썼다(04 README 결정 3).</li>
   </ul>
@@ -2443,7 +2528,7 @@ sed "s#image: kind-registry:5000/fn/hello:[^[:space:]]*#image: $IMG#" "$F" | kub
 
 <div class="tier" data-tier="1">
   <h3>증상에서 층으로</h3>
-  <p>이 장의 부품은 층이 많아서, 증상이 난 곳과 원인이 있는 곳이 다른 경우가 많다. 아래 순서도는 "함수 파드가 안 뜬다 / 응답이 이상하다" 에서 출발해 어느 층을 볼지 고른다.</p>
+  <p>앞 절들의 지식을 증상에서 거꾸로 쓰는 절이다. 이 장의 부품은 층이 많아서, 증상이 난 곳과 원인이 있는 곳이 다른 경우가 많다. 아래 순서도는 "함수 파드가 안 뜬다 / 응답이 이상하다" 에서 출발해 어느 층을 볼지 고른다.</p>
   <pre class="mermaid">
 flowchart TD
   A["함수가 READY 가 아니다"] --> B{"빌드 Job 상태"}
@@ -2470,7 +2555,7 @@ flowchart TD
   <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
   <ul>
     <li><strong>증상</strong>: 빌드 Job Failed. kaniko 로그에 <code>GET https://index.docker.io/v2/library/golang/manifests/1.25-alpine: TOOMANYREQUESTS</code> 류. 05 면 상태 <code>BUILD_FAILED</code>.</li>
-    <li><strong>왜</strong>: Docker Hub 는 익명 pull 을 IP 단위로 제한한다. kind 노드와 kaniko 파드는 모두 맥 한 대의 공인 IP 로 나간다. 04 는 golang, 05 는 python 베이스를 빌드마다 받고(05 는 캐시도 없음), 클러스터 재생성마다 노드 이미지들도 다시 받는다.</li>
+    <li><strong>왜</strong>: Docker Hub 는 pull 을 6시간 단위로 제한한다(공식 문서: 인증 없는 pull 은 IPv4 주소 또는 IPv6 /64 당 100회, Personal 계정 로그인은 200회, Pro·Team·Business 는 무제한). 넘으면 매니페스트 요청에 429 와 <code>You have reached your pull rate limit</code> 본문이 온다. kind 노드와 kaniko 파드는 모두 맥 한 대의 공인 IP 로 나간다. 04 는 golang, 05 는 python 베이스를 빌드마다 받고(05 는 캐시도 없음), 클러스터 재생성마다 노드 이미지들도 다시 받는다.</li>
     <li><strong>볼 곳</strong>: <code>kubectl -n fn-build logs -l app=fn-build --tail=20</code>, <code>kubectl -n faas-build logs job/build-... -c kaniko</code>.</li>
     <li><strong>고치는 법 (04 README 9절 보충)</strong>: 맥에서 미러를 채운다 → kaniko 에 미러를 알려 준다.
       <div class="code-head"><span>04 README 9절 보충의 절차</span><span>요약</span></div>
@@ -2479,14 +2564,14 @@ docker tag  mirror.gcr.io/library/golang:1.25-alpine localhost:5001/library/gola
 docker push localhost:5001/library/golang:1.25-alpine
 <span class="c"># kaniko-job.yaml args 에 한 줄</span>
 - --registry-mirror=kind-registry:5000</code></pre>
-      <code>mirror.gcr.io</code> 는 Google 이 운영하는 Docker Hub 캐시다. kaniko 의 <code>--registry-mirror</code> 는 Docker Hub 이미지(<code>library/golang</code>)를 먼저 미러에서 찾고, 없으면 원래 Docker Hub 로 간다. 04 의 Job 에는 <code>--insecure-registry=kind-registry:5000</code> 이 이미 있어 미러를 http 로 읽을 수 있다. 05 의 Job 에는 <code>--insecure</code>(push 용)만 있으므로 같은 방법을 쓰려면 <code>--insecure-pull</code> 또는 <code>--insecure-registry=kind-registry:5000</code> 도 더해야 할 것이다 【확인 필요】.</li>
+      <code>mirror.gcr.io</code> 는 Google 이 운영하는 Docker Hub 캐시다. kaniko 의 <code>--registry-mirror</code> 는 Docker Hub 이미지(<code>library/golang</code>)를 먼저 미러에서 찾고, 없으면 원래 Docker Hub 로 간다. 04 의 Job 에는 <code>--insecure-registry=kind-registry:5000</code> 이 이미 있어 미러를 http 로 읽을 수 있다. 05 의 Job 에는 <code>--insecure</code>(push 전용)만 있다. kaniko 소스(<code>pkg/util/remote.go</code>)에서 pull 쪽 http 허용은 <code>--insecure-pull</code> 이거나 <code>--insecure-registry</code> 목록에 그 레지스트리가 있을 때만 켜지므로, 같은 방법을 05 에 쓰려면 <code>templates/build-job.yaml</code> 의 args 에 <code>--registry-mirror=kind-registry:5000</code> 과 함께 <code>--insecure-registry=kind-registry:5000</code>(또는 <code>--insecure-pull</code>)을 더해야 한다.</li>
     <li><strong>근본 대책</strong>: Docker Hub 로그인(인증 pull 은 한도가 크다), 사내 pull-through 캐시(registry:2 의 proxy 모드, Harbor), 베이스 이미지를 우리 레지스트리에 미리 복사해 두고 Dockerfile 의 FROM 을 그쪽으로.</li>
   </ul></aside>
 
   <h4>장면 2. Docker Desktop 에서 FailedCreatePodSandBox (gVisor)</h4>
   <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
   <ul>
-    <li><strong>증상</strong>: <code>hello-gvisor</code> 만 READY 가 안 되고 <code>faas-functions</code> 가 Degraded. 파드 이벤트 <code>FailedCreatePodSandBox: ... failed to create containerd task ... runsc ...</code>.</li>
+    <li><strong>증상</strong>: <code>hello-gvisor</code> 만 READY 가 안 되고 Argo CD(GitOps 배포 도구, 01장)의 Application <code>faas-functions</code> 가 Degraded. 파드 이벤트 <code>FailedCreatePodSandBox: ... failed to create containerd task ... runsc ...</code>.</li>
     <li><strong>볼 곳 (04 README 9절 순서)</strong>: ① <code>kubectl -n fn-runtime describe pod -l serving.knative.dev/service=hello-gvisor | tail -5</code> ② <code>docker exec faas-worker3 journalctl -u containerd --no-pager | grep -i runsc | tail -20</code>.</li>
     <li><strong>흔한 원인 (README 의 추정)</strong>: (가) arch 불일치(장면 3) (나) <code>gvisor-bin/</code> 누락 (다) systrap 이 VM 커널에서 막힘 → runsc 설정에 <code>platform = "ptrace"</code> 시도(<code>runtimes.runsc.options.ConfigPath</code> 가 가리키는 <code>runsc.toml</code>). Claude 컨테이너에서 실제로 본 원인은 CAP_SYS_RESOURCE 없음(shim 이 <code>oom_score_adj</code> 를 못 씀)과 cgroup v1 이었다.</li>
     <li><strong>시간 상자</strong>: 30분 넘으면 범위를 줄인다. hello-gvisor 두 파일의 <code>runtimeClassName</code> 만 주석 처리하고 runc 로 측정, gVisor 측정은 07(EC2)로. 설계 문서 문장은 "격리 런타임은 RuntimeClass 한 줄로 갈아 끼우는 구조, 측정은 EC2 에서".</li>
@@ -2513,7 +2598,7 @@ docker push localhost:5001/library/golang:1.25-alpine
   <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
   <ul>
     <li><strong>증상</strong>: 04 에서 <code>main.go</code> 를 고치고 <code>build.sh v1</code> 을 다시 돌렸는데 함수 응답이 그대로이거나, 어떤 파드는 새 코드 어떤 파드는 옛 코드. ksvc 를 바꾸지 않았으니 새 Revision 도 없다.</li>
-    <li><strong>왜</strong>: 태그 <code>v1</code> 은 새 매니페스트로 옮겨졌지만(2절 PUT 덮어쓰기), Knative 는 이 레지스트리의 태그 해석을 건너뛰므로 Revision 은 "태그 v1" 에 묶여 있다. 노드는 <code>imagePullPolicy</code>(태그가 latest 가 아니면 기본 IfNotPresent)에 따라 이미 받은 옛 이미지를 그대로 쓰고, 이미지가 없는 새 노드에서 뜬 파드만 새 이미지를 받는다.</li>
+    <li><strong>왜</strong>: 태그 <code>v1</code> 은 새 매니페스트로 옮겨졌지만(2절 PUT 덮어쓰기), Knative 는 이 레지스트리의 태그 해석을 건너뛰므로 Revision 은 "태그 v1" 에 묶여 있다. 노드는 <code>imagePullPolicy</code>(태그가 latest 가 아니면 기본 IfNotPresent, 8절)에 따라 이미 받은 옛 이미지를 그대로 쓰고, 이미지가 없는 새 노드에서 뜬 파드만 새 이미지를 받는다.</li>
     <li><strong>볼 곳</strong>: <code>curl -s localhost:5001/v2/fn/hello/tags/list</code>, 노드에서 <code>docker exec faas-worker3 crictl images | grep fn/hello</code> 의 IMAGE ID 비교.</li>
     <li><strong>고치는 법</strong>: 빌드마다 새 태그(<code>v2</code>)와 ksvc 이미지 변경 → 새 Revision. 근본적으로는 05 처럼 digest 고정.</li>
   </ul></aside>
@@ -2563,13 +2648,13 @@ docker exec faas-worker3 uname -r</code></pre>
   <li><code>localhost:5001</code>(맥, 노드 hosts.toml)과 <code>kind-registry:5000</code>(Docker 네트워크 이름)은 같은 저장소. hosts.toml 이 http 미러로 바꾼다.</li>
   <li>Knative 태그 해석을 건너뛰면 태그 참조 Revision 이 태그에 묶인다 → digest 로 넣으면 문제가 없다.</li>
   <li>멀티 스테이지: 컴파일러는 버리고 결과물만. ENV/USER/CMD 는 레이어가 아니라 설정.</li>
-  <li>kaniko = 데몬 없이 자기 루트에 베이스를 풀고, 명령마다 스냅샷 → 레이어 → push. 특권 불필요, 그러나 보안 경계는 아님.</li>
+  <li>kaniko = 데몬 없이 자기 루트에 베이스를 풀고, 명령마다 스냅샷 → 레이어 → push. 특권 불필요, 그러나 보안 경계는 아님. 캐시는 기본 RUN 레이어만, 한 번 못 찾으면 그 아래는 전부 다시.</li>
   <li>ConfigMap 볼륨 파일은 심볼릭 링크 → tar.gz 또는 <code>cp -L</code>.</li>
-  <li>빌드 Job: backoffLimit 0, activeDeadlineSeconds, ttlSecondsAfterFinished, requests 작게 limits 크게, build 풀.</li>
-  <li>digest 고정: <code>--digest-file=/dev/termination-log</code> → 파드 상태 → <code>image@sha256</code>.</li>
+  <li>빌드 Job: backoffLimit 0(재시도 백오프는 최대 10분), activeDeadlineSeconds, ttlSecondsAfterFinished, requests 작게 limits 크게, build 풀. 끝은 Complete/Failed 조건, 파드 라벨은 <code>batch.kubernetes.io/job-name</code>.</li>
+  <li>digest 고정: <code>--digest-file=/dev/termination-log</code> → 파드 상태 → <code>image@sha256</code>. 노드 쪽은 imagePullPolicy(digest·일반 태그 = IfNotPresent, :latest = Always)와 이미지 GC(85/80%) 가 정한다.</li>
   <li>kubelet → CRI → containerd → shim v2 → OCI 런타임(runc/runsc) → 커널.</li>
   <li>RuntimeClass: handler(노드 런타임 이름), scheduling(자동 nodeSelector·toleration), overhead(스케줄·쿼터·cgroup).</li>
-  <li>gVisor: Sentry(사용자 공간 커널) + Gofer/directfs + 플랫폼(systrap 기본) + netstack. 호스트 표면 축소 = 심층 방어. 비용은 시스템 콜 많은 일, 메모리, 시작, 호환성.</li>
+  <li>gVisor: Sentry(사용자 공간 커널) + Gofer/directfs(기본 켜짐) + 플랫폼(systrap 기본) + netstack + overlay2 root:self. 호스트 표면 축소 = 심층 방어. 비용은 시스템 콜 많은 일, 메모리, 시작, 호환성. <code>uname -r</code> = 4.19.0-gvisor.</li>
   <li>Kata/Firecracker 는 /dev/kvm(중첩 가상화) 필요 → kind 불가, EC2 는 베어메탈. gVisor 는 둘 다 가능.</li>
 </ul>
 

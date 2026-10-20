@@ -26,7 +26,7 @@
 <header class="chapter-head">
   <p class="eyebrow">03장 · 관련 폴더 poc/03-tenant-isolation, poc/04-faas-runtime/cluster, poc/05-control-plane-mcp/k8s/platform</p>
   <h1>멀티테넌시와 노드 풀</h1>
-  <p class="lede">한 클러스터에 여러 손님(테넌트)의 함수를 올릴 때, 쿠버네티스 기본 오브젝트 여섯 겹으로 울타리를 치고 노드 풀로 "무엇이 어디에서 도는가" 를 정하는 방법을 설명한다. 다 읽고 나면 API 요청이 API 서버 안에서 어느 관문에서 거절되는지, 파드가 왜 그 노드에 갔는지(또는 왜 Pending 인지)를 스스로 추적할 수 있다.</p>
+  <p class="lede">한 클러스터에 여러 손님(테넌트)의 함수를 올릴 때, 쿠버네티스 기본 오브젝트 여섯 겹으로 울타리를 치고 노드 풀로 "무엇이 어디에서 도는가" 를 정하는 방법을 설명한다. 다 읽고 나면 클러스터로 들어오는 요청이 API 서버(모든 요청이 통과하는 쿠버네티스의 문) 안에서 어느 관문에서 거절되는지, 파드(함수가 실제로 도는 실행 단위)가 왜 그 노드에 갔는지(또는 왜 갈 곳이 없어 Pending 상태로 기다리는지)를 스스로 추적할 수 있다.</p>
   <div class="chapter-meta">
     <span class="chip">PoC 폴더 <b>poc/03-tenant-isolation</b></span>
     <span class="chip">핵심 기술 <b>Namespace · PSA · ResourceQuota · LimitRange · RBAC · ServiceAccount · AppProject · ApplicationSet · 스케줄러 · taint</b></span>
@@ -35,7 +35,8 @@
 </header>
 
 <h2 id="map">이 장의 지도</h2>
-<p>전체 아키텍처에서 이 장은 두 군데를 본다. 하나는 <b>namespace 단위의 울타리</b>(tenant-a, tenant-b 에 걸리는 여섯 겹)이고, 다른 하나는 <b>노드 단위의 칸막이</b>(system / build / exec 풀과 그곳으로 파드를 보내는 스케줄러)다. 울타리는 Git 의 파일 한 장(<code>tenants/tenant-a.yaml</code>)에서 ApplicationSet 과 Helm 차트를 거쳐 찍혀 나온다.</p>
+<p>전체 아키텍처에서 이 장은 두 군데를 본다. 하나는 <b>namespace 단위의 울타리</b>(tenant-a, tenant-b 에 걸리는 여섯 겹)이고, 다른 하나는 <b>노드 단위의 칸막이</b>(system / build / exec 풀 = 역할별로 묶은 노드 묶음과, 그곳으로 파드를 보내는 스케줄러)다. 울타리는 Git 의 파일 한 장(<code>tenants/tenant-a.yaml</code>)에서 ApplicationSet 과 Helm 차트를 거쳐 찍혀 나온다.</p>
+<p>그림과 표에 나오는 기본 말을 먼저 정리한다. <b>클러스터(cluster)</b>는 쿠버네티스가 관리하는 기계 묶음이고 <b>노드(node)</b>는 그 기계 하나다. 이 PoC 에서는 맥 위의 Docker 컨테이너 네 개가 노드 노릇을 하는데, 컨테이너를 노드로 쓰는 이 도구가 <b>kind</b> 다. <b>파드(Pod)</b>는 컨테이너 한 개 이상을 묶어 노드 위에 띄우는 최소 실행 단위이고, 함수 하나는 결국 파드 한 개 이상으로 돈다. <b>namespace</b> 는 파드·설정 같은 객체를 담는 칸이며, 이 PoC 는 테넌트 하나에 namespace 하나를 준다. 객체는 YAML 로 적는데 그 문서를 <b>매니페스트(manifest)</b>라 하고, 사람이 치는 명령줄 도구가 <b>kubectl</b> 이다. 노드 가운데 <b>control-plane 노드</b>에는 쿠버네티스의 두뇌가 산다. 모든 요청이 들어오는 <b>API 서버(kube-apiserver)</b>, 객체를 저장하는 키-값 저장소 <b>etcd</b>, 새 파드를 어느 노드에 둘지 정하는 <b>스케줄러(kube-scheduler)</b>, "원하는 상태" 와 "실제 상태" 를 계속 맞추는 컨트롤러 묶음(kube-controller-manager)이다. 노드마다 도는 <b>kubelet</b> 은 API 서버가 정해 준 파드를 실제 컨테이너로 띄우는 노드 쪽 대리인이다. 이 장에서 "컨트롤 플레인(05)" 이라고 쓰면 쿠버네티스의 이 두뇌가 아니라 우리 PoC 의 Spring Boot 함수 배포 서비스(<a href="ch07-control-plane.html">07장</a>)를 뜻한다. <b>GitOps</b> 는 클러스터의 원하는 상태를 Git 에 두고 클러스터 안의 에이전트가 Git 을 읽어 맞추는 방식이고, 그 에이전트가 <b>Argo CD</b> 다(<a href="ch01-gitops.html">01장</a>). Argo CD 의 단위 <b>Application</b> 은 "이 레포의 이 폴더를 이 클러스터의 이 namespace 에" 라는 약속 한 장, <b>ApplicationSet</b> 은 Application 을 여러 장 찍어 내는 틀, <b>Helm 차트</b>는 템플릿에 값(values)을 끼워 매니페스트를 만드는 패키지다. 노드에 붙는 <b>taint</b> 는 "허가증 없는 파드는 오지 마라" 는 표시인데 이 장 뒤쪽에서 자세히 본다.</p>
 
 <figure>
   <div class="fig scroll">
@@ -105,13 +106,13 @@
 <tbody>
 <tr><td><a href="#models">멀티테넌시 모델</a></td><td>soft/hard, namespace·가상 컨트롤 플레인·클러스터 단위 세 모델과 우리가 고른 것</td></tr>
 <tr><td><a href="#fences">울타리 6겹</a></td><td>PoC 가 테넌트마다 치는 여섯 겹과, 각 겹을 누가 강제하나</td></tr>
-<tr><td><a href="#apiserver">API 요청이 지나는 길</a></td><td>인증 → 인가 → 변경 어드미션 → 스키마 검증 → 검증 어드미션 → etcd. 울타리 대부분이 여기서 작동</td></tr>
+<tr><td><a href="#apiserver">API 요청이 지나는 길</a></td><td>인증(누구냐) → 인가(해도 되나) → 변경 어드미션(값을 채움) → 스키마 검증(형식) → 검증 어드미션(정책) → etcd(저장). 울타리 대부분이 여기서 작동</td></tr>
 <tr><td><a href="#namespace-psa">Namespace 와 Pod Security</a></td><td>1겹: 방과 탈출 통로 잠금. privileged / baseline / restricted, enforce / audit / warn</td></tr>
-<tr><td><a href="#quota">ResourceQuota</a></td><td>2겹: 테넌트 합계 한도. 사용량을 세는 방법과 "requests 없는 파드 거절" 의 이유</td></tr>
-<tr><td><a href="#limitrange">LimitRange</a></td><td>3겹: 컨테이너 기본값과 최대값. 기본값을 붙이는 순서</td></tr>
-<tr><td><a href="#resources">requests, limits, QoS</a></td><td>CPU 는 스로틀링, 메모리는 OOM kill. 세 QoS 등급</td></tr>
-<tr><td><a href="#rbac">RBAC</a></td><td>5겹: Role, ClusterRole, 바인딩, verbs, 하위 리소스, 집계, impersonation</td></tr>
-<tr><td><a href="#serviceaccount">ServiceAccount 와 토큰</a></td><td>컨트롤 플레인·ops-agent 의 신분증. TokenRequest, audience, 만료</td></tr>
+<tr><td><a href="#resources">requests, limits, QoS</a></td><td>2·3겹을 읽기 위한 바탕. requests 는 자리 예약, limits 는 천장. CPU 는 스로틀링(속도 제한), 메모리는 OOM kill(초과하면 커널이 프로세스를 죽임). 세 QoS 등급</td></tr>
+<tr><td><a href="#quota">ResourceQuota</a></td><td>2겹: 테넌트 합계 한도. 사용량을 세는 방법과 "선언 없는 파드 거절" 의 이유</td></tr>
+<tr><td><a href="#limitrange">LimitRange</a></td><td>3겹: 컨테이너 기본값과 최대값. 기본값을 붙이는 순서와 API 기본값 규칙</td></tr>
+<tr><td><a href="#rbac">RBAC</a></td><td>5겹: Role, ClusterRole, 바인딩, verbs(동작 종류), 하위 리소스, 집계, impersonation(남의 신분으로 요청하기)</td></tr>
+<tr><td><a href="#serviceaccount">ServiceAccount 와 토큰</a></td><td>컨트롤 플레인·ops-agent 의 신분증. TokenRequest(토큰 발급 API), audience(토큰을 받을 대상), 만료</td></tr>
 <tr><td><a href="#appproject">Argo CD AppProject</a></td><td>6겹: 배포 경로 울타리</td></tr>
 <tr><td><a href="#chart">tenant Helm 차트 파일별 해설</a></td><td>values 와 템플릿 6장, required·default·range</td></tr>
 <tr><td><a href="#appset">ApplicationSet 테넌트 공장</a></td><td>파일 하나 추가·삭제로 온보딩·오프보딩</td></tr>
@@ -119,18 +120,18 @@
 <tr><td><a href="#taints">라벨·nodeSelector·affinity·taint·RuntimeClass</a></td><td>네 도구의 역할 분담과 kind 에서 taint 를 거는 법</td></tr>
 <tr><td><a href="#nodepools">노드 풀 설계</a></td><td>system / build / exec 에 무엇이 왜 가나. 로컬과 EC2 가 다른 이유</td></tr>
 <tr><td><a href="#tests">격리 실험과 옆집 소음 측정</a></td><td>test-isolation.sh, measure.sh 의 논리</td></tr>
-<tr><td><a href="#break">깨지면</a></td><td>restricted 거절, Quota 초과, toleration 누락, RBAC 403</td></tr>
+<tr><td><a href="#break">깨지면</a></td><td>restricted 거절, Quota 초과, toleration 누락, RBAC 403(권한 없음 응답)</td></tr>
 <tr><td><a href="#recap">정리</a></td><td>체크리스트, 결정 표, 본선용 패턴, 질문</td></tr>
 </tbody></table></div>
 
-<aside class="callout warn"><p class="callout-title">이 장을 읽는 기준</p><p>공식 문서(kubernetes.io, argo-cd.readthedocs.io)의 개념을 기준으로 쓰고, 레포 파일은 <code>poc/03-tenant-isolation/</code> 의 원래 자리(정답본으로 덮인 것)를 인용한다. NetworkPolicy 의 내부(Cilium, eBPF, Hubble)는 <a href="ch04-network.html">04장</a>에서 다루고, 여기서는 여섯 겹 중 하나로만 짧게 언급한다. 이 가이드를 쓰는 환경에서는 공식 문서 사이트에 직접 접속하지 못해, 버전마다 바뀔 수 있는 세부 문구는 【확인 필요】로 표시했다.</p></aside>
+<aside class="callout warn"><p class="callout-title">이 장을 읽는 기준</p><p>공식 문서(kubernetes.io, argo-cd.readthedocs.io)의 개념을 기준으로 쓰고, 레포 파일은 <code>poc/03-tenant-isolation/</code> 의 원래 자리(정답본으로 덮인 것)를 인용한다. NetworkPolicy(파드 사이 통신을 허용 목록으로 제한하는 객체)의 내부 동작, 즉 그것을 실제로 막는 네트워크 플러그인 Cilium 과 그 관찰 도구 Hubble 은 <a href="ch04-network.html">04장</a>에서 다루고, 여기서는 여섯 겹 중 하나로만 짧게 언급한다. 2차 검수에서 kubernetes.io·Argo CD 문서와 쿠버네티스·Argo CD 소스(LimitRanger, 스케줄러 플러그인 순서, ServiceAccount 토큰 검증 등)로 세부 문구까지 대조했다. 그 결과 1차본의 "확인 필요" 표시는 모두 결론을 내어 지웠다. 처음 나오는 말은 그 자리에서 바로 풀어 쓴다. 앞 장을 읽지 않았어도 이 장만으로 읽히게 하려는 것이다.</p></aside>
 
 <!-- ============================================================ -->
 <h2 id="models">멀티테넌시 모델</h2>
 
 <div class="tier" data-tier="1">
   <h3>멀티테넌시는 무엇이고 왜 필요한가</h3>
-  <p><b>테넌트(tenant)</b>는 플랫폼을 빌려 쓰는 손님 한 팀이다. 우리 FaaS 로 치면 "함수를 올리는 회사 하나". <b>멀티테넌시(multi-tenancy)</b>는 여러 테넌트가 클러스터 하나를 같이 쓰는 것이다. 클러스터를 손님마다 따로 주면 안전하지만, 클러스터마다 컨트롤 플레인과 최소 노드 비용이 붙어서 손님 수만큼 비용과 운영 부담이 곱해진다.</p>
+  <p><b>테넌트(tenant)</b>는 플랫폼을 빌려 쓰는 손님 한 팀이다. 우리 FaaS 로 치면 "함수를 올리는 회사 하나". <b>멀티테넌시(multi-tenancy)</b>는 여러 테넌트가 클러스터 하나를 같이 쓰는 것이다. 클러스터를 손님마다 따로 주면 안전하지만, 클러스터마다 API 서버·etcd 같은 두뇌 부품과 최소 노드 비용이 붙어서 손님 수만큼 비용과 운영 부담이 곱해진다.</p>
   <p>같이 쓰면 싸지만 세 가지가 무섭다. ① <b>엿보기·공격</b>: A 가 B 의 함수를 부르거나 B 의 로그를 읽는다. ② <b>옆집 소음(noisy neighbor)</b>: A 의 무한 루프가 같은 노드의 B 를 느리게 한다. ③ <b>탈출</b>: A 의 컨테이너가 노드를 장악해 모든 테넌트를 본다. 그래서 울타리를 여러 겹 친다. 한 겹이 뚫려도 다음 겹이 막도록.</p>
   <p>쿠버네티스 공식 문서는 두 축으로 나눈다. <b>soft 멀티테넌시</b>는 테넌트끼리 어느 정도 믿는 경우(한 회사 안의 여러 팀)로, 실수와 자원 다툼을 막는 게 목적이다. <b>hard 멀티테넌시</b>는 서로 믿지 않는 경우(서로 다른 고객, 남이 쓴 코드를 돌리는 FaaS)로, 악의적인 공격까지 막아야 한다. 공식 문서는 이 둘을 딱 나뉜 범주가 아니라 연속된 스펙트럼으로 본다.</p>
   <figure>
@@ -201,13 +202,13 @@
         <text x="40" y="420" class="d-lbl">오른쪽으로 갈수록 격리 강도, 비용, 운영 부담이 함께 커진다</text>
       </svg>
     </div>
-    <figcaption><b>그림 3-2.</b> 공식 문서가 소개하는 세 구현 모델. ① 은 API 서버와 노드를 모두 공유하고 namespace 경계에 정책을 얹는다. ② 는 테넌트마다 가상 API 서버를 주지만 노드는 공유한다. ③ 은 전부 분리한다. 노드(커널) 공유 여부는 ①② 모두 같다는 점이 중요하다. 그래서 ①② 에서는 gVisor 같은 샌드박스와 전용 노드 풀이 별도로 필요하다.</figcaption>
+    <figcaption><b>그림 3-2.</b> 공식 문서가 소개하는 세 구현 모델. ① 은 API 서버와 노드를 모두 공유하고 namespace 경계에 정책을 얹는다. ② 는 테넌트마다 가상 API 서버를 주지만 노드는 공유한다. ③ 은 전부 분리한다. 그림의 CRD(CustomResourceDefinition)는 쿠버네티스에 새 종류의 객체를 등록하는 정의이고, "클러스터 객체" 는 어느 namespace 에도 속하지 않는 객체다. 노드 공유 여부는 ①② 모두 같다는 점이 중요하다. 컨테이너는 격리된 프로세스일 뿐 같은 노드의 같은 리눅스 커널(운영체제의 핵심)을 쓰기 때문이다. 그래서 ①② 에서는 gVisor(컨테이너와 호스트 커널 사이에 사용자 공간 커널을 끼워 시스템 콜을 가로채는 샌드박스 런타임, <a href="ch06-build-runtime.html">06장</a>) 같은 샌드박스와 함수 전용 노드 풀이 별도로 필요하다.</figcaption>
   </figure>
 </div>
 
 <div class="tier" data-tier="2">
   <h3>모델마다 무엇을 공유하고 무엇을 나누나</h3>
-  <p>공식 문서는 격리를 <b>컨트롤 플레인 격리</b>와 <b>데이터 플레인 격리</b>로 나눈다. 컨트롤 플레인 격리는 "누가 어떤 API 오브젝트를 보고 바꿀 수 있나"(RBAC, Quota, namespace), 데이터 플레인 격리는 "실제로 도는 컨테이너가 서로 무엇을 나누나"(네트워크, 노드, 커널, 저장소)다. 모델 ① 은 둘 다 정책으로 쌓고, ② 는 컨트롤 플레인을 진짜로 나누고, ③ 은 둘 다 물리적으로 나눈다.</p>
+  <p>공식 문서는 격리를 <b>컨트롤 플레인 격리</b>와 <b>데이터 플레인 격리</b>로 나눈다. 컨트롤 플레인 격리는 "누가 어떤 API 오브젝트를 보고 바꿀 수 있나"(RBAC = 역할 기반 접근 제어, Quota = 자원 합계 한도, namespace), 데이터 플레인 격리는 "실제로 도는 컨테이너가 서로 무엇을 나누나"(네트워크, 노드, 커널, 저장소)다. 이 이름들은 지금은 이름만 알아 두면 되고, 다음 절에서 여섯 겹으로 정리한 뒤 절마다 하나씩 파고든다. 그림 3-2 의 CRD 를 조금 더 풀면, Knative 의 Service 나 Argo CD 의 Application 처럼 쿠버네티스에 원래 없던 객체 종류를 등록하는 정의이고, Namespace·Node·CRD 처럼 어느 namespace 에도 속하지 않는 객체를 <b>클러스터 범위(cluster-scoped)</b> 객체라 한다. 클러스터 범위 객체는 클러스터 전체에 하나뿐이라 테넌트가 마음대로 만들게 둘 수 없다. 모델 ① 은 둘 다 정책으로 쌓고, ② 는 컨트롤 플레인을 진짜로 나누고, ③ 은 둘 다 물리적으로 나눈다.</p>
   <pre class="mermaid">
 flowchart TD
   Q1["테넌트끼리 서로 믿나?"] -->|"예, 한 회사 팀들"| S["soft: namespace per tenant<br/>RBAC, Quota, NetworkPolicy"]
@@ -218,7 +219,7 @@ flowchart TD
   Q3 -->|"규제·계약상 불가"| C["cluster per tenant"]
   N --> P["우리 PoC 의 위치"]
   </pre>
-  <p>FaaS 는 남의 코드를 돌리니 원래는 hard 쪽 요구다. 하지만 테넌트가 쿠버네티스 API 를 직접 만지지 않고 <b>우리 컨트롤 플레인 API 만</b> 쓴다(05 단계). 그래서 컨트롤 플레인은 우리 코드와 RBAC 로 좁히고, 데이터 플레인의 위험(커널 공유)은 exec 풀 분리와 gVisor 로 보완하는 "①+샌드박스" 위치를 택했다.</p>
+  <p>FaaS 는 남의 코드를 돌리니 원래는 hard 쪽 요구다. 하지만 테넌트가 쿠버네티스 API 를 직접 만지지 않고 <b>우리 컨트롤 플레인 API 만</b> 쓴다(05 단계). 그래서 컨트롤 플레인은 우리 코드와 RBAC 로 좁히고, 데이터 플레인의 위험(커널 공유)은 exec 풀(사용자 함수만 도는 노드 묶음, 이 장 뒤쪽 <a href="#nodepools">노드 풀 설계</a>) 분리와 gVisor 로 보완하는 "①+샌드박스" 위치를 택했다.</p>
   <div class="table-wrap"><table>
   <thead><tr><th>항목</th><th>① namespace per tenant</th><th>② 가상 컨트롤 플레인</th><th>③ cluster per tenant</th></tr></thead>
   <tbody>
@@ -240,19 +241,19 @@ flowchart TD
   <tr><td>Namespaces</td><td>이름 범위와 정책 적용 단위</td><td>테넌트마다 namespace 하나 (1겹)</td></tr>
   <tr><td>Access controls (RBAC)</td><td>API 접근 제한</td><td>tenant-developer Role, 컨트롤 플레인·ops-agent SA (5겹)</td></tr>
   <tr><td>Quotas</td><td>ResourceQuota, LimitRange 로 공정 분배</td><td>2·3겹</td></tr>
-  <tr><td>Network isolation</td><td>NetworkPolicy, 서비스 메시</td><td>default-deny + 허용 3장 (4겹, <a href="ch04-network.html">04장</a>)</td></tr>
-  <tr><td>Storage isolation</td><td>StorageClass, PV 접근 제한</td><td>다루지 않음 (함수는 상태가 없다)</td></tr>
-  <tr><td>Sandboxing containers</td><td>gVisor, Kata 같은 샌드박스 런타임</td><td>exec 풀의 RuntimeClass gvisor (<a href="ch06-build-runtime.html">06장</a>)</td></tr>
+  <tr><td>Network isolation</td><td>NetworkPolicy, 서비스 메시(service mesh, 파드마다 프록시를 붙여 통신을 암호화·제어하는 계층)</td><td>default-deny + 허용 3장 (4겹, <a href="ch04-network.html">04장</a>)</td></tr>
+  <tr><td>Storage isolation</td><td>StorageClass(디스크 종류·등급 정의), PV(PersistentVolume, 실제 디스크 객체) 접근 제한</td><td>다루지 않음 (함수는 상태가 없다)</td></tr>
+  <tr><td>Sandboxing containers</td><td>gVisor, Kata 같은 샌드박스 런타임</td><td>exec 풀의 RuntimeClass gvisor(파드가 어떤 컨테이너 런타임으로 돌지 고르는 객체, 이 장 뒤쪽) (<a href="ch06-build-runtime.html">06장</a>)</td></tr>
   <tr><td>Node isolation</td><td>테넌트 또는 용도별 전용 노드</td><td>용도별 풀 system/build/exec (이 장 뒤쪽)</td></tr>
-  <tr><td>API Priority and Fairness</td><td>한 테넌트의 API 폭주가 다른 테넌트 요청을 굶기지 않게</td><td>기본 설정 그대로 【확인 필요: 기본 FlowSchema 가 SA 를 어떻게 묶는지】</td></tr>
-  <tr><td>Quality-of-Service</td><td>requests/limits 와 QoS 등급</td><td>LimitRange 기본값으로 Burstable 이 된다</td></tr>
-  <tr><td>DNS</td><td>테넌트끼리 서비스 이름이 보이지 않게</td><td>안 막음. 이름은 보여도 NetworkPolicy 로 닿지 않게</td></tr>
-  <tr><td>Operators</td><td>테넌트용 오퍼레이터가 namespace 경계를 지키는지</td><td>Knative 가 테넌트 namespace 에 Revision 을 만든다 (05장)</td></tr>
+  <tr><td>API Priority and Fairness</td><td>APF. API 서버가 요청을 우선순위 칸으로 나눠 줄 세워, 한 테넌트의 API 폭주가 다른 테넌트 요청을 굶기지 않게</td><td>기본 설정 그대로. 기본 FlowSchema <code>service-accounts</code> 가 모든 ServiceAccount(SA, 프로그램용 신분. 뒤 절)의 요청을 <code>workload-low</code> 칸으로 묶고(kube-system 의 SA 만 <code>workload-high</code>), 사람의 kubectl 은 <code>global-default</code> 다. 테넌트 SA 끼리는 같은 칸을 나눠 쓴다</td></tr>
+  <tr><td>Quality-of-Service</td><td>requests/limits 와 QoS 등급(노드 메모리가 모자랄 때 쫓겨나는 순서)</td><td>LimitRange 기본값 덕에 테넌트 파드는 모두 Burstable(requests 보다 limits 가 큰 중간 등급)이 된다 (<a href="#resources">requests, limits, QoS</a> 절)</td></tr>
+  <tr><td>DNS</td><td>테넌트끼리 서비스(Service, 파드 묶음에 고정 이름과 IP 를 주는 객체) 이름이 보이지 않게</td><td>안 막음. 이름은 보여도 NetworkPolicy 로 닿지 않게</td></tr>
+  <tr><td>Operators</td><td>오퍼레이터(operator, CRD 와 그것을 처리하는 컨트롤러를 묶어 설치하는 확장 부품)가 namespace 경계를 지키는지</td><td>Knative(쿠버네티스 위에서 함수를 0개까지 줄였다 늘리는 서버리스 계층, <a href="ch05-knative.html">05장</a>)가 테넌트 namespace 에 Revision(함수 버전마다 생기는 불변 스냅샷)을 만든다</td></tr>
   </tbody></table></div>
   <h4>대안 도구 셋</h4>
   <dl class="terms">
-    <dt>HNC (Hierarchical Namespace Controller)</dt><dd>namespace 에 부모·자식 관계를 만들고, 부모의 Role·RoleBinding·NetworkPolicy 같은 객체를 자식에게 <b>전파</b>한다. 테넌트가 하위 namespace(subnamespace)를 스스로 만들 수 있다. 쿠버네티스 SIG 의 프로젝트였으나 현재 유지 상태는 【확인 필요】.</dd>
-    <dt>Capsule</dt><dd><code>Tenant</code> 라는 CRD 로 여러 namespace 를 한 테넌트로 묶고, 그 묶음에 Quota·NetworkPolicy·허용 StorageClass 등을 정책으로 강제한다. 어드미션 웹훅으로 테넌트 소유자가 자기 namespace 를 직접 만들게 한다. 우리 차트가 손으로 하는 일을 컨트롤러가 대신 한다.</dd>
+    <dt>HNC (Hierarchical Namespace Controller)</dt><dd>namespace 에 부모·자식 관계를 만들고, 부모의 Role·RoleBinding(RBAC 의 권한 객체, 뒤 절)·NetworkPolicy 같은 객체를 자식에게 <b>전파</b>한다. 테넌트가 하위 namespace(subnamespace)를 스스로 만들 수 있다. 쿠버네티스 SIG 프로젝트였으나 2025년 4월 레포가 보관(archived, kubernetes-retired) 처리되어 더 개발되지 않는다. 계층 namespace 가 필요하면 Capsule 같은 다른 도구를 본다.</dd>
+    <dt>Capsule</dt><dd><code>Tenant</code> 라는 CRD 로 여러 namespace 를 한 테넌트로 묶고, 그 묶음에 Quota·NetworkPolicy·허용 StorageClass 등을 정책으로 강제한다. 어드미션 웹훅(API 서버가 객체를 저장하기 전에 외부 프로그램에 검사를 맡기는 통로, 두 절 뒤)으로 테넌트 소유자가 자기 namespace 를 직접 만들게 한다. 우리 차트가 손으로 하는 일을 컨트롤러가 대신 한다.</dd>
     <dt>vCluster</dt><dd>테넌트 namespace 안에 경량 쿠버네티스 API 서버(와 저장소)를 파드로 띄우고, 실제 파드만 호스트로 동기화(syncer)한다. 테넌트는 자기 클러스터처럼 CRD·ClusterRole 을 만든다. 노드는 공유한다.</dd>
   </dl>
   <pre class="pseudo"><code><span class="k">모델 고르기</span>(테넌트):
@@ -266,7 +267,7 @@ flowchart TD
   <span class="k">반환</span> namespace per tenant + 울타리   <span class="c">// 우리 PoC</span></code></pre>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>poc/03-tenant-isolation/README.md</code> 1.1~1.2절이 위 설명의 원본이다. 테넌트 = namespace 하나, 울타리는 <code>charts/tenant/</code> 차트 한 번 설치로 친다. 컨트롤 플레인(05)은 테넌트 namespace 에 라벨 <code>tenant=&lt;이름&gt;</code> 이 있는지 보고 "진짜 테넌트인가" 를 판단한다(라벨이 없으면 404, kube-system 같은 곳에 함수를 못 넣게).</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>poc/03-tenant-isolation/README.md</code> 1.1~1.2절이 위 설명의 원본이다. 테넌트 = namespace 하나, 울타리는 <code>charts/tenant/</code> 차트 한 번 설치로 친다. 컨트롤 플레인(05)은 테넌트 namespace 에 라벨 <code>tenant=&lt;이름&gt;</code> 이 있는지 보고 "진짜 테넌트인가" 를 판단한다(라벨이 없으면 404 를 돌려줘서 kube-system 같은 쿠버네티스 자체 부품의 namespace 에 함수를 못 넣게).</p></aside>
 <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>03 README 6절 결정 1. Capsule·HNC·vCluster 는 기능이 많지만 하루 안에 이해하고 설명하기 어렵고, 심사에서 "쿠버네티스 기본 오브젝트로 직접 설계했다" 가 설명하기 쉽다. 테넌트가 API 를 직접 만지지 않는 FaaS 라 ② 의 장점(테넌트별 CRD)이 필요 없다. ③ 은 테넌트 수만큼 컨트롤 플레인 비용이 든다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/concepts/security/multi-tenancy/">Multi-tenancy</a> · <a href="https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/">Namespaces</a> · <a href="https://github.com/kubernetes-sigs/hierarchical-namespaces">HNC</a> · <a href="https://projectcapsule.dev/">Capsule</a> · <a href="https://www.vcluster.com/docs">vCluster</a></p></aside>
 
@@ -275,7 +276,8 @@ flowchart TD
 
 <div class="tier" data-tier="1">
   <h3>여섯 겹은 무엇이고 각각 무엇을 막나</h3>
-  <p>PoC 는 테넌트마다 쿠버네티스 기본 오브젝트로 여섯 겹을 친다. 핵심은 <b>겹마다 강제하는 주체가 다르다</b>는 점이다. 1·2·3·5겹은 API 서버가 요청을 받을 때(어드미션·인가) 막고, 4겹은 CNI(Cilium)가 패킷이 흐를 때 막고, 6겹은 Argo CD 가 배포를 계획할 때 막는다. 강제 주체가 다르니 한 주체가 뚫리거나 설정이 빠져도 다른 겹은 남는다.</p>
+  <p>앞 절에서 "namespace per tenant + 샌드박스" 를 골랐다. 이 절은 그 namespace 에 실제로 무엇을 거는지의 목록이다. PoC 는 테넌트마다 쿠버네티스 기본 오브젝트로 여섯 겹을 친다. 핵심은 <b>겹마다 강제하는 주체가 다르다</b>는 점이다. 1·2·3·5겹은 API 서버가 요청을 받을 때 막는다(<b>인가</b> = "이 사용자가 이 동작을 해도 되나", <b>어드미션</b> = "이 객체를 이대로 저장해도 되나" 검사. 다음 절에서 순서대로 본다). 4겹은 CNI(Container Network Interface, 파드에 IP 를 주고 패킷을 실어 나르는 네트워크 플러그인. 이 PoC 는 커널 안에서 안전하게 도는 작은 프로그램인 eBPF 를 쓰는 Cilium)가 패킷이 흐를 때 막고, 6겹은 Argo CD 가 배포를 계획할 때 막는다. 강제 주체가 다르니 한 주체가 뚫리거나 설정이 빠져도 다른 겹은 남는다.</p>
+  <p>여섯 겹의 이름을 먼저 풀면 이렇다. 1겹 <b>Namespace + PSA</b>(Pod Security Admission, namespace 라벨 하나로 "이 방의 파드는 이 보안 기준을 지켜라" 를 강제하는 내장 검사). 2겹 <b>ResourceQuota</b>(namespace 전체의 CPU·메모리·개수 합계 상한). 3겹 <b>LimitRange</b>(컨테이너 하나하나의 기본값과 최대값). 4겹 <b>NetworkPolicy</b>(파드 사이 통신 허용 목록). 5겹 <b>RBAC</b>(Role-Based Access Control, "누가 어떤 객체에 어떤 동작을" 의 권한 규칙)과 <b>ServiceAccount</b>(프로그램용 계정). 6겹 <b>AppProject</b>(Argo CD 가 어느 저장소에서 어느 namespace 로 무엇을 배포해도 되는지 정하는 울타리).</p>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 470" role="img" aria-labelledby="fen-t">
@@ -353,21 +355,22 @@ flowchart LR
 
 <div class="tier" data-tier="3">
   <h3>겹별 실패 신호와 실험 대응</h3>
+  <p>표의 "ReplicaSet" 은 Deployment(파드 N개를 항상 유지하라는 객체)가 그 일을 맡기려고 만드는 중간 객체다(다음 절). "Hubble" 은 Cilium 의 흐름 관찰 도구로, 버려진 패킷을 한 줄씩 보여 준다(<a href="ch04-network.html">04장</a>). "이벤트(Event)" 는 쿠버네티스가 객체에 남기는 짧은 기록(왜 못 만들었나, 어디로 스케줄됐나)으로 <code>kubectl get events</code> 로 본다. "dry-run" 은 <code>kubectl apply --dry-run=server</code> 처럼 실제로 만들지 않고 API 서버의 검사만 받아 보는 것이다. 마지막 열은 격리 실험 스크립트 <code>scripts/test-isolation.sh</code>(이 장 뒤쪽 절)의 항목 번호다.</p>
   <div class="table-wrap"><table>
   <thead><tr><th>겹</th><th>실패가 보이는 곳</th><th>대표 문구</th><th>test-isolation.sh 항목</th></tr></thead>
   <tbody>
   <tr><td>1 PSA</td><td>kubectl 응답 (파드 직접 생성) 또는 ReplicaSet 이벤트</td><td><code>violates PodSecurity "baseline:latest"</code></td><td>직접 항목 없음 (restricted 는 warn 만)</td></tr>
   <tr><td>2 Quota</td><td>ReplicaSet 의 FailedCreate 이벤트</td><td><code>exceeded quota: tenant-quota</code></td><td>cpu 2-2 (30개 요청 → CAPPED)</td></tr>
-  <tr><td>3 LimitRange</td><td>kubectl 응답</td><td><code>maximum cpu usage per Container is 1</code> 【확인 필요: 정확한 문구】</td><td>cpu 2-1 (2코어 dry-run → REJECTED), 2-3 (THROTTLED)</td></tr>
+  <tr><td>3 LimitRange</td><td>kubectl 응답</td><td><code>maximum cpu usage per Container is 1, but limit is 2</code></td><td>cpu 2-1 (2코어 dry-run → REJECTED), 2-3 (THROTTLED)</td></tr>
   <tr><td>4 NetworkPolicy</td><td>응답 없음(타임아웃), Hubble DROPPED</td><td><code>Policy denied DROPPED</code></td><td>net 5개</td></tr>
   <tr><td>5 RBAC</td><td>kubectl 응답</td><td><code>cannot get resource "pods/log"</code></td><td>rbac 8개</td></tr>
-  <tr><td>6 AppProject</td><td>Application 의 status.conditions</td><td><code>not permitted in project</code></td><td>argocd 1개</td></tr>
+  <tr><td>6 AppProject</td><td>Application 의 status.conditions(객체 상태를 조건 목록으로 적는 칸)</td><td><code>not permitted in project</code></td><td>argocd 1개</td></tr>
   </tbody></table></div>
   <p>README 10절 기대값은 합계 PASS 17 (net 5 + cpu 3 + rbac 8 + argocd 1) 이다. 이 숫자는 개수일 뿐 측정값이 아니다.</p>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>여섯 겹이 <code>poc/03-tenant-isolation/charts/tenant/templates/</code> 의 여섯 파일과 1:1 이다: <code>namespace.yaml</code>(1), <code>resourcequota.yaml</code>(2), <code>limitrange.yaml</code>(3), <code>networkpolicy.yaml</code>(4), <code>rbac.yaml</code>(5), <code>appproject.yaml</code>(6). 테넌트 정의 <code>tenants/tenant-a.yaml</code> 한 장이 이 여섯 장의 values 다.</p></aside>
-<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>강제 주체를 섞은 것이 핵심 설계다. 모든 겹을 하나의 정책 엔진(예: Kyverno, OPA Gatekeeper 웹훅)에 몰면 규칙은 한곳에서 보이지만, 그 웹훅이 죽거나 <code>failurePolicy: Ignore</code> 로 설정되면 여러 겹이 동시에 사라진다. 기본 내장 어드미션(LimitRanger, ResourceQuota, PodSecurity)은 API 서버 프로세스 안에 있어 따로 죽지 않는다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>강제 주체를 섞은 것이 핵심 설계다. 모든 겹을 하나의 정책 엔진(예: Kyverno, OPA Gatekeeper. 둘 다 어드미션 웹훅으로 동작하는 쿠버네티스 정책 엔진)에 몰면 규칙은 한곳에서 보이지만, 그 웹훅이 죽거나 "웹훅이 응답하지 않으면 통과시켜라" 는 <code>failurePolicy: Ignore</code> 로 설정되면 여러 겹이 동시에 사라진다. 기본 내장 어드미션(LimitRanger, ResourceQuota, PodSecurity)은 API 서버 프로세스 안에 있어 따로 죽지 않는다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/concepts/security/multi-tenancy/">Multi-tenancy</a> · <a href="https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/">Admission Controllers</a> · <a href="https://argo-cd.readthedocs.io/en/stable/user-guide/projects/">Argo CD Projects</a></p></aside>
 
 <!-- ============================================================ -->
@@ -375,7 +378,7 @@ flowchart LR
 
 <div class="tier" data-tier="1">
   <h3>모든 쓰기는 API 서버의 관문 여섯 개를 지난다</h3>
-  <p>kubectl, Argo CD, 우리 컨트롤 플레인 모두 클러스터를 바꿀 때는 <b>kube-apiserver</b> 에 HTTP 요청을 보낸다. API 서버는 요청을 etcd 에 저장하기 전에 정해진 순서로 검사한다. 울타리 여섯 겹 중 네 겹(1·2·3·5)이 이 관문 안에 있다. 그래서 이 그림 하나를 기억하면 "왜 거절됐나" 의 절반을 설명할 수 있다.</p>
+  <p>앞 절에서 여섯 겹 중 넷이 "API 서버 안" 에서 강제된다고 했다. 그 안이 어떻게 생겼는지가 이 절이다. kubectl, Argo CD, 우리 컨트롤 플레인 모두 클러스터를 바꿀 때는 <b>kube-apiserver</b> 에 HTTP 요청을 보낸다. API 서버는 요청을 etcd 에 저장하기 전에 정해진 순서로 검사한다. 울타리 여섯 겹 중 네 겹(1·2·3·5)이 이 관문 안에 있다. 그래서 이 그림 하나를 기억하면 "왜 거절됐나" 의 절반을 설명할 수 있다.</p>
   <figure>
     <div class="fig scroll-l">
       <svg viewBox="0 0 1120 480" role="img" aria-labelledby="api-t">
@@ -475,13 +478,13 @@ flowchart LR
         <text x="10" y="468" class="d-sub">--dry-run=server 요청은 ⑤ 까지 전부 통과시키고 ⑥ 에서 저장만 하지 않는다.</text>
       </svg>
     </div>
-    <figcaption><b>그림 3-4.</b> API 서버 요청 처리 순서. 회색 실선은 다음 단계로 넘어가는 흐름, 빨간 점선은 그 단계에서 끝나는 실패다. ③ 변경 어드미션과 ⑤ 검증 어드미션 사이에 스키마 검증이 있어서, 변경 단계가 채운 값까지 포함해 검증한다. ⑥ 의 409 는 동시에 같은 객체를 고친 경우(resourceVersion 불일치)다.</figcaption>
+    <figcaption><b>그림 3-4.</b> API 서버 요청 처리 순서. 회색 실선은 다음 단계로 넘어가는 흐름, 빨간 점선은 그 단계에서 끝나는 실패다. ③ 변경 어드미션과 ⑤ 검증 어드미션 사이에 스키마 검증이 있어서, 변경 단계가 채운 값까지 포함해 검증한다. ⑥ 의 409 는 동시에 같은 객체를 고친 경우(resourceVersion = 객체가 바뀔 때마다 올라가는 변경 번호가 맞지 않음)다.</figcaption>
   </figure>
 </div>
 
 <div class="tier" data-tier="2">
   <h3>파드는 대개 컨트롤러가 만든다: 에러가 kubectl 에 안 보이는 이유</h3>
-  <p>Deployment 를 apply 하면 첫 번째 관문 통과는 <b>Deployment 오브젝트</b>에 대한 것이다. 파드는 그 뒤에 ReplicaSet 컨트롤러가 <b>자기 신분으로</b> API 서버에 따로 만든다. ResourceQuota 와 PSA enforce 는 파드 생성 요청에서 걸리므로, 거절은 kubectl 이 아니라 ReplicaSet 의 이벤트에 남는다. 이것이 "apply 는 성공했는데 파드가 없다" 의 정체다.</p>
+  <p>쿠버네티스에서 <b>컨트롤러(controller)</b>는 API 서버를 watch(변경 알림 구독)하다가 "원하는 상태" 와 "실제 상태" 가 다르면 맞추는 프로그램이다. Deployment 를 apply 하면 첫 번째 관문 통과는 <b>Deployment 오브젝트</b>에 대한 것이다. 파드는 그 뒤에 ReplicaSet(Deployment 컨트롤러가 만드는, 파드 N개를 유지하는 객체) 컨트롤러가 <b>자기 신분으로</b> API 서버에 따로 만든다. ResourceQuota 와 PSA enforce 는 파드 생성 요청에서 걸리므로, 거절은 kubectl 이 아니라 ReplicaSet 의 이벤트에 남는다. 이것이 "apply 는 성공했는데 파드가 없다" 의 정체다.</p>
   <pre class="mermaid">
 sequenceDiagram
   participant U as kubectl 또는 Argo CD
@@ -509,22 +512,22 @@ sequenceDiagram
 <div class="tier" data-tier="3">
   <h3>단계별 세부: 인증 결과, 어드미션 플러그인, 웹훅</h3>
   <h4>① 인증 (Authentication)</h4>
-  <p>설정된 인증기를 차례로 시도하고, 하나라도 성공하면 사용자 정보(username, uid, groups, extra)를 얻는다. 모두 실패하면 401. 익명 요청이 허용되면 <code>system:anonymous</code> 가 된다. ServiceAccount 토큰이면 username 은 <code>system:serviceaccount:&lt;ns&gt;:&lt;이름&gt;</code>, groups 에 <code>system:serviceaccounts</code> 와 <code>system:serviceaccounts:&lt;ns&gt;</code> 가 붙는다. kind 의 관리자 kubeconfig 는 클라이언트 인증서이고, 인증서의 O(조직) 필드가 그룹이 된다 【확인 필요: kind 버전별 관리자 그룹 이름 kubeadm:cluster-admins 또는 system:masters】.</p>
+  <p>인증 방법은 여럿이다. 클라이언트 인증서(x509, 관리자 kubeconfig 파일이 쓰는 방식), ServiceAccount 토큰(JWT = 발급자가 서명한 문자열 토큰, 뒤의 ServiceAccount 절), OIDC(외부 로그인 제공자가 발급한 토큰). 설정된 인증기를 차례로 시도하고, 하나라도 성공하면 사용자 정보(username, uid, groups, extra)를 얻는다. 모두 실패하면 401. 익명 요청이 허용되면 <code>system:anonymous</code> 가 된다. ServiceAccount 토큰이면 username 은 <code>system:serviceaccount:&lt;ns&gt;:&lt;이름&gt;</code>, groups 에 <code>system:serviceaccounts</code> 와 <code>system:serviceaccounts:&lt;ns&gt;</code> 가 붙는다. kind 의 관리자 kubeconfig 는 kubeadm(쿠버네티스가 제공하는 클러스터 설치 도구. kind 가 노드 안에서 쓴다)이 만든 <code>admin.conf</code> 의 클라이언트 인증서이고, 인증서의 O(조직) 필드가 그룹이 된다. kubeadm 1.29 부터 admin.conf 는 <code>O = kubeadm:cluster-admins</code>, 즉 ClusterRoleBinding 으로 cluster-admin 을 받는 보통 그룹이고, RBAC 를 아예 우회하는 <code>system:masters</code> 는 노드 안의 <code>super-admin.conf</code> 에만 있다. 그래서 kind-faas 의 관리자도 "RBAC 를 거치는 사용자" 다.</p>
   <h4>② 인가 (Authorization)</h4>
-  <p>설정된 인가기(<code>--authorization-mode</code>, 보통 <code>Node,RBAC</code>)를 차례로 묻는다. 어떤 인가기가 허용하면 즉시 통과, 명시적으로 거부하면 즉시 403, 모두 의견 없음이면 403. RBAC 는 거부 규칙이 없고 "허용 목록의 합집합" 만 있다.</p>
+  <p>설정된 인가기(<code>--authorization-mode</code>, 보통 <code>Node,RBAC</code>. Node 는 kubelet 전용 규칙, RBAC 는 뒤 절의 Role 기반 규칙)를 차례로 묻는다. 어떤 인가기가 허용하면 즉시 통과, 명시적으로 거부하면 즉시 403, 모두 의견 없음이면 403. RBAC 는 거부 규칙이 없고 "허용 목록의 합집합" 만 있다.</p>
   <h4>③ 변경 어드미션 → ④ 스키마 검증 → ⑤ 검증 어드미션</h4>
-  <p>어드미션 컨트롤러는 API 서버에 컴파일된 플러그인과, 밖에 있는 웹훅(MutatingAdmissionWebhook, ValidatingAdmissionWebhook)·CEL 정책(ValidatingAdmissionPolicy, MutatingAdmissionPolicy)으로 이뤄진다. 변경 단계는 객체를 고칠 수 있고, 검증 단계는 고치지 못하고 허용·거절만 한다. 한 플러그인이라도 거절하면 요청 전체가 거절된다. 어드미션은 생성·수정·삭제·connect 에만 돌고 읽기(get, list, watch)에는 돌지 않는다. 본문을 객체로 디코드할 때 API 타입의 기본값 규칙(예: limits 만 있으면 requests = limits)이 먼저 적용된다.</p>
+  <p>어드미션 컨트롤러는 API 서버에 컴파일된 플러그인과, 밖에 있는 웹훅(MutatingAdmissionWebhook, ValidatingAdmissionWebhook)·CEL 정책(ValidatingAdmissionPolicy, MutatingAdmissionPolicy. CEL 은 Common Expression Language, 한 줄짜리 조건식 언어)으로 이뤄진다. 변경 단계는 객체를 고칠 수 있고, 검증 단계는 고치지 못하고 허용·거절만 한다. 한 플러그인이라도 거절하면 요청 전체가 거절된다. 어드미션은 생성·수정·삭제·connect 에만 돌고 읽기(get, list, watch)에는 돌지 않는다. 본문을 객체로 디코드할 때 API 타입의 기본값 규칙(예: limits 만 있으면 requests = limits)이 먼저 적용된다.</p>
   <div class="table-wrap"><table>
   <thead><tr><th>플러그인</th><th>단계</th><th>이 장과의 관계</th></tr></thead>
   <tbody>
   <tr><td><code>NamespaceLifecycle</code></td><td>검증</td><td>Terminating 중이거나 없는 namespace 에 객체 생성 거절. 오프보딩 중 생성 시도가 여기서 막힌다</td></tr>
   <tr><td><code>LimitRanger</code></td><td>변경 + 검증</td><td>기본 requests/limits 채움(변경), min/max/비율 검사(검증). 3겹</td></tr>
-  <tr><td><code>ServiceAccount</code></td><td>변경</td><td>serviceAccountName 이 없으면 default 로 채우고, 토큰 projected 볼륨을 붙인다</td></tr>
+  <tr><td><code>ServiceAccount</code></td><td>변경</td><td>serviceAccountName 이 없으면 default 로 채우고, 토큰이 담긴 projected 볼륨(여러 출처의 파일을 한 디렉터리로 모아 마운트하는 볼륨)을 붙인다</td></tr>
   <tr><td><code>DefaultTolerationSeconds</code></td><td>변경</td><td>not-ready, unreachable taint 에 300초 toleration 을 기본으로 붙인다</td></tr>
-  <tr><td><code>RuntimeClass</code></td><td>변경 + 검증</td><td>RuntimeClass 의 overhead 를 파드에 채우고 scheduling 의 nodeSelector·toleration 을 합친다</td></tr>
-  <tr><td><code>PodSecurity</code></td><td>검증</td><td>namespace 라벨대로 PSS 검사. 1겹</td></tr>
-  <tr><td><code>ResourceQuota</code></td><td>검증</td><td>합계 초과 거절, 사용량 갱신. 2겹. 공식 문서는 이 플러그인을 검증 순서의 마지막에 두라고 권한다</td></tr>
-  <tr><td><code>MutatingAdmissionWebhook</code>, <code>ValidatingAdmissionWebhook</code></td><td>변경 / 검증</td><td>Knative 웹훅이 ksvc 를 검사해 "must not set the field(s): spec.template.spec.tolerations" 같은 거절을 낸다(04 README 7단계)</td></tr>
+  <tr><td><code>RuntimeClass</code></td><td>변경 + 검증</td><td>RuntimeClass 의 overhead(샌드박스 런타임이 더 쓰는 자원 몫)를 파드에 채우고 scheduling 의 nodeSelector·toleration 을 합친다</td></tr>
+  <tr><td><code>PodSecurity</code></td><td>검증</td><td>namespace 라벨대로 PSS(Pod Security Standards, 다음 절) 검사. 1겹</td></tr>
+  <tr><td><code>ResourceQuota</code></td><td>검증</td><td>합계 초과 거절, 사용량 갱신. 2겹. API 서버의 고정 플러그인 순서(<code>AllOrderedPlugins</code>)에서 변경·검증 웹훅과 CEL 정책 뒤, <code>AlwaysDeny</code> 직전에 온다. 그래서 웹훅이 고친 값까지 합계에 들어간다</td></tr>
+  <tr><td><code>MutatingAdmissionWebhook</code>, <code>ValidatingAdmissionWebhook</code></td><td>변경 / 검증</td><td>Knative 웹훅이 ksvc(Knative Service, 함수 하나를 뜻하는 Knative 객체)를 검사해 "must not set the field(s): spec.template.spec.tolerations" 같은 거절을 낸다(04 README 7단계)</td></tr>
   </tbody></table></div>
   <pre class="pseudo"><code><span class="k">처리</span>(요청):
   사용자 = 인증기들.차례로_시도(요청)          <span class="c">// 실패 → 401</span>
@@ -543,7 +546,7 @@ sequenceDiagram
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>03 README 4.6절과 <code>test-isolation.sh</code> 의 cpu 2-1 은 <code>kubectl apply --dry-run=server</code> 를 쓴다. 이 요청은 그림 3-4 의 ⑤ 까지 실제로 돌기 때문에 LimitRange max 거절을 아무것도 만들지 않고 확인할 수 있다. 반대로 <code>--dry-run=client</code> 는 API 서버에 가지 않아서 울타리 검사를 하나도 받지 않는다.</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: Argo CD 는 Synced 인데 Health 가 Progressing 에 머문다. <b>볼 곳</b>: <code>kubectl -n tenant-a get events --field-selector reason=FailedCreate</code>, <code>kubectl -n tenant-a describe rs</code>. 파드 생성 거절은 Deployment 가 아니라 ReplicaSet 에 남는다. <b>고치는 법</b>: 메시지의 단어(PodSecurity / exceeded quota / maximum cpu)로 어느 겹인지 판단해 매니페스트나 values 를 고친다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: Argo CD 는 Synced(Git 과 클러스터가 같음)인데 Health 가 Progressing(아직 준비 중)에 머문다. <b>볼 곳</b>: <code>kubectl -n tenant-a get events --field-selector reason=FailedCreate</code>, <code>kubectl -n tenant-a describe rs</code>. 파드 생성 거절은 Deployment 가 아니라 ReplicaSet 에 남는다. <b>고치는 법</b>: 메시지의 단어(PodSecurity / exceeded quota / maximum cpu)로 어느 겹인지 판단해 매니페스트나 values 를 고친다.</p></aside>
 <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>울타리 대부분을 내장 어드미션(LimitRanger, PodSecurity, ResourceQuota)과 RBAC 로 만든 이유는 이 관문이 API 서버 프로세스 안에 있어 따로 죽거나 우회되지 않기 때문이다. 정책 엔진 웹훅(Kyverno, Gatekeeper)은 표현력이 크지만 별도 파드라 장애 지점이 하나 늘고, failurePolicy 결정이 필요하다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/concepts/security/controlling-access/">Controlling Access to the Kubernetes API</a> · <a href="https://kubernetes.io/docs/reference/access-authn-authz/authentication/">Authenticating</a> · <a href="https://kubernetes.io/docs/reference/access-authn-authz/authorization/">Authorization</a> · <a href="https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/">Admission Controllers</a> · <a href="https://kubernetes.io/docs/reference/access-authn-authz/extensible-admission-controllers/">Dynamic Admission Control</a> · <a href="https://kubernetes.io/docs/reference/access-authn-authz/validating-admission-policy/">ValidatingAdmissionPolicy</a></p></aside>
 
@@ -552,8 +555,9 @@ sequenceDiagram
 
 <div class="tier" data-tier="1">
   <h3>방 하나와, 방에서 노드로 나가는 문 잠그기</h3>
-  <p><b>Namespace</b> 는 이름의 범위다. 같은 namespace 안에서 이름이 겹치면 안 되고, 다른 namespace 와는 겹쳐도 된다. 그 자체로는 아무것도 막지 않지만, Quota·LimitRange·NetworkPolicy·Role 이 전부 namespace 단위로 걸리기 때문에 나머지 다섯 겹의 "적용 단위" 가 된다. Node, Namespace, ClusterRole, PersistentVolume, RuntimeClass 같은 <b>클러스터 범위</b> 리소스는 namespace 에 속하지 않으므로 테넌트에게 줄 수 없다.</p>
-  <p><b>Pod Security Admission(PSA)</b> 은 namespace 라벨만으로 켜는 내장 어드미션이다. <b>Pod Security Standards(PSS)</b> 라는 세 단계 기준표 중 하나를 고르고, 위반 시 행동(거절·감사 기록·경고)을 고른다. 컨테이너가 노드로 나가는 통로(privileged, hostPath, hostNetwork 등)를 잠그는 첫 번째 자물쇠다.</p>
+  <p>관문을 알았으니 겹을 하나씩 본다. 1겹은 "방" 과 그 방의 문단속이다. <b>Namespace</b> 는 이름의 범위다. 같은 namespace 안에서 이름이 겹치면 안 되고, 다른 namespace 와는 겹쳐도 된다. 그 자체로는 아무것도 막지 않지만, Quota·LimitRange·NetworkPolicy·Role 이 전부 namespace 단위로 걸리기 때문에 나머지 다섯 겹의 "적용 단위" 가 된다. Node, Namespace, ClusterRole, PersistentVolume, RuntimeClass 같은 <b>클러스터 범위</b> 리소스는 namespace 에 속하지 않으므로 테넌트에게 줄 수 없다.</p>
+  <p><b>Pod Security Admission(PSA)</b> 은 namespace 라벨만으로 켜는 내장 어드미션이다. <b>Pod Security Standards(PSS)</b> 라는 세 단계 기준표 중 하나를 고르고, 위반 시 행동(거절·감사 기록·경고)을 고른다. 컨테이너가 노드로 나가는 통로(privileged = 컨테이너에 노드 root 와 같은 권한, hostPath = 노드 디스크 경로를 그대로 마운트, hostNetwork = 노드의 네트워크를 그대로 사용)를 잠그는 첫 번째 자물쇠다.</p>
+  <p>그림에 나오는 말을 먼저 풀면 이렇다. <b>capabilities</b> 는 리눅스가 root 권한을 잘게 나눈 조각(예: NET_BIND_SERVICE 는 1024 아래 포트 열기)이고, <b>seccomp</b> 는 프로세스가 커널에 부를 수 있는 시스템 콜을 제한하는 필터, <b>AppArmor·SELinux</b> 는 프로세스가 만질 수 있는 파일·자원을 커널이 강제하는 접근 제어, <b>sysctl</b> 은 커널 설정값이다. 파드·컨테이너 스펙에서 이런 보안 설정을 적는 칸이 <b>securityContext</b> 다.</p>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 430" role="img" aria-labelledby="psa-t">
@@ -595,8 +599,8 @@ sequenceDiagram
   <h3>모드 셋과 버전 라벨, 평가 흐름</h3>
   <p>라벨 모양은 <code>pod-security.kubernetes.io/&lt;모드&gt;: &lt;단계&gt;</code> 와 <code>pod-security.kubernetes.io/&lt;모드&gt;-version: &lt;버전&gt;</code> 이다. 모드는 셋이다.</p>
   <dl class="terms">
-    <dt>enforce</dt><dd>위반하면 <b>파드</b> 생성을 거절한다. Deployment 같은 워크로드 객체 자체는 거절하지 않는다(그 안의 파드가 나중에 거절된다).</dd>
-    <dt>audit</dt><dd>위반하면 감사 로그(audit log) 이벤트에 주석을 단다. 파드와 워크로드 객체 모두 검사한다.</dd>
+    <dt>enforce</dt><dd>위반하면 <b>파드</b> 생성을 거절한다. Deployment 같은 워크로드 객체(파드를 만들어 내는 상위 객체. Deployment, Job, DaemonSet 등) 자체는 거절하지 않는다(그 안의 파드가 나중에 거절된다).</dd>
+    <dt>audit</dt><dd>위반하면 감사 로그(audit log, API 서버가 요청 하나하나를 남기는 기록. 켜야 생긴다) 이벤트에 주석을 단다. 파드와 워크로드 객체 모두 검사한다.</dd>
     <dt>warn</dt><dd>위반하면 응답에 경고(HTTP Warning 헤더)를 붙여 kubectl 화면에 보인다. 파드와 워크로드 객체 모두 검사한다.</dd>
   </dl>
   <p>버전 라벨은 "어느 쿠버네티스 버전의 기준표로 볼까" 다. <code>latest</code> 는 API 서버 버전의 기준표를 쓰고, <code>v1.33</code> 처럼 고정하면 클러스터를 올려도 기준이 그대로다. 기준표가 버전마다 조금씩 엄격해질 수 있어서 운영에서는 고정이 안전하고, PoC 는 latest 로 단순하게 갔다.</p>
@@ -659,6 +663,7 @@ flowchart TD
   </tbody></table></div>
   <p><b>라벨을 바꿀 때</b>: namespace 의 enforce 라벨을 올려도 이미 떠 있는 파드는 쫓겨나지 않는다. 대신 API 서버가 기존 파드를 새 기준으로 평가해 경고를 돌려준다. 그래서 03 README 6절 결정 3 처럼 <code>kubectl label ns tenant-a pod-security.kubernetes.io/enforce=restricted --overwrite --dry-run=server</code> 로 "올리면 무엇이 걸리나" 를 먼저 볼 수 있다.</p>
   <p><b>면제(exemptions)</b>: API 서버의 AdmissionConfiguration 에서 사용자 이름, RuntimeClass 이름, namespace 이름 단위로 PSA 검사를 건너뛸 수 있다. kind 기본 설정에는 없다. 라벨이 없는 namespace 는 클러스터 기본값(설정하지 않으면 privileged)이 적용된다.</p>
+  <p><b>수정 요청의 예외</b>: 이미 있는 파드의 update 가 메타데이터만 바꾸거나(seccomp·AppArmor 주석은 제외) <code>activeDeadlineSeconds</code>, <code>tolerations</code> 처럼 정해진 필드만 바꾸면, 그 파드가 현재 기준을 어겨도 거절하지 않는다. 라벨을 올린 뒤에도 기존 파드의 라벨 수정이나 toleration 조정은 계속 되는 이유다.</p>
   <pre class="pseudo"><code><span class="k">PSA 평가</span>(객체, ns):
   <span class="k">만약</span> 면제(요청자, 객체.runtimeClassName, ns): <span class="k">반환</span> 허용
   <span class="k">반복</span> 모드 <span class="k">in</span> [enforce, audit, warn]:
@@ -672,17 +677,155 @@ flowchart TD
   <span class="k">반환</span> 허용</code></pre>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>namespace 별 PSA 설정을 한곳에 모으면 이렇다. 테넌트(tenant-a, tenant-b): enforce baseline, warn restricted (<code>charts/tenant/values.yaml</code>). 컨트롤 플레인(faas-system): enforce restricted (<code>poc/05-control-plane-mcp/k8s/platform/control-plane/namespaces.yaml</code>, Dockerfile 이 USER 10001). 빌드(faas-build): enforce baseline (kaniko 는 컨테이너 안 root 가 필요해서 restricted 는 불가, baseline 은 root 자체는 막지 않는다). 05 의 ksvc 템플릿과 04 의 ksvc 들은 restricted 를 미리 통과하도록 securityContext 를 다 적었다. 01 의 hello-fn 만 securityContext 가 없어서 warn 경고가 나온다(03 README 5.2절 "경고 문구가 보이는 건 정상").</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: enforce 를 restricted 로 올리면</p><p><b>증상</b>: <code>tenant-a-hello</code> Application 이 Synced 인데 새 hello-fn 파드가 안 생긴다(기존 파드는 그대로 돈다. 다음 롤아웃이나 파드 재생성 때 드러난다). <b>볼 곳</b>: <code>kubectl -n tenant-a get events --field-selector reason=FailedCreate</code> 에 <code>violates PodSecurity "restricted:latest": allowPrivilegeEscalation != false, unrestricted capabilities, runAsNonRoot != true, seccompProfile</code> 류의 문구 【확인 필요: 정확한 나열】. <b>고치는 법</b>: 01 hello-fn 차트의 컨테이너에 restricted securityContext 를 추가하거나, values 의 enforce 를 baseline 으로 되돌린다.</p></aside>
-<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>03 README 결정 3. enforce=restricted 로 시작하면 01 단계 hello-fn 이 거절된다(root 실행, securityContext 없음). 그래서 enforce=baseline(탈출 통로만 잠금) + warn=restricted(정리할 목록을 보여 줌)로 두고, 함수 이미지를 빌드 Job 으로 정리한 뒤 restricted 로 올리는 순서를 택했다. 대안 PodSecurityPolicy 는 1.25 에서 제거됐고, Kyverno·Gatekeeper 는 더 세밀하지만 웹훅 운영이 더해진다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>namespace 별 PSA 설정을 한곳에 모으면 이렇다. 테넌트(tenant-a, tenant-b): enforce baseline, warn restricted (<code>charts/tenant/values.yaml</code>). 컨트롤 플레인(faas-system): enforce restricted (<code>poc/05-control-plane-mcp/k8s/platform/control-plane/namespaces.yaml</code>, Dockerfile 이 USER 10001). 빌드(faas-build): enforce baseline (kaniko = Docker 데몬 없이 컨테이너 안에서 이미지를 빌드하는 도구(<a href="ch06-build-runtime.html">06장</a>)는 컨테이너 안 root 가 필요해서 restricted 는 불가, baseline 은 root 자체는 막지 않는다). 05 의 ksvc 템플릿과 04 의 ksvc 들은 restricted 를 미리 통과하도록 securityContext 를 다 적었다. 01 의 hello-fn 만 securityContext 가 없어서 warn 경고가 나온다(03 README 5.2절 "경고 문구가 보이는 건 정상").</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: enforce 를 restricted 로 올리면</p><p><b>증상</b>: <code>tenant-a-hello</code> Application 이 Synced 인데 새 hello-fn 파드가 안 생긴다(기존 파드는 그대로 돈다. 다음 롤아웃(Deployment 의 새 버전 교체)이나 파드 재생성 때 드러난다). <b>볼 곳</b>: <code>kubectl -n tenant-a get events --field-selector reason=FailedCreate</code> 에 <code>violates PodSecurity "restricted:latest": allowPrivilegeEscalation != false (container "fn" must set securityContext.allowPrivilegeEscalation=false), unrestricted capabilities (container "fn" must set securityContext.capabilities.drop=["ALL"]), runAsNonRoot != true (pod or container "fn" must set securityContext.runAsNonRoot=true), seccompProfile (pod or container "fn" must set securityContext.seccompProfile.type to "RuntimeDefault" or "Localhost")</code>. 위반 항목마다 "어느 필드를 어떻게 고치라" 가 괄호 안에 같이 나온다(컨테이너 이름은 hello-fn 차트의 <code>fn</code>). <b>고치는 법</b>: 01 hello-fn 차트의 컨테이너에 restricted securityContext 를 추가하거나, values 의 enforce 를 baseline 으로 되돌린다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>03 README 결정 3. enforce=restricted 로 시작하면 01 단계 hello-fn 이 거절된다(root 실행, securityContext 없음). 그래서 enforce=baseline(탈출 통로만 잠금) + warn=restricted(정리할 목록을 보여 줌)로 두고, 함수 이미지를 빌드 Job(끝나면 멈추는 일회성 파드 실행 객체)으로 정리한 뒤 restricted 로 올리는 순서를 택했다. 옛 방식 PodSecurityPolicy(PSP, 별도 객체로 같은 일을 하던 기능)는 1.25 에서 제거됐고, Kyverno·Gatekeeper 는 더 세밀하지만 웹훅 운영이 더해진다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/">Namespaces</a> · <a href="https://kubernetes.io/docs/concepts/security/pod-security-standards/">Pod Security Standards</a> · <a href="https://kubernetes.io/docs/concepts/security/pod-security-admission/">Pod Security Admission</a> · <a href="https://kubernetes.io/docs/tasks/configure-pod-container/enforce-standards-namespace-labels/">Enforce Pod Security Standards with Namespace Labels</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="resources">requests, limits, QoS</h2>
+
+<div class="tier" data-tier="1">
+  <h3>requests 는 자리 예약, limits 는 천장</h3>
+  <p>1겹(방과 PSA)까지 봤다. 2겹 ResourceQuota 와 3겹 LimitRange 는 둘 다 컨테이너의 <code>resources</code> 선언(requests, limits)을 다루므로, 먼저 그 두 숫자가 무엇을 뜻하는지 정리한다. <b>requests</b> 는 "최소 이만큼은 보장해 줘" 다. 스케줄러가 노드에 자리가 있는지 계산할 때 쓰고, CPU 가 붐빌 때 몫을 나누는 비율이 된다. <b>limits</b> 는 "이 이상은 못 쓴다" 다. 같은 천장이라도 CPU 와 메모리는 넘으려 할 때 결과가 완전히 다르다.</p>
+  <ul>
+    <li><b>CPU 는 압축 가능(compressible)</b>: 넘으려 하면 커널이 그 컨테이너를 잠깐 멈춘다(스로틀링, throttling). 죽지는 않고 느려진다.</li>
+    <li><b>메모리는 압축 불가(incompressible)</b>: 넘으면 커널의 OOM killer(메모리가 바닥나면 프로세스를 골라 죽이는 커널 기능)가 프로세스를 죽인다(OOMKilled). 재시작 정책에 따라 다시 뜬다.</li>
+  </ul>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 360" role="img" aria-labelledby="cfs-t">
+        <title id="cfs-t">CPU limit 스로틀링과 메모리 limit OOM kill 비교</title>
+        <text x="20" y="30" class="d-lbl">CPU limits 500m = 100ms 주기마다 50ms 까지만 실행</text>
+        <rect x="80" y="44" width="135" height="40" rx="6" class="d-cp-box"/>
+        <text x="96" y="69" class="d-mono">실행 50ms</text>
+        <rect x="215" y="44" width="135" height="40" rx="6" class="d-fail-box"/>
+        <text x="231" y="69" class="d-mono">멈춤 (throttled)</text>
+        <rect x="350" y="44" width="135" height="40" rx="6" class="d-cp-box"/>
+        <text x="366" y="69" class="d-mono">실행 50ms</text>
+        <rect x="485" y="44" width="135" height="40" rx="6" class="d-fail-box"/>
+        <text x="501" y="69" class="d-mono">멈춤 (throttled)</text>
+        <rect x="620" y="44" width="135" height="40" rx="6" class="d-cp-box"/>
+        <text x="636" y="69" class="d-mono">실행 50ms</text>
+        <rect x="755" y="44" width="135" height="40" rx="6" class="d-fail-box"/>
+        <text x="771" y="69" class="d-mono">멈춤 (throttled)</text>
+        <path d="M80 96 L80 108 M350 96 L350 108 M620 96 L620 108 M890 96 L890 108" class="d-e"/>
+        <path d="M80 102 L890 102" class="d-e"/>
+        <text x="180" y="126" class="d-sub">주기 1 (cfs_period 100ms)</text>
+        <text x="450" y="126" class="d-sub">주기 2</text>
+        <text x="720" y="126" class="d-sub">주기 3</text>
+
+        <text x="20" y="170" class="d-lbl">CPU limits 없음, requests 만 = 노드가 한가하면 다 쓰고, 붐비면 requests 비율로 나눔</text>
+        <rect x="80" y="184" width="810" height="40" rx="6" class="d-cp-box"/>
+        <text x="96" y="209" class="d-mono">계속 실행 (cpu.weight 로 경쟁)</text>
+
+        <text x="20" y="262" class="d-lbl">메모리 limits = 넘는 순간 커널이 죽인다</text>
+        <path d="M80 340 L300 320 L520 296 L700 270" class="d-e-api"/>
+        <path d="M80 268 L890 268" class="d-e-fail"/>
+        <text x="730" y="290" class="d-mono">memory.max</text>
+        <rect x="700" y="300" width="170" height="40" rx="8" class="d-fail-box"/>
+        <text x="716" y="325" class="d-mono">OOMKilled 137</text>
+        <text x="330" y="352" class="d-sub">시간에 따라 사용량이 늘어남</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 3-6.</b> 위: limits.cpu 500m 은 cgroup(리눅스 커널이 프로세스 묶음의 CPU·메모리를 재고 제한하는 기능)의 CFS(리눅스 기본 CPU 스케줄러) 대역폭 제어로 "100ms 마다 50ms" 가 된다. 짧은 시간에 몰아 쓰면 남은 주기를 멈춰 기다린다. 가운데: limit 이 없으면 멈추지 않는다. 아래: 메모리는 천장(빨간 점선)을 넘는 순간 OOM kill, 종료 코드 137.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>QoS 등급 셋과 쫓겨나는 순서</h3>
+  <p>쿠버네티스는 파드의 requests/limits 모양을 보고 <b>QoS 등급</b>을 자동으로 붙인다(<code>status.qosClass</code>). 노드 메모리가 모자라 kubelet 이 파드를 쫓아낼 때(node-pressure eviction)와 커널 OOM killer 가 고를 때 이 등급이 순서를 정한다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 330" role="img" aria-labelledby="qos-t">
+        <title id="qos-t">QoS 등급 세 가지와 PoC 의 파드</title>
+        <defs>
+          <marker id="qos-m-fail" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+        </defs>
+        <rect x="20" y="20" width="290" height="230" rx="12" class="d-cp-box"/>
+        <text x="36" y="50" class="d-ttl-s">Guaranteed</text>
+        <text x="36" y="78" class="d-sub">모든 컨테이너가 cpu, memory</text>
+        <text x="36" y="100" class="d-sub">모두 requests = limits</text>
+        <text x="36" y="138" class="d-mono">oom_score_adj -997</text>
+        <text x="36" y="176" class="d-subd">PoC: 거의 없음</text>
+        <text x="36" y="200" class="d-sub">(빌드 Job 대안으로만 언급)</text>
+
+        <rect x="335" y="20" width="290" height="230" rx="12" class="d-warn-box"/>
+        <text x="351" y="50" class="d-ttl-s">Burstable</text>
+        <text x="351" y="78" class="d-sub">하나라도 requests 또는 limits</text>
+        <text x="351" y="100" class="d-sub">있지만 Guaranteed 는 아님</text>
+        <text x="351" y="138" class="d-mono">oom_score_adj 2~999</text>
+        <text x="351" y="176" class="d-subd">PoC: 거의 전부</text>
+        <text x="351" y="200" class="d-sub">hello-fn, ksvc, kaniko, 테넌트</text>
+
+        <rect x="650" y="20" width="290" height="230" rx="12" class="d-fail-box"/>
+        <text x="666" y="50" class="d-ttl-s">BestEffort</text>
+        <text x="666" y="78" class="d-sub">어떤 컨테이너도 requests,</text>
+        <text x="666" y="100" class="d-sub">limits 가 없음</text>
+        <text x="666" y="138" class="d-mono">oom_score_adj 1000</text>
+        <text x="666" y="176" class="d-subd">테넌트 ns 에는 생길 수 없다</text>
+        <text x="666" y="200" class="d-sub">LimitRange 가 기본값을 채움</text>
+
+        <path d="M920 286 L40 286" class="d-e-fail" marker-end="url(#qos-m-fail)"/>
+        <text x="300" y="316" class="d-lbl">노드 메모리가 부족하면 오른쪽(BestEffort)부터 쫓겨난다</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 3-7.</b> QoS 세 등급. 실제 eviction 순서는 등급만이 아니라 "requests 를 얼마나 넘겨 쓰고 있나" 와 파드 우선순위도 함께 본다. oom_score_adj 는 커널 OOM killer 가 고를 때 쓰는 가중치다.</figcaption>
+  </figure>
+  <pre class="mermaid">
+flowchart TD
+  A["파드의 모든 컨테이너 살펴보기"] --> B{"어떤 컨테이너도<br/>cpu, memory 의 requests, limits 가 없나"}
+  B -->|"예"| BE["BestEffort"]
+  B -->|"아니오"| C{"모든 컨테이너가<br/>cpu, memory limits 를 갖고<br/>requests = limits 인가"}
+  C -->|"예"| G["Guaranteed"]
+  C -->|"아니오"| BU["Burstable"]
+  </pre>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>세부: cgroup 매핑과 스로틀링 계산</h3>
+  <p>kubelet 과 컨테이너 런타임(containerd 처럼 노드에서 실제로 컨테이너를 만들고 지우는 프로그램)은 resources 를 리눅스 cgroup 설정으로 바꾼다. cgroup v2 기준.</p>
+  <div class="table-wrap"><table>
+  <thead><tr><th>필드</th><th>cgroup v2 파일</th><th>효과</th></tr></thead>
+  <tbody>
+  <tr><td><code>requests.cpu</code></td><td><code>cpu.weight</code></td><td>CPU 가 붐빌 때 몫을 나누는 상대 가중치. 한가하면 의미 없음</td></tr>
+  <tr><td><code>limits.cpu</code></td><td><code>cpu.max</code> = "quota period"</td><td>500m → "50000 100000" (100ms 중 50ms). 다 쓰면 다음 주기까지 멈춤</td></tr>
+  <tr><td><code>limits.memory</code></td><td><code>memory.max</code></td><td>넘으면 OOM kill</td></tr>
+  <tr><td><code>requests.memory</code></td><td>(스케줄링·eviction 계산에 사용)</td><td>Memory QoS 기능이 켜져 있으면 <code>memory.min</code>(requests 만큼 보장)과 <code>memory.high</code>(limits 근처에서 회수를 먼저 시도하는 선)에 반영. 기능 게이트 <code>MemoryQoS</code> 는 1.22 알파, 1.37 베타(기본 켜짐)라 kindest/node v1.37.0 의 cgroup v2 노드에서는 기본으로 켜진다</td></tr>
+  </tbody></table></div>
+  <p><b>스로틀링 계산 예</b>: 04 README 8절의 관찰(함수 limits 500m 에 10ms 짜리 요청 4개 동시)을 공식으로 보면, 한 주기(100ms) 안에서 쓸 수 있는 CPU 시간은 50ms 다. 동시 요청 4개 × 10ms = 40ms 는 들어가지만, 여러 스레드가 동시에 쓰면 실제 벽시계 시간보다 CPU 시간이 빨리 소진되어 주기 중간에 멈추고, 멈춘 요청은 다음 주기 시작까지 기다린다. 그래서 지연이 주기 길이(100ms) 단위로 튄다. 이 현상은 cgroup 의 <code>cpu.stat</code> 의 <code>nr_throttled</code>, <code>throttled_usec</code> 로 확인한다.</p>
+  <p><b>test-isolation.sh 의 CPU 측정</b>은 같은 <code>cpu.stat</code> 의 <code>usage_usec</code> 를 10초 간격으로 두 번 읽어 평균 밀리코어를 낸다. 무한 루프가 limits 200m 의 120% 미만이면 THROTTLED 로 판정한다.</p>
+  <div class="code-head"><span>poc/03-tenant-isolation/scripts/test-isolation.sh</span><span>98~108행</span></div>
+  <pre><code>cpu_millicores() {
+  local ns="$1" pod="$2" secs="${3:-10}"
+  kubectl -n "$ns" exec "$pod" -- sh -c '
+    read_us() {
+      <span class="k">if</span> [ -f /sys/fs/cgroup/cpu.stat ]; <span class="k">then</span> awk "/^usage_usec/{print \$2}" /sys/fs/cgroup/cpu.stat
+      <span class="k">elif</span> [ -f /sys/fs/cgroup/cpuacct/cpuacct.usage ]; <span class="k">then</span> echo $(( $(cat /sys/fs/cgroup/cpuacct/cpuacct.usage) / 1000 ))
+      <span class="k">else</span> echo $(( $(cat /sys/fs/cgroup/cpu,cpuacct/cpuacct.usage) / 1000 )); <span class="k">fi</span>
+    }
+    a=$(read_us); sleep '"$secs"'; b=$(read_us)
+    echo $(( (b - a) / '"$secs"' / 1000 ))'
+}</code></pre>
+  <ul>
+    <li>컨테이너 안의 <code>/sys/fs/cgroup</code> 는 자기 cgroup 이다. 그래서 metrics-server(파드·노드 사용량을 API 로 내주는 부품. <code>kubectl top</code> 이 쓴다) 없이도 "이 컨테이너가 실제로 쓴 CPU 시간" 을 읽는다.</li>
+    <li>cgroup v2 는 <code>cpu.stat</code> 의 마이크로초, v1 은 <code>cpuacct.usage</code> 의 나노초(÷1000 으로 맞춤).</li>
+    <li>(b−a) 마이크로초 ÷ 초 ÷ 1000 = 초당 밀리초 = 밀리코어.</li>
+  </ul>
+  <p><b>Burstable 의 oom_score_adj</b>: <code>min(max(2, 1000 − (1000 × 메모리 requests 바이트) ÷ 노드 메모리 용량 바이트), 999)</code> 다. requests 를 작게 적을수록 먼저 죽는다. 우선순위가 <code>system-node-critical</code> 인 파드의 컨테이너는 QoS 와 무관하게 −997 이다.</p>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>05 의 ksvc 템플릿과 컨트롤 플레인 Deployment 는 <b>메모리 limits 만 적고 CPU limits 는 비웠다</b>. 04 README 8절의 결론 "함수 limits 는 메모리는 꼭, CPU limit 은 신중히" 를 따른 것이다. 다만 테넌트 namespace 에서는 LimitRange(두 절 뒤)가 CPU limits 200m 을 채우므로, 테넌트 함수에는 결국 CPU limit 이 걸린다. 이 상호작용을 기억해 둔다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>CPU</b>: 에러 없이 지연만 늘어난다. p95(요청 지연을 정렬했을 때 95% 지점)가 100ms 근처에 몰리면 CFS 스로틀링을 의심한다. 볼 곳: 컨테이너 안 <code>cat /sys/fs/cgroup/cpu.stat</code> 의 <code>nr_throttled</code>. <b>메모리</b>: <code>kubectl get pod</code> 의 RESTARTS 증가, <code>kubectl describe pod</code> 의 <code>Last State: Terminated, Reason: OOMKilled, Exit Code: 137</code>. 고치는 법: 메모리 limits 를 실제 사용량에 맞게 올리거나 코드를 고친다. CPU 는 limits 를 올리거나 없앤다(대신 Quota 계산은 LimitRange 기본값으로 이어진다).</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>함수 파드는 Burstable(requests 작게, 메모리 limits)로 둔다. Guaranteed 는 예측 가능성이 가장 높지만 requests = limits 라서 노드에 들어가는 파드 수가 줄고, scale-to-zero(요청이 없으면 파드를 0개로 줄이는 방식) 함수처럼 짧게 튀는 부하에는 낭비가 크다. 04 결정 표의 빌드 Job 은 "requests 작게, limits 크게"(짧고 굵게)를 택했고 Guaranteed 는 대안으로만 적었다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/">Resource Management for Pods and Containers</a> · <a href="https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/">Pod Quality of Service Classes</a> · <a href="https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/">Node-pressure Eviction</a> · <a href="https://kubernetes.io/docs/concepts/architecture/cgroups/">About cgroup v2</a></p></aside>
 
 <!-- ============================================================ -->
 <h2 id="quota">ResourceQuota (2겹)</h2>
 
 <div class="tier" data-tier="1">
   <h3>테넌트 전체가 쓸 수 있는 합계 한도</h3>
-  <p><b>ResourceQuota</b> 는 namespace 하나에 거는 "합계 상한" 이다. 이 namespace 안 모든 파드의 requests·limits 합계, 파드 개수, 서비스 개수 등이 hard 값을 넘는 생성 요청을 API 서버가 거절한다. 옆집 소음을 "테넌트 단위" 로 막는 장치다. 한 테넌트가 아무리 파드를 늘려도 정해진 몫 이상은 못 가져간다.</p>
+  <p>앞 절에서 requests 는 자리 예약, limits 는 천장이라는 것을 봤다. <b>ResourceQuota</b> 는 그 선언값을 namespace 단위로 합산해 거는 "합계 상한" 이다. 이 namespace 안 모든 파드의 requests·limits 합계, 파드 개수, 서비스 개수 등이 hard 값을 넘는 생성 요청을 API 서버가 거절한다. 옆집 소음을 "테넌트 단위" 로 막는 장치다. 한 테넌트가 아무리 파드를 늘려도 정해진 몫 이상은 못 가져간다.</p>
   <p>중요한 성질 두 개. ① 거절은 <b>생성 시점</b>에만 일어난다. 이미 떠 있는 파드는 hard 를 낮춰도 쫓겨나지 않는다. ② 실제 사용량(top 으로 보는 CPU)이 아니라 <b>선언한 값</b>(requests, limits)을 센다. 그래서 선언이 없는 파드는 셀 수가 없다.</p>
   <figure>
     <div class="fig scroll">
@@ -731,7 +874,7 @@ flowchart TD
         <path d="M590 335 L790 335 L790 274" class="d-e-async" marker-end="url(#quo-m-async)"/>
       </svg>
     </div>
-    <figcaption><b>그림 3-6.</b> ResourceQuota 의 두 주체. 생성 요청은 어드미션 플러그인이 <code>status.used</code> 와 비교해 즉시 허용·거절하고 used 를 올린다(회색 실선). 파드가 지워질 때 used 를 내리는 일과 어긋난 값을 바로잡는 일은 쿼터 컨트롤러가 비동기로 한다(보라 점선). hard 값은 PoC values, used 는 개념 표기다.</figcaption>
+    <figcaption><b>그림 3-8.</b> ResourceQuota 의 두 주체. 생성 요청은 어드미션 플러그인이 <code>status.used</code> 와 비교해 즉시 허용·거절하고 used 를 올린다(회색 실선). 파드가 지워질 때 used 를 내리는 일과 어긋난 값을 바로잡는 일은 쿼터 컨트롤러가 비동기로 한다(보라 점선). hard 값은 PoC values, used 는 개념 표기다.</figcaption>
   </figure>
 </div>
 
@@ -739,8 +882,8 @@ flowchart TD
   <h3>무엇을 셀 수 있고, 어떻게 세나</h3>
   <p>ResourceQuota 가 셀 수 있는 것은 세 종류다.</p>
   <ul>
-    <li><b>컴퓨트 자원</b>: <code>requests.cpu</code>, <code>requests.memory</code>, <code>limits.cpu</code>, <code>limits.memory</code> (<code>cpu</code>, <code>memory</code> 는 requests 와 같은 뜻), <code>hugepages-&lt;크기&gt;</code>, 확장 자원 <code>requests.nvidia.com/gpu</code> 같은 것.</li>
-    <li><b>저장소</b>: <code>requests.storage</code>, <code>persistentvolumeclaims</code>, StorageClass 별 <code>&lt;sc&gt;.storageclass.storage.k8s.io/requests.storage</code>.</li>
+    <li><b>컴퓨트 자원</b>: <code>requests.cpu</code>, <code>requests.memory</code>, <code>limits.cpu</code>, <code>limits.memory</code> (<code>cpu</code>, <code>memory</code> 는 requests 와 같은 뜻), <code>hugepages-&lt;크기&gt;</code>(큰 페이지 메모리), 확장 자원(GPU 처럼 장치 플러그인이 노드에 등록하는 자원) <code>requests.nvidia.com/gpu</code> 같은 것.</li>
+    <li><b>저장소</b>: PVC(PersistentVolumeClaim, 파드가 영구 디스크를 요청하는 객체)의 용량 합계 <code>requests.storage</code>, 개수 <code>persistentvolumeclaims</code>, StorageClass 별 <code>&lt;sc&gt;.storageclass.storage.k8s.io/requests.storage</code>.</li>
     <li><b>오브젝트 개수</b>: <code>pods</code>, <code>services</code>, <code>services.loadbalancers</code>, <code>services.nodeports</code>, <code>configmaps</code>, <code>secrets</code> 같은 짧은 이름과, 일반형 <code>count/&lt;리소스&gt;.&lt;그룹&gt;</code> (예: <code>count/deployments.apps</code>, <code>count/services.serving.knative.dev</code>).</li>
   </ul>
   <pre class="mermaid">
@@ -779,7 +922,7 @@ flowchart TD
   <ul>
     <li><code>| quote</code>: 값을 문자열로 감싼다. <code>"1"</code> 과 <code>1</code> 은 YAML 에서 타입이 다른데, quantity 필드는 둘 다 받지만 <code>500m</code> 같은 값과 모양을 통일하려는 것.</li>
     <li>requests 와 limits 를 둘 다 건다. requests 합계는 "보장 몫", limits 합계는 "최대 폭주 몫" 이다. 03 README 1.3절이 말하는 "CPU 를 다 못 먹는다" 의 실제 숫자는 limits.cpu 2 다.</li>
-    <li><code>services.loadbalancers: "0"</code>, <code>services.nodeports: "0"</code>: values 에 없는 고정값이다. 테넌트가 노드 포트나 외부 로드밸런서로 울타리 밖 입구를 여는 것을 막는다. 입구는 플랫폼의 Kourier 하나뿐이어야 한다.</li>
+    <li><code>services.loadbalancers: "0"</code>, <code>services.nodeports: "0"</code>: values 에 없는 고정값이다. 테넌트가 노드 포트나 외부 로드밸런서로 울타리 밖 입구를 여는 것을 막는다. 입구는 플랫폼의 Kourier(Knative 용 인그레스 프록시. 함수로 들어오는 모든 요청의 입구) 하나뿐이어야 한다.</li>
   </ul>
 </div>
 
@@ -790,20 +933,21 @@ flowchart TD
   <div class="table-wrap"><table>
   <thead><tr><th>scope</th><th>대상 파드</th><th>쓰임</th></tr></thead>
   <tbody>
-  <tr><td><code>Terminating</code> / <code>NotTerminating</code></td><td><code>activeDeadlineSeconds</code> 가 있는 / 없는 파드</td><td>빌드 Job(데드라인 600초)만 따로 한도</td></tr>
+  <tr><td><code>Terminating</code> / <code>NotTerminating</code></td><td><code>activeDeadlineSeconds</code>(파드가 최대 몇 초 돌지 정하는 필드)가 있는 / 없는 파드</td><td>빌드 Job(데드라인 600초)만 따로 한도</td></tr>
   <tr><td><code>BestEffort</code> / <code>NotBestEffort</code></td><td>QoS 가 BestEffort 인 / 아닌 파드</td><td>BestEffort 파드 개수만 제한</td></tr>
-  <tr><td><code>PriorityClass</code></td><td>scopeSelector 로 고른 우선순위 클래스</td><td>높은 우선순위 파드를 소수만 허용</td></tr>
-  <tr><td><code>CrossNamespacePodAffinity</code></td><td>다른 namespace 를 보는 파드 (안티)어피니티를 쓰는 파드</td><td>테넌트가 남의 파드 위치에 영향을 주는 것을 막음</td></tr>
-  <tr><td><code>VolumeAttributesClass</code></td><td>특정 볼륨 속성 클래스를 쓰는 PVC</td><td>저장소 성능 등급 제한 【확인 필요: 기능 단계】</td></tr>
+  <tr><td><code>PriorityClass</code></td><td>scopeSelector 로 고른 우선순위 클래스(파드 우선순위 등급을 정의하는 객체)</td><td>높은 우선순위 파드를 소수만 허용</td></tr>
+  <tr><td><code>CrossNamespacePodAffinity</code></td><td>다른 namespace 를 보는 파드 (안티)어피니티(다른 파드 근처에, 또는 멀리 두라는 배치 규칙)를 쓰는 파드</td><td>테넌트가 남의 파드 위치에 영향을 주는 것을 막음</td></tr>
+  <tr><td><code>VolumeAttributesClass</code></td><td>특정 볼륨 속성 클래스를 쓰는 PVC</td><td>저장소 성능 등급 제한 (VolumeAttributesClass 는 1.34 GA, 1.36 부터 끌 수 없음)</td></tr>
   </tbody></table></div>
+  <p><code>scopeSelector</code> 의 연산자는 <code>Exists</code>, <code>In</code>, <code>NotIn</code>, <code>DoesNotExist</code> 인데, Terminating·NotTerminating·BestEffort·NotBestEffort 는 <code>Exists</code> 만, PriorityClass 는 넷 다 쓸 수 있다. 한 namespace 에 ResourceQuota 가 여러 장이면 scope 가 맞는 모든 장을 <b>전부</b> 통과해야 한다.</p>
   <h4>동시성과 사용량 갱신</h4>
-  <p>여러 파드가 동시에 생성될 때 두 요청이 같은 used 를 보고 둘 다 통과하면 hard 를 넘는다. 이를 막으려고 어드미션은 <code>status.used</code> 를 resourceVersion 비교로 갱신하고, 충돌하면 다시 읽어 계산한다(낙관적 동시성). 파드 삭제 시 used 감소는 쿼터 컨트롤러가 하므로, 지운 직후 잠깐은 used 가 남아 새 파드가 거절될 수 있다 【확인 필요: 컨트롤러의 재동기 주기 기본값】.</p>
+  <p>여러 파드가 동시에 생성될 때 두 요청이 같은 used 를 보고 둘 다 통과하면 hard 를 넘는다. 이를 막으려고 어드미션은 <code>status.used</code> 를 resourceVersion 비교로 갱신하고, 충돌하면 다시 읽어 계산한다(낙관적 동시성). 파드 삭제 시 used 감소는 쿼터 컨트롤러가 하므로, 지운 직후 잠깐은 used 가 남아 새 파드가 거절될 수 있다. 쿼터 컨트롤러는 삭제 이벤트를 받아 바로 재계산하고, 놓친 것은 kube-controller-manager 의 <code>--resource-quota-sync-period</code>(기본 5분) 주기의 전체 재계산으로 바로잡는다.</p>
   <h4>엣지 케이스</h4>
   <ul>
     <li><b>hard 를 낮췄을 때</b>: 이미 있는 객체는 그대로. used 가 hard 보다 커진 상태가 되고, 줄어들 때까지 새 생성만 거절된다.</li>
-    <li><b>RuntimeClass overhead</b>: 파드 overhead(gVisor 의 50m/64Mi)는 quota 계산에 더해진다. gVisor 함수는 runc 보다 테넌트 몫을 더 쓴다.</li>
-    <li><b>Knative 의 queue-proxy</b>: ksvc 파드에는 사용자 컨테이너 말고 queue-proxy 컨테이너가 붙는다. queue-proxy 의 requests/limits 도 합계에 들어가고, 선언이 없으면 LimitRange 기본값이 붙는다 【확인 필요: Knative 버전별 queue-proxy 기본 resources】.</li>
-    <li><b>Job 의 재시도·완료 파드</b>: Succeeded/Failed 상태 파드는 컴퓨트 합계에서 빠진다 【확인 필요: pods 개수 항목의 완료 파드 취급】.</li>
+    <li><b>RuntimeClass overhead</b>: 파드 overhead(샌드박스 런타임 자체가 쓰는 몫으로 RuntimeClass 에 적는 값. gVisor 는 50m/64Mi)는 quota 계산에 더해진다. gVisor 함수는 runc(보통 컨테이너를 만드는 기본 런타임) 함수보다 테넌트 몫을 더 쓴다.</li>
+    <li><b>Knative 의 queue-proxy</b>: ksvc 파드에는 사용자 컨테이너 말고 Knative 가 붙이는 사이드카(sidecar, 같은 파드 안에 나란히 도는 보조 컨테이너) queue-proxy 가 있다. queue-proxy 의 requests/limits 도 합계에 들어간다. Knative 1.23 의 기본값(<code>config-deployment</code>)은 <code>queue-sidecar-cpu-request</code> 25m 하나뿐이고 limits 는 <code>queueproxy.resource-defaults</code> 를 켜지 않는 한 비어 있다(04 setup.sh 는 켜지 않았다). 그래서 테넌트 namespace 의 queue-proxy 는 LimitRange 가 limits.cpu 200m, limits.memory 128Mi, requests.memory 64Mi 를 채운 채로 센다.</li>
+    <li><b>Job 의 재시도·완료 파드</b>: <code>status.phase</code> 가 Succeeded 또는 Failed 인 파드는 컴퓨트 합계에서도, <code>pods</code> 개수에서도 빠진다(공식 문서: "non-terminal state" 인 파드만 센다). 빌드 Job 의 끝난 파드가 faas-build 의 쿼터를 계속 먹지 않는 이유다.</li>
   </ul>
   <pre class="pseudo"><code><span class="k">quota 검사</span>(파드, ns):
   <span class="k">반복</span> q <span class="k">in</span> ns.ResourceQuota 목록:
@@ -818,7 +962,7 @@ flowchart TD
   <span class="k">허용</span></code></pre>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>tenant-a 의 hard 는 requests.cpu 1, requests.memory 1Gi, limits.cpu 2, limits.memory 2Gi, pods 10, services 5 (<code>tenants/tenant-a.yaml</code>). tenant-b 는 "작은 요금제" 로 절반: 500m, 512Mi, 1, 1Gi, 5, 3 (<code>tenants/tenant-b.yaml</code>). 05 의 ksvc 템플릿 주석은 "max-scale × limits.memory ≤ 테넌트 메모리 한도" 로 max-scale 5 를 정했다. 다만 이 계산에는 queue-proxy 몫과 같은 namespace 의 hello-fn 2개 몫이 빠져 있다. limits.cpu 쪽은 사용자 컨테이너에 CPU limit 이 없어 LimitRange 기본 200m 이 붙고 queue-proxy 에도 붙으면 파드당 400m 이므로, hello-fn 2개(각 200m)와 함께 계산하면 함수 파드가 5개까지 다 뜨기 전에 limits.cpu 2 에 닿을 수 있다 【확인 필요: 실제 클러스터에서 <code>kubectl -n tenant-a describe quota</code> 로 확인】.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>tenant-a 의 hard 는 requests.cpu 1, requests.memory 1Gi, limits.cpu 2, limits.memory 2Gi, pods 10, services 5 (<code>tenants/tenant-a.yaml</code>). tenant-b 는 "작은 요금제" 로 절반: 500m, 512Mi, 1, 1Gi, 5, 3 (<code>tenants/tenant-b.yaml</code>). 05 의 ksvc 템플릿 주석은 "max-scale(함수 파드 수 상한 annotation) × limits.memory ≤ 테넌트 메모리 한도" 로 max-scale 5 를 정했다. 다만 이 계산에는 queue-proxy 몫과 같은 namespace 의 hello-fn 2개 몫이 빠져 있다. limits.cpu 쪽을 계산하면 이렇다. 사용자 컨테이너(requests 100m, CPU limit 없음)에 LimitRange 가 200m 을 붙이고, queue-proxy(requests 25m, limit 없음)에도 200m 을 붙여 함수 파드 하나가 limits.cpu 400m 이다. hello-fn 2개가 먼저 400m(각 200m)을 쓰므로 남는 1.6 코어로는 함수 파드가 <b>4개</b>까지만 뜨고, max-scale 5 의 다섯 번째는 <code>exceeded quota</code> 로 거절된다. requests.cpu(파드당 125m), limits.memory(파드당 256Mi), pods(10) 는 그보다 여유가 있어서 limits.cpu 가 먼저 닿는다. 실제 값은 <code>kubectl -n tenant-a describe quota tenant-quota</code> 의 Used 열로 본다.</p></aside>
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: Quota 초과</p><p><b>증상</b>: Deployment 의 READY 가 원하는 수보다 적게 멈춘다(예: 30개 요청에 일부만). ksvc 라면 부하가 와도 파드가 더 안 늘고 지연이 커진다. <b>볼 곳</b>: <code>kubectl -n tenant-a describe resourcequota tenant-quota</code> (Used 와 Hard 비교), <code>kubectl -n tenant-a get events --field-selector reason=FailedCreate</code> 의 <code>exceeded quota: tenant-quota, requested: limits.cpu=200m, used: limits.cpu=2, limited: limits.cpu=2</code> 모양 문구. <b>고치는 법</b>: 테넌트 파일의 quota 값을 올려 push(요금제 변경), 또는 함수의 max-scale·requests 를 줄인다.</p></aside>
 <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>values 의 기본값과 tenant-b 절반은 03 README 결정 3. limits.cpu 를 크게 잡으면 한 테넌트가 맥을 다 먹고, 작게 잡으면 함수 몇 개도 못 띄운다. 대안으로 requests 만 걸고 limits 는 안 거는 방식(구글 등이 권하는 "CPU limit 없이 requests 로 공정 분배")이 있지만, 옆집 소음을 숫자로 보여 주는 실험(무한 루프가 200m 에 묶이는 것)이 목적이라 limits 를 걸었다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/concepts/policy/resource-quotas/">Resource Quotas</a> · <a href="https://kubernetes.io/docs/tasks/administer-cluster/manage-resources/quota-memory-cpu-namespace/">Configure Memory and CPU Quotas for a Namespace</a> · <a href="https://kubernetes.io/docs/concepts/scheduling-eviction/pod-overhead/">Pod Overhead</a></p></aside>
@@ -828,7 +972,7 @@ flowchart TD
 
 <div class="tier" data-tier="1">
   <h3>컨테이너 하나 단위의 기본값과 최대값</h3>
-  <p><b>LimitRange</b> 는 namespace 안 컨테이너(또는 파드, PVC) <b>하나하나</b>에 대한 규칙이다. 두 가지 일을 한다. ① resources 를 안 적은 컨테이너에 <b>기본 requests/limits 를 채운다</b>(변경). ② 너무 크거나 작은 값을 <b>거절한다</b>(검증). ResourceQuota 가 합계를 보는 반면 LimitRange 는 한 개를 본다. 그래서 "한 컨테이너가 테넌트 몫을 혼자 다 쓰는 것" 도 막는다.</p>
+  <p>앞 절 끝에서 "컴퓨트 quota 가 있으면 선언 없는 파드는 거절된다" 고 했다. 그 빈칸을 채워 주는 짝이 이 절이다. <b>LimitRange</b> 는 namespace 안 컨테이너(또는 파드, PVC) <b>하나하나</b>에 대한 규칙이다. 두 가지 일을 한다. ① resources 를 안 적은 컨테이너에 <b>기본 requests/limits 를 채운다</b>(변경). ② 너무 크거나 작은 값을 <b>거절한다</b>(검증). ResourceQuota 가 합계를 보는 반면 LimitRange 는 한 개를 본다. 그래서 "한 컨테이너가 테넌트 몫을 혼자 다 쓰는 것" 도 막는다.</p>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 380" role="img" aria-labelledby="lr-t">
@@ -880,7 +1024,7 @@ flowchart TD
         <path d="M620 285 L656 285" class="d-e-api" marker-end="url(#lr-m-api)"/>
       </svg>
     </div>
-    <figcaption><b>그림 3-7.</b> PoC values 의 LimitRange 가 두 컨테이너에 하는 일. 초록 글자가 LimitRange 가 채운 값이다. hello-fn(01 단계 차트)은 CPU limit 만 비어 있어 그것만 채워지고, iso-hog(실험용)는 전부 채워진다.</figcaption>
+    <figcaption><b>그림 3-9.</b> PoC values 의 LimitRange 가 두 컨테이너에 하는 일. 초록 글자가 LimitRange 가 채운 값이다. hello-fn(01 단계 차트)은 CPU limit 만 비어 있어 그것만 채워지고, iso-hog(실험용)는 전부 채워진다.</figcaption>
   </figure>
 </div>
 
@@ -942,11 +1086,13 @@ flowchart TD
   <ul>
     <li><b>어드미션 순서</b>: LimitRanger 는 변경 단계에서 값을 채우고 검증 단계에서 다시 검사한다. ResourceQuota 는 검증 단계의 끝에 있어서, LimitRange 가 채운 값까지 합계에 넣는다. 그래서 iso-hog 처럼 아무것도 안 적은 파드도 quota 에 limits.cpu 200m 으로 계산된다.</li>
     <li><b>생성 시점에만</b>: LimitRange 를 새로 만들거나 바꿔도 이미 떠 있는 파드는 바뀌지 않는다. 새로 만들어지는 파드부터 적용된다.</li>
-    <li><b>모순된 설정</b>: 컨테이너가 requests 만 적었는데 그 값이 default(limits)보다 크면, 채운 limits 가 requests 보다 작아져 파드가 거절된다(requests ≤ limits 위반). 예: 이 namespace 에서 requests.cpu 300m 만 적으면 limits 가 200m 으로 채워져 거절된다. 공식 문서가 경고하는 함정이다.</li>
+    <li><b>모순된 설정</b>: 컨테이너가 requests 만 적었는데 그 값이 default(limits)보다 크면, 채운 limits 가 requests 보다 작아져 파드가 거절된다. 예: 이 namespace 에서 requests.cpu 300m 만 적으면 limits 가 200m 으로 채워지고, LimitRanger 가 아니라 그다음 스키마 검증(그림 3-4 의 ④)이 <code>spec.containers[0].resources.requests: Invalid value: "300m": must be less than or equal to cpu limit</code> 로 거절한다. 공식 문서가 "LimitRange 는 자기가 채운 값의 일관성을 검사하지 않는다" 고 경고하는 함정이다.</li>
+    <li><b>LimitRange 객체 자체의 기본값</b>: Container 타입에서 <code>default</code> 를 비우고 <code>max</code> 만 적으면 API 서버가 저장할 때 default = max 로, <code>defaultRequest</code> 를 비우면 defaultRequest = default 로 채운다(<code>SetDefaults_LimitRangeItem</code>). "max 만 적었는데 limits 가 max 로 채워지더라" 는 현상의 정체다. PoC 는 셋을 다 적어 이 기본값에 기대지 않는다.</li>
     <li><b>여러 장</b>: 한 namespace 에 LimitRange 가 여러 장이면 어느 기본값이 적용될지 정해져 있지 않다. 한 장만 두는 게 원칙이다.</li>
-    <li><b>initContainers</b>: 같은 규칙이 initContainer 에도 적용된다. 파드의 실효 requests 는 "일반 컨테이너 합" 과 "가장 큰 initContainer" 중 큰 값이다.</li>
+    <li><b>initContainers</b>(앱 컨테이너보다 먼저 한 번 돌고 끝나는 준비 컨테이너): 같은 규칙이 initContainer 에도 적용된다. 파드의 실효 requests 는 "일반 컨테이너 합" 과 "가장 큰 initContainer" 중 큰 값이다.</li>
   </ul>
-  <pre class="pseudo"><code><span class="k">LimitRanger 변경</span>(파드, lr):
+  <pre class="pseudo"><code><span class="c">// LimitRange 를 저장할 때 API 서버가 이미: default 없으면 max 로, defaultRequest 없으면 default 로 채워 둠</span>
+<span class="k">LimitRanger 변경</span>(파드, lr):
   <span class="k">반복</span> c <span class="k">in</span> 파드.모든_컨테이너:
       <span class="k">반복</span> r <span class="k">in</span> [cpu, memory]:
           <span class="k">만약</span> c.limits[r] 없음 <span class="k">그리고</span> lr.default[r] 있음:
@@ -962,155 +1108,17 @@ flowchart TD
       <span class="k">만약</span> c.limits[r] / c.requests[r] &gt; lr.maxLimitRequestRatio[r]: <span class="k">거절</span></code></pre>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>03 README 1.3절이 말하는 "01 단계 hello-fn 은 CPU limits 를 안 적었으니 오늘 이 짝 덕분에 들어온다" 가 그림 3-7 첫 줄이다. 확인은 <code>kubectl -n tenant-a get pod -l app=tenant-a-hello -o jsonpath='{.items[0].spec.containers[0].resources}'</code> (README 5.2절). 실험 <code>fixtures/too-big.yaml</code> 은 cpu 2 를 적어 max 1 에 걸리고, <code>fixtures/iso-hog.yaml</code> 은 resources 를 일부러 비워 200m 에 묶이는 것을 보여 준다.</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: LimitRange 를 지우면</p><p><b>증상</b>: hello-fn 의 새 파드가 안 생긴다(롤링 업데이트가 멈춤). <b>볼 곳</b>: ReplicaSet 이벤트의 <code>failed quota: tenant-quota: must specify limits.cpu</code> 【확인 필요: 정확한 문구】. <b>고치는 법</b>: LimitRange 를 되살리거나(차트에서 지웠다면 Argo CD 가 selfHeal 로 곧 되살린다), 모든 매니페스트에 CPU limits 를 적는다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>03 README 1.3절이 말하는 "01 단계 hello-fn 은 CPU limits 를 안 적었으니 오늘 이 짝 덕분에 들어온다" 가 그림 3-9 첫 줄이다. 확인은 <code>kubectl -n tenant-a get pod -l app=tenant-a-hello -o jsonpath='{.items[0].spec.containers[0].resources}'</code> (README 5.2절). 실험 <code>fixtures/too-big.yaml</code> 은 cpu 2 를 적어 max 1 에 걸리고, <code>fixtures/iso-hog.yaml</code> 은 resources 를 일부러 비워 200m 에 묶이는 것을 보여 준다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: LimitRange 를 지우면</p><p><b>증상</b>: hello-fn 의 새 파드가 안 생긴다(롤링 업데이트가 멈춤). <b>볼 곳</b>: ReplicaSet 이벤트의 <code>failed quota: tenant-quota: must specify limits.cpu for: fn</code>(선언이 빠진 항목과 컨테이너 이름을 "항목 for: 컨테이너" 로 나열한다). <b>고치는 법</b>: LimitRange 를 되살리거나(차트에서 지웠다면 Argo CD 가 selfHeal(손으로 바꾼 것을 Git 상태로 되돌리는 옵션)로 곧 되살린다), 모든 매니페스트에 CPU limits 를 적는다.</p></aside>
 <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>기본 CPU limits 200m 은 03 README 결정 3. 500m 이면 tenant-b(limits.cpu 1)는 hello-fn 2개만으로 꽉 차서 실험 파드가 거절된다. 대안으로 웹훅(Kyverno 의 mutate 규칙)으로 기본값을 넣을 수 있지만, 내장 LimitRanger 로 충분하다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/concepts/policy/limit-range/">Limit Ranges</a> · <a href="https://kubernetes.io/docs/tasks/administer-cluster/manage-resources/memory-default-namespace/">Configure Default Memory Requests and Limits for a Namespace</a> · <a href="https://kubernetes.io/docs/tasks/administer-cluster/manage-resources/cpu-constraint-namespace/">Configure Minimum and Maximum CPU Constraints</a></p></aside>
-
-<!-- ============================================================ -->
-<h2 id="resources">requests, limits, QoS</h2>
-
-<div class="tier" data-tier="1">
-  <h3>requests 는 자리 예약, limits 는 천장</h3>
-  <p><b>requests</b> 는 "최소 이만큼은 보장해 줘" 다. 스케줄러가 노드에 자리가 있는지 계산할 때 쓰고, CPU 가 붐빌 때 몫을 나누는 비율이 된다. <b>limits</b> 는 "이 이상은 못 쓴다" 다. 같은 천장이라도 CPU 와 메모리는 넘으려 할 때 결과가 완전히 다르다.</p>
-  <ul>
-    <li><b>CPU 는 압축 가능(compressible)</b>: 넘으려 하면 커널이 그 컨테이너를 잠깐 멈춘다(스로틀링, throttling). 죽지는 않고 느려진다.</li>
-    <li><b>메모리는 압축 불가(incompressible)</b>: 넘으면 커널 OOM killer 가 프로세스를 죽인다(OOMKilled). 재시작 정책에 따라 다시 뜬다.</li>
-  </ul>
-  <figure>
-    <div class="fig scroll">
-      <svg viewBox="0 0 960 360" role="img" aria-labelledby="cfs-t">
-        <title id="cfs-t">CPU limit 스로틀링과 메모리 limit OOM kill 비교</title>
-        <text x="20" y="30" class="d-lbl">CPU limits 500m = 100ms 주기마다 50ms 까지만 실행</text>
-        <rect x="80" y="44" width="135" height="40" rx="6" class="d-cp-box"/>
-        <text x="96" y="69" class="d-mono">실행 50ms</text>
-        <rect x="215" y="44" width="135" height="40" rx="6" class="d-fail-box"/>
-        <text x="231" y="69" class="d-mono">멈춤 (throttled)</text>
-        <rect x="350" y="44" width="135" height="40" rx="6" class="d-cp-box"/>
-        <text x="366" y="69" class="d-mono">실행 50ms</text>
-        <rect x="485" y="44" width="135" height="40" rx="6" class="d-fail-box"/>
-        <text x="501" y="69" class="d-mono">멈춤 (throttled)</text>
-        <rect x="620" y="44" width="135" height="40" rx="6" class="d-cp-box"/>
-        <text x="636" y="69" class="d-mono">실행 50ms</text>
-        <rect x="755" y="44" width="135" height="40" rx="6" class="d-fail-box"/>
-        <text x="771" y="69" class="d-mono">멈춤 (throttled)</text>
-        <path d="M80 96 L80 108 M350 96 L350 108 M620 96 L620 108 M890 96 L890 108" class="d-e"/>
-        <path d="M80 102 L890 102" class="d-e"/>
-        <text x="180" y="126" class="d-sub">주기 1 (cfs_period 100ms)</text>
-        <text x="450" y="126" class="d-sub">주기 2</text>
-        <text x="720" y="126" class="d-sub">주기 3</text>
-
-        <text x="20" y="170" class="d-lbl">CPU limits 없음, requests 만 = 노드가 한가하면 다 쓰고, 붐비면 requests 비율로 나눔</text>
-        <rect x="80" y="184" width="810" height="40" rx="6" class="d-cp-box"/>
-        <text x="96" y="209" class="d-mono">계속 실행 (cpu.weight 로 경쟁)</text>
-
-        <text x="20" y="262" class="d-lbl">메모리 limits = 넘는 순간 커널이 죽인다</text>
-        <path d="M80 340 L300 320 L520 296 L700 270" class="d-e-api"/>
-        <path d="M80 268 L890 268" class="d-e-fail"/>
-        <text x="730" y="290" class="d-mono">memory.max</text>
-        <rect x="700" y="300" width="170" height="40" rx="8" class="d-fail-box"/>
-        <text x="716" y="325" class="d-mono">OOMKilled 137</text>
-        <text x="330" y="352" class="d-sub">시간에 따라 사용량이 늘어남</text>
-      </svg>
-    </div>
-    <figcaption><b>그림 3-8.</b> 위: limits.cpu 500m 은 cgroup 의 CFS 대역폭 제어로 "100ms 마다 50ms" 가 된다. 짧은 시간에 몰아 쓰면 남은 주기를 멈춰 기다린다. 가운데: limit 이 없으면 멈추지 않는다. 아래: 메모리는 천장(빨간 점선)을 넘는 순간 OOM kill, 종료 코드 137.</figcaption>
-  </figure>
-</div>
-
-<div class="tier" data-tier="2">
-  <h3>QoS 등급 셋과 쫓겨나는 순서</h3>
-  <p>쿠버네티스는 파드의 requests/limits 모양을 보고 <b>QoS 등급</b>을 자동으로 붙인다(<code>status.qosClass</code>). 노드 메모리가 모자라 kubelet 이 파드를 쫓아낼 때(node-pressure eviction)와 커널 OOM killer 가 고를 때 이 등급이 순서를 정한다.</p>
-  <figure>
-    <div class="fig scroll">
-      <svg viewBox="0 0 960 330" role="img" aria-labelledby="qos-t">
-        <title id="qos-t">QoS 등급 세 가지와 PoC 의 파드</title>
-        <defs>
-          <marker id="qos-m-fail" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
-        </defs>
-        <rect x="20" y="20" width="290" height="230" rx="12" class="d-cp-box"/>
-        <text x="36" y="50" class="d-ttl-s">Guaranteed</text>
-        <text x="36" y="78" class="d-sub">모든 컨테이너가 cpu, memory</text>
-        <text x="36" y="100" class="d-sub">모두 requests = limits</text>
-        <text x="36" y="138" class="d-mono">oom_score_adj -997</text>
-        <text x="36" y="176" class="d-subd">PoC: 거의 없음</text>
-        <text x="36" y="200" class="d-sub">(빌드 Job 대안으로만 언급)</text>
-
-        <rect x="335" y="20" width="290" height="230" rx="12" class="d-warn-box"/>
-        <text x="351" y="50" class="d-ttl-s">Burstable</text>
-        <text x="351" y="78" class="d-sub">하나라도 requests 또는 limits</text>
-        <text x="351" y="100" class="d-sub">있지만 Guaranteed 는 아님</text>
-        <text x="351" y="138" class="d-mono">oom_score_adj 2~999</text>
-        <text x="351" y="176" class="d-subd">PoC: 거의 전부</text>
-        <text x="351" y="200" class="d-sub">hello-fn, ksvc, kaniko, 테넌트</text>
-
-        <rect x="650" y="20" width="290" height="230" rx="12" class="d-fail-box"/>
-        <text x="666" y="50" class="d-ttl-s">BestEffort</text>
-        <text x="666" y="78" class="d-sub">어떤 컨테이너도 requests,</text>
-        <text x="666" y="100" class="d-sub">limits 가 없음</text>
-        <text x="666" y="138" class="d-mono">oom_score_adj 1000</text>
-        <text x="666" y="176" class="d-subd">테넌트 ns 에는 생길 수 없다</text>
-        <text x="666" y="200" class="d-sub">LimitRange 가 기본값을 채움</text>
-
-        <path d="M920 286 L40 286" class="d-e-fail" marker-end="url(#qos-m-fail)"/>
-        <text x="300" y="316" class="d-lbl">노드 메모리가 부족하면 오른쪽(BestEffort)부터 쫓겨난다</text>
-      </svg>
-    </div>
-    <figcaption><b>그림 3-9.</b> QoS 세 등급. 실제 eviction 순서는 등급만이 아니라 "requests 를 얼마나 넘겨 쓰고 있나" 와 파드 우선순위도 함께 본다. oom_score_adj 는 커널 OOM killer 가 고를 때 쓰는 가중치다.</figcaption>
-  </figure>
-  <pre class="mermaid">
-flowchart TD
-  A["파드의 모든 컨테이너 살펴보기"] --> B{"어떤 컨테이너도<br/>cpu, memory 의 requests, limits 가 없나"}
-  B -->|"예"| BE["BestEffort"]
-  B -->|"아니오"| C{"모든 컨테이너가<br/>cpu, memory limits 를 갖고<br/>requests = limits 인가"}
-  C -->|"예"| G["Guaranteed"]
-  C -->|"아니오"| BU["Burstable"]
-  </pre>
-</div>
-
-<div class="tier" data-tier="3">
-  <h3>세부: cgroup 매핑과 스로틀링 계산</h3>
-  <p>kubelet 과 컨테이너 런타임은 resources 를 리눅스 cgroup 설정으로 바꾼다. cgroup v2 기준.</p>
-  <div class="table-wrap"><table>
-  <thead><tr><th>필드</th><th>cgroup v2 파일</th><th>효과</th></tr></thead>
-  <tbody>
-  <tr><td><code>requests.cpu</code></td><td><code>cpu.weight</code></td><td>CPU 가 붐빌 때 몫을 나누는 상대 가중치. 한가하면 의미 없음</td></tr>
-  <tr><td><code>limits.cpu</code></td><td><code>cpu.max</code> = "quota period"</td><td>500m → "50000 100000" (100ms 중 50ms). 다 쓰면 다음 주기까지 멈춤</td></tr>
-  <tr><td><code>limits.memory</code></td><td><code>memory.max</code></td><td>넘으면 OOM kill</td></tr>
-  <tr><td><code>requests.memory</code></td><td>(스케줄링·eviction 계산에 사용)</td><td>Memory QoS 기능을 켜면 <code>memory.min</code> 등에 반영 【확인 필요: 기능 단계】</td></tr>
-  </tbody></table></div>
-  <p><b>스로틀링 계산 예</b>: 04 README 8절의 관찰(함수 limits 500m 에 10ms 짜리 요청 4개 동시)을 공식으로 보면, 한 주기(100ms) 안에서 쓸 수 있는 CPU 시간은 50ms 다. 동시 요청 4개 × 10ms = 40ms 는 들어가지만, 여러 스레드가 동시에 쓰면 실제 벽시계 시간보다 CPU 시간이 빨리 소진되어 주기 중간에 멈추고, 멈춘 요청은 다음 주기 시작까지 기다린다. 그래서 지연이 주기 길이(100ms) 단위로 튄다. 이 현상은 cgroup 의 <code>cpu.stat</code> 의 <code>nr_throttled</code>, <code>throttled_usec</code> 로 확인한다.</p>
-  <p><b>test-isolation.sh 의 CPU 측정</b>은 같은 <code>cpu.stat</code> 의 <code>usage_usec</code> 를 10초 간격으로 두 번 읽어 평균 밀리코어를 낸다. 무한 루프가 limits 200m 의 120% 미만이면 THROTTLED 로 판정한다.</p>
-  <div class="code-head"><span>poc/03-tenant-isolation/scripts/test-isolation.sh</span><span>98~108행</span></div>
-  <pre><code>cpu_millicores() {
-  local ns="$1" pod="$2" secs="${3:-10}"
-  kubectl -n "$ns" exec "$pod" -- sh -c '
-    read_us() {
-      <span class="k">if</span> [ -f /sys/fs/cgroup/cpu.stat ]; <span class="k">then</span> awk "/^usage_usec/{print \$2}" /sys/fs/cgroup/cpu.stat
-      <span class="k">elif</span> [ -f /sys/fs/cgroup/cpuacct/cpuacct.usage ]; <span class="k">then</span> echo $(( $(cat /sys/fs/cgroup/cpuacct/cpuacct.usage) / 1000 ))
-      <span class="k">else</span> echo $(( $(cat /sys/fs/cgroup/cpu,cpuacct/cpuacct.usage) / 1000 )); <span class="k">fi</span>
-    }
-    a=$(read_us); sleep '"$secs"'; b=$(read_us)
-    echo $(( (b - a) / '"$secs"' / 1000 ))'
-}</code></pre>
-  <ul>
-    <li>컨테이너 안의 <code>/sys/fs/cgroup</code> 는 자기 cgroup 이다. 그래서 metrics-server 없이도 "이 컨테이너가 실제로 쓴 CPU 시간" 을 읽는다.</li>
-    <li>cgroup v2 는 <code>cpu.stat</code> 의 마이크로초, v1 은 <code>cpuacct.usage</code> 의 나노초(÷1000 으로 맞춤).</li>
-    <li>(b−a) 마이크로초 ÷ 초 ÷ 1000 = 초당 밀리초 = 밀리코어.</li>
-  </ul>
-  <p><b>Burstable 의 oom_score_adj</b>: 대략 <code>1000 − (1000 × 메모리 requests ÷ 노드 메모리 용량)</code> 을 2~999 범위로 자른다. requests 를 작게 적을수록 먼저 죽는다 【확인 필요: 정확한 식은 kubelet 버전별】.</p>
-</div>
-
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>05 의 ksvc 템플릿과 컨트롤 플레인 Deployment 는 <b>메모리 limits 만 적고 CPU limits 는 비웠다</b>. 04 README 8절의 결론 "함수 limits 는 메모리는 꼭, CPU limit 은 신중히" 를 따른 것이다. 다만 테넌트 namespace 에서는 LimitRange 가 CPU limits 200m 을 채우므로, 테넌트 함수에는 결국 CPU limit 이 걸린다. 이 상호작용을 기억해 둔다.</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>CPU</b>: 에러 없이 지연만 늘어난다. p95 가 100ms 근처에 몰리면 CFS 스로틀링을 의심한다. 볼 곳: 컨테이너 안 <code>cat /sys/fs/cgroup/cpu.stat</code> 의 <code>nr_throttled</code>. <b>메모리</b>: <code>kubectl get pod</code> 의 RESTARTS 증가, <code>kubectl describe pod</code> 의 <code>Last State: Terminated, Reason: OOMKilled, Exit Code: 137</code>. 고치는 법: 메모리 limits 를 실제 사용량에 맞게 올리거나 코드를 고친다. CPU 는 limits 를 올리거나 없앤다(대신 Quota 계산은 LimitRange 기본값으로 이어진다).</p></aside>
-<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>함수 파드는 Burstable(requests 작게, 메모리 limits)로 둔다. Guaranteed 는 예측 가능성이 가장 높지만 requests = limits 라서 노드에 들어가는 파드 수가 줄고, scale-to-zero 함수처럼 짧게 튀는 부하에는 낭비가 크다. 04 결정 표의 빌드 Job 은 "requests 작게, limits 크게"(짧고 굵게)를 택했고 Guaranteed 는 대안으로만 적었다.</p></aside>
-<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/">Resource Management for Pods and Containers</a> · <a href="https://kubernetes.io/docs/concepts/workloads/pods/pod-qos/">Pod Quality of Service Classes</a> · <a href="https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/">Node-pressure Eviction</a> · <a href="https://kubernetes.io/docs/concepts/architecture/cgroups/">About cgroup v2</a></p></aside>
 
 <!-- ============================================================ -->
 <h2 id="rbac">RBAC (5겹)</h2>
 
 <div class="tier" data-tier="1">
   <h3>"누가, 어디서, 무엇을, 어떻게" 의 허용 목록</h3>
-  <p><b>RBAC(Role-Based Access Control)</b> 는 API 서버의 인가 단계(그림 3-4 의 ②)에서 "이 사용자가 이 namespace 의 이 리소스에 이 동작(verb)을 해도 되나" 를 판단한다. 규칙은 <b>허용만</b> 있다. 아무 규칙에도 걸리지 않으면 거부(403)다. 그래서 "최소 권한(least privilege)" 은 "필요한 것만 하나씩 적는다" 로 자연스럽게 구현된다.</p>
+  <p>지금까지의 1·2·3겹은 "어떤 파드를 받아 줄까" 였고, 5겹은 "누가 요청할 수 있나" 다(4겹 NetworkPolicy 는 <a href="ch04-network.html">04장</a>). <b>RBAC(Role-Based Access Control, 역할 기반 접근 제어)</b> 는 API 서버의 인가 단계(그림 3-4 의 ②)에서 "이 사용자가 이 namespace 의 이 리소스에 이 동작(verb)을 해도 되나" 를 판단한다. 규칙은 <b>허용만</b> 있다. 아무 규칙에도 걸리지 않으면 거부(403)다. 그래서 "최소 권한(least privilege)" 은 "필요한 것만 하나씩 적는다" 로 자연스럽게 구현된다.</p>
   <p>오브젝트는 네 가지다. 권한 목록인 <b>Role</b>(namespace 안)과 <b>ClusterRole</b>(namespace 없음), 그리고 그 목록을 누구에게 줄지 정하는 <b>RoleBinding</b>(namespace 안에서 효력)과 <b>ClusterRoleBinding</b>(클러스터 전체에서 효력).</p>
   <figure>
     <div class="fig scroll">
@@ -1182,13 +1190,14 @@ flowchart TD
   <div class="table-wrap"><table>
   <thead><tr><th>verb</th><th>HTTP</th><th>메모</th></tr></thead>
   <tbody>
-  <tr><td><code>get</code>, <code>list</code>, <code>watch</code></td><td>GET</td><td>list 를 주면 그 리소스 전체가 보인다(Secret 이면 내용까지). 컨트롤 플레인이 namespaces 에 get 만 받은 이유</td></tr>
+  <tr><td><code>get</code>, <code>list</code>, <code>watch</code></td><td>GET</td><td>list 를 주면 그 리소스 전체가 보인다(Secret = 비밀번호·토큰 같은 비밀값을 담는 객체라면 내용까지). 컨트롤 플레인이 namespaces 에 get 만 받은 이유</td></tr>
   <tr><td><code>create</code></td><td>POST</td><td></td></tr>
-  <tr><td><code>update</code>, <code>patch</code></td><td>PUT, PATCH</td><td>server-side apply 는 PATCH 다(05 ksvc 배포)</td></tr>
+  <tr><td><code>update</code>, <code>patch</code></td><td>PUT, PATCH</td><td>server-side apply(SSA, "내가 적은 필드만 이 값으로" 를 API 서버가 필드 주인별로 합쳐 주는 apply 방식, <a href="ch07-control-plane.html">07장</a>)는 PATCH 다(05 ksvc 배포)</td></tr>
   <tr><td><code>delete</code>, <code>deletecollection</code></td><td>DELETE</td><td></td></tr>
   <tr><td><code>bind</code>, <code>escalate</code></td><td>(특수)</td><td>자기에게 없는 권한을 담은 Role 을 만들거나 바인딩하려면 필요</td></tr>
   <tr><td><code>impersonate</code></td><td>(특수)</td><td>users, groups, serviceaccounts 에 대해 "그 사람인 척"</td></tr>
   </tbody></table></div>
+  <p>아래 파일 주석의 "MCP 도구" 는 05 의 AI 운영 에이전트다. MCP(Model Context Protocol)는 AI 모델이 외부 도구를 부르는 규약이고, 05 는 그 규약으로 scale·rollback 같은 도구를 내는 서버를 둔다(<a href="ch07-control-plane.html">07장</a>).</p>
   <div class="code-head"><span>poc/03-tenant-isolation/charts/tenant/templates/rbac.yaml</span><span>전체</span></div>
   <pre><code><span class="c"># 1) 봇 계정: CI·배포 에이전트(05 단계 MCP 도구)가 이 계정으로 kubectl 을 친다</span>
 <span class="k">apiVersion</span>: v1
@@ -1250,11 +1259,13 @@ flowchart TD
 <div class="tier" data-tier="3">
   <h3>세부: 집계, 권한 상승 방지, impersonation, 점검 명령</h3>
   <h4>집계(aggregation)</h4>
-  <p>ClusterRole 에 <code>aggregationRule.clusterRoleSelectors</code> 를 두면, 그 라벨을 가진 다른 ClusterRole 들의 규칙을 컨트롤러가 자동으로 합쳐 넣는다. 기본 사용자용 ClusterRole <code>admin</code>, <code>edit</code>, <code>view</code> 가 이 방식이다. 예를 들어 Knative 가 설치되면 <code>rbac.authorization.k8s.io/aggregate-to-edit: "true"</code> 라벨이 붙은 ClusterRole 로 ksvc 권한이 edit 에 더해진다 【확인 필요: Knative 버전별 집계 라벨 제공 여부】. 테넌트에게 기본 <code>edit</code> 를 RoleBinding 으로 주면 편하지만, 집계 때문에 나중에 설치한 CRD 권한까지 따라 들어온다는 점이 최소 권한과 충돌한다. PoC 는 그래서 직접 쓴 Role 을 쓴다.</p>
+  <p>ClusterRole 에 <code>aggregationRule.clusterRoleSelectors</code> 를 두면, 그 라벨을 가진 다른 ClusterRole 들의 규칙을 컨트롤러가 자동으로 합쳐 넣는다. 기본 사용자용 ClusterRole <code>admin</code>, <code>edit</code>, <code>view</code> 가 이 방식이다. 예를 들어 Knative Serving 1.23 은 <code>knative-serving-namespaced-admin / -edit / -view</code> ClusterRole 을 각각 <code>rbac.authorization.k8s.io/aggregate-to-admin / -edit / -view: "true"</code> 라벨과 함께 설치해서, 기본 edit 를 가진 사람이 자동으로 ksvc 의 create·update·patch·delete 까지 갖게 된다. 테넌트에게 기본 <code>edit</code> 를 RoleBinding 으로 주면 편하지만, 집계 때문에 나중에 설치한 CRD 권한까지 따라 들어온다는 점이 최소 권한과 충돌한다. PoC 는 그래서 직접 쓴 Role 을 쓴다.</p>
   <h4>권한 상승 방지</h4>
   <p>RBAC API 는 "자기가 가진 것보다 큰 권한을 담은 Role 을 만들거나 바인딩하는 것" 을 막는다. 예외는 대상 Role 에 대해 <code>escalate</code>(Role 생성·수정) 또는 <code>bind</code>(바인딩) verb 를 가진 경우다. 바인딩의 <code>roleRef</code> 는 만든 뒤 바꿀 수 없고, 바꾸려면 지우고 다시 만든다.</p>
+  <h4>기본 ClusterRole 과 내장 그룹</h4>
+  <p>클러스터에는 처음부터 <code>cluster-admin</code>(전부), <code>admin</code>(namespace 안 전부 + Role·RoleBinding 관리), <code>edit</code>(읽기·쓰기, Role·RoleBinding 제외), <code>view</code>(읽기, Secret 제외)와 <code>system:</code> 접두사의 부품용 ClusterRole 이 있고, API 서버가 기동할 때마다 빠진 권한을 되살린다(<code>rbac.authorization.kubernetes.io/autoupdate: "true"</code> 주석). 그룹도 내장된 것이 있다. 인증된 모든 요청은 <code>system:authenticated</code>, SA 는 <code>system:serviceaccounts</code> 와 <code>system:serviceaccounts:&lt;ns&gt;</code>, 익명은 <code>system:unauthenticated</code>. 그래서 "<code>system:serviceaccounts</code> 그룹에 view 를 준다" 같은 바인딩은 모든 테넌트의 SA 에 한꺼번에 권한을 주는 실수가 된다. 규칙에는 리소스 대신 <code>nonResourceURLs</code>(<code>/healthz</code>, <code>/metrics</code> 같은 경로)를 적을 수도 있다.</p>
   <h4>impersonation 과 <code>kubectl auth can-i</code></h4>
-  <p>관리자는 요청 헤더 <code>Impersonate-User</code>, <code>Impersonate-Group</code> 으로 다른 사용자인 척 요청할 수 있다. kubectl 의 <code>--as</code>, <code>--as-group</code> 이 이 헤더를 붙인다. 인가는 먼저 "요청자가 impersonate 권한이 있나" 를 보고, 그다음 "흉내 낸 사용자가 그 동작을 할 수 있나" 를 본다. <code>kubectl auth can-i</code> 는 SelfSubjectAccessReview API 로 실제 동작 없이 yes/no 만 받는다. 흉내 낸 ServiceAccount 는 <code>--as=system:serviceaccount:&lt;ns&gt;:&lt;이름&gt;</code> 이다.</p>
+  <p>관리자는 요청 헤더 <code>Impersonate-User</code>, <code>Impersonate-Group</code> 으로 다른 사용자인 척 요청할 수 있다. kubectl 의 <code>--as</code>, <code>--as-group</code> 이 이 헤더를 붙인다. 인가는 먼저 "요청자가 impersonate 권한이 있나" 를 보고, 그다음 "흉내 낸 사용자가 그 동작을 할 수 있나" 를 본다. <code>kubectl auth can-i</code> 는 SelfSubjectAccessReview API("내가 이걸 할 수 있나" 만 묻는 읽기 전용 API)로 실제 동작 없이 yes/no 만 받는다. 흉내 낸 ServiceAccount 는 <code>--as=system:serviceaccount:&lt;ns&gt;:&lt;이름&gt;</code> 이다.</p>
   <div class="code-head"><span>poc/03-tenant-isolation/scripts/test-isolation.sh</span><span>161~175행</span></div>
   <pre><code>can() { kubectl auth can-i "$@" 2&gt;/dev/null | head -1; }
 
@@ -1383,8 +1394,8 @@ test_rbac() {
   <span class="k">확인</span>: kubectl auth can-i --list --as=system:serviceaccount:ns:이름 -n 대상</code></pre>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>RBAC 는 세 곳에 있다. ① 테넌트 차트 <code>charts/tenant/templates/rbac.yaml</code>: 사람 그룹과 deployer SA. ② 05 <code>k8s/platform/control-plane/rbac.yaml</code>, <code>tenant-a.yaml</code>: 컨트롤 플레인 SA 가 faas-build 에 빌드 Job, 테넌트 ns 에 ksvc. ③ 05 <code>k8s/platform/ops-agent/rbac.yaml</code>: AI 운영 에이전트 SA 가 tenant-a 에서 읽기와 ksvc patch 만. 05 README 1.6절의 "5층 가드레일 중 진짜 벽" 이 ③ 이다. ops-agent 파일 주석이 deployer 를 재사용하지 않은 이유를 적어 두었다: deployer 는 delete 까지 되고 Knative 권한은 없어서 "넓고 동시에 모자라다", 그리고 사람·CI 용과 AI 용 계정을 나누면 감사 로그에서 누가 했는지 갈린다.</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: RoleBinding 을 지우면 (ANALYSIS B9, B11)</p><p><b>증상</b>: 05 배포가 BUILDING 까지는 가고(빌드 권한은 faas-build 쪽이라 살아 있음), 빌드가 끝난 뒤 ksvc 를 apply 하는 순간 실패한다. ops-agent 에서 patch 를 빼면 MCP scale 이 파이썬 가드레일은 통과하고 API 서버에서 막힌다. <b>볼 곳</b>: 컨트롤 플레인 로그의 AUDIT 줄, 에러 문구 <code>services.serving.knative.dev "hello" is forbidden: User "system:serviceaccount:faas-system:control-plane" cannot patch resource "services" in API group "serving.knative.dev" in the namespace "tenant-a"</code>. 미리 점검: <code>kubectl auth can-i patch services.serving.knative.dev -n tenant-a --as=system:serviceaccount:faas-system:control-plane</code>. <b>고치는 법</b>: Git 에서 RoleBinding 을 되살려 push (platform-05 가 selfHeal).</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>RBAC 는 세 곳에 있다. ① 테넌트 차트 <code>charts/tenant/templates/rbac.yaml</code>: 사람 그룹과 deployer SA. ② 05 <code>k8s/platform/control-plane/rbac.yaml</code>, <code>tenant-a.yaml</code>: 컨트롤 플레인 SA 가 faas-build 에 빌드 Job, 테넌트 ns 에 ksvc. ③ 05 <code>k8s/platform/ops-agent/rbac.yaml</code>: AI 운영 에이전트(앞에서 본 MCP 서버)의 SA 가 tenant-a 에서 읽기와 ksvc patch 만. 05 README 1.6절의 "5층 가드레일 중 진짜 벽" 이 ③ 이다. ops-agent 파일 주석이 deployer 를 재사용하지 않은 이유를 적어 두었다: deployer 는 delete 까지 되고 Knative 권한은 없어서 "넓고 동시에 모자라다", 그리고 사람·CI 용과 AI 용 계정을 나누면 감사 로그에서 누가 했는지 갈린다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: RoleBinding 을 지우면 (ANALYSIS B9, B11)</p><p><b>증상</b>: 05 배포가 BUILDING 까지는 가고(빌드 권한은 faas-build 쪽이라 살아 있음), 빌드가 끝난 뒤 ksvc 를 apply 하는 순간 실패한다. ops-agent 에서 patch 를 빼면 MCP scale 이 파이썬 가드레일은 통과하고 API 서버에서 막힌다. <b>볼 곳</b>: 컨트롤 플레인 로그의 AUDIT 줄(누가 무엇을 시도했고 결과가 무엇인지 남기는 감사 기록 줄), 에러 문구 <code>services.serving.knative.dev "hello" is forbidden: User "system:serviceaccount:faas-system:control-plane" cannot patch resource "services" in API group "serving.knative.dev" in the namespace "tenant-a"</code>. 미리 점검: <code>kubectl auth can-i patch services.serving.knative.dev -n tenant-a --as=system:serviceaccount:faas-system:control-plane</code>. <b>고치는 법</b>: Git 에서 RoleBinding 을 되살려 push (platform-05 가 selfHeal).</p></aside>
 <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>테넌트용으로 기본 ClusterRole <code>edit</code> 를 RoleBinding 하는 방법은 한 줄이지만, edit 는 secrets 읽기와 집계로 들어오는 CRD 권한을 포함한다. 그래서 필요한 것만 적은 Role 을 택했다. 컨트롤 플레인은 ClusterRoleBinding 으로 ksvc 권한을 클러스터 전체에 주면 테넌트 추가 때 손댈 곳이 없지만, 코드 버그 하나로 kube-system 에 함수를 만들 수 있게 된다. "모양은 ClusterRole, 문은 RoleBinding" 이 절충이다. 다음 단계로 이 RoleBinding 을 tenant 차트에 넣으면 테넌트 추가 때 손댈 곳이 없어진다(05 tenant-a.yaml 주석의 셀프 연습).</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/reference/access-authn-authz/rbac/">Using RBAC Authorization</a> · <a href="https://kubernetes.io/docs/concepts/security/rbac-good-practices/">RBAC Good Practices</a> · <a href="https://kubernetes.io/docs/reference/access-authn-authz/authentication/#user-impersonation">User impersonation</a> · <a href="https://kubernetes.io/docs/reference/kubectl/generated/kubectl_auth/kubectl_auth_can-i/">kubectl auth can-i</a></p></aside>
 
@@ -1393,8 +1404,8 @@ test_rbac() {
 
 <div class="tier" data-tier="1">
   <h3>프로그램용 신분증</h3>
-  <p><b>ServiceAccount(SA)</b> 는 사람이 아니라 <b>프로그램</b>의 신분이다. 사람 사용자와 달리 쿠버네티스 안에 객체로 저장되고 namespace 에 속한다. 파드는 <code>spec.serviceAccountName</code> 의 SA 로 API 서버에 말하고, 밖의 프로그램(우리 MCP 서버)도 SA 의 토큰을 받아 쓸 수 있다. RBAC 바인딩의 subjects 에 SA 를 적어 권한을 준다.</p>
-  <p>토큰은 <b>짧게 살고 대상이 정해진</b> JWT 다. 쿠버네티스 1.24 부터는 SA 를 만들어도 영구 토큰 Secret 이 자동으로 생기지 않는다. 대신 <b>TokenRequest API</b> 로 필요할 때 유효 시간이 있는 토큰을 받는다.</p>
+  <p>RBAC 의 subjects 에 여러 번 나온 ServiceAccount 가 무엇이고 그 토큰이 어떻게 검증되는지가 이 절이다. <b>ServiceAccount(SA)</b> 는 사람이 아니라 <b>프로그램</b>의 신분이다. 사람 사용자와 달리 쿠버네티스 안에 객체로 저장되고 namespace 에 속한다. 파드는 <code>spec.serviceAccountName</code> 의 SA 로 API 서버에 말하고, 밖의 프로그램(우리 MCP 서버)도 SA 의 토큰을 받아 쓸 수 있다. RBAC 바인딩의 subjects 에 SA 를 적어 권한을 준다.</p>
+  <p>토큰은 <b>짧게 살고 대상이 정해진</b> JWT(JSON Web Token, 발급자가 서명한 문자열 토큰. 안에 "누구·언제까지·누구에게" 같은 주장(claim)이 들어 있다)다. 쿠버네티스 1.24 부터는 SA 를 만들어도 영구 토큰 Secret 이 자동으로 생기지 않는다. 대신 <b>TokenRequest API</b> 로 필요할 때 유효 시간이 있는 토큰을 받는다.</p>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 400" role="img" aria-labelledby="tok-t">
@@ -1418,11 +1429,11 @@ test_rbac() {
 
         <rect x="520" y="20" width="420" height="360" rx="12" class="d-agent"/>
         <text x="536" y="50" class="d-ttl-s">API 서버가 확인하는 것</text>
-        <text x="536" y="86" class="d-subd">1. 서명이 자기 키로 맞나</text>
-        <text x="536" y="116" class="d-subd">2. exp 가 지나지 않았나</text>
-        <text x="536" y="146" class="d-subd">3. aud 에 자기가 들어 있나</text>
+        <text x="536" y="86" class="d-subd">1. iss 가 자기 것, 서명이 자기 키로 맞나</text>
+        <text x="536" y="116" class="d-subd">2. aud 에 자기가 들어 있나</text>
+        <text x="536" y="146" class="d-subd">3. exp·nbf 기준으로 지금 유효한가</text>
         <text x="536" y="176" class="d-subd">4. SA 가 아직 있고 uid 가 같나</text>
-        <text x="536" y="206" class="d-subd">5. 묶인 파드가 아직 있나</text>
+        <text x="536" y="206" class="d-subd">5. 묶인 파드가 있고 uid 가 같나</text>
         <text x="536" y="246" class="d-sub">통과 → user = sub,</text>
         <text x="536" y="268" class="d-mono">groups = system:serviceaccounts,</text>
         <text x="536" y="288" class="d-mono">  system:serviceaccounts:tenant-a</text>
@@ -1430,14 +1441,14 @@ test_rbac() {
         <path d="M460 200 L516 200" class="d-e-api" marker-end="url(#tok-m-api)"/>
       </svg>
     </div>
-    <figcaption><b>그림 3-12.</b> 바운드(bound) SA 토큰. 왼쪽은 토큰 안의 주장(claim), 오른쪽은 API 서버가 인증 단계에서 확인하는 순서다. SA 를 지우거나 다시 만들면(uid 가 바뀜) 예전 토큰은 만료 전이라도 무효가 된다 【확인 필요: 검증 항목의 정확한 순서】.</figcaption>
+    <figcaption><b>그림 3-12.</b> 바운드(bound) SA 토큰. 왼쪽은 토큰 안의 주장(claim), 오른쪽은 API 서버가 인증 단계에서 확인하는 순서다. SA 를 지우거나 다시 만들면(uid 가 바뀜) 예전 토큰은 만료 전이라도 무효가 된다. 순서는 kube-apiserver 의 SA 인증기 소스(<code>pkg/serviceaccount</code> 의 jwt.go, claims.go) 기준이다.</figcaption>
   </figure>
 </div>
 
 <div class="tier" data-tier="2">
   <h3>두 가지 발급 경로: 파드 안 자동 토큰, 밖으로 꺼내는 토큰</h3>
   <p><b>파드 안</b>: ServiceAccount 어드미션이 파드에 projected 볼륨을 붙이고, kubelet 이 TokenRequest 로 토큰을 받아 <code>/var/run/secrets/kubernetes.io/serviceaccount/token</code> 에 쓴다. 이 토큰은 그 파드에 묶여(bound) 있어서 파드가 지워지면 무효다. kubelet 은 만료가 다가오면(수명의 80% 경과 또는 24시간 경과) 새 토큰으로 갈아 끼운다. 클라이언트 라이브러리는 파일을 다시 읽어야 한다. 컨트롤 플레인 Deployment 의 <code>serviceAccountName: control-plane</code> 이 이 경로다.</p>
-  <p><b>밖으로</b>: <code>kubectl create token &lt;SA&gt; --duration=8h</code> 는 TokenRequest API 를 직접 불러 토큰 문자열을 받는다. 파드에 묶이지 않고, 만료되면 끝이다. 05 의 <code>make-agent-kubeconfig.sh</code> 가 이 경로로 MCP 서버용 kubeconfig 를 만든다.</p>
+  <p><b>밖으로</b>: <code>kubectl create token &lt;SA&gt; --duration=8h</code> 는 TokenRequest API 를 직접 불러 토큰 문자열을 받는다. 파드에 묶이지 않고, 만료되면 끝이다. 05 의 <code>make-agent-kubeconfig.sh</code> 가 이 경로로 MCP 서버용 kubeconfig(kubectl 이나 클라이언트가 어느 클러스터에 어떤 신분으로 접속할지 적은 파일)를 만든다.</p>
   <pre class="mermaid">
 sequenceDiagram
   participant J as Jeong 맥 (관리자 kubeconfig)
@@ -1468,7 +1479,7 @@ TOKEN=$(kubectl -n "$TENANT" create token ops-agent --duration="$DURATION")
 chmod 600 "$OUT"
 echo "확인: kubectl --kubeconfig $OUT auth can-i --list -n $TENANT"</code></pre>
   <ul>
-    <li><code>--minify</code>: 현재 컨텍스트에 해당하는 클러스터 하나만 뽑는다. <code>--raw</code> 가 있어야 CA 인증서 데이터가 가려지지 않고 나온다.</li>
+    <li><code>--minify</code>: 현재 컨텍스트에 해당하는 클러스터 하나만 뽑는다. <code>--raw</code> 가 있어야 CA(인증 기관) 인증서, 즉 API 서버의 인증서를 믿을 근거가 가려지지 않고 나온다.</li>
     <li>관리자 인증서는 이 파일에 들어가지 않는다. MCP 서버는 ops-agent 의 권한만 가진다.</li>
     <li>8시간이 지나면 MCP 도구는 401 을 받는다. 다시 발급하려면 스크립트를 다시 돌린다.</li>
     <li>마지막 줄의 <code>auth can-i --list</code> 는 이 토큰 신분으로 할 수 있는 것 전부를 나열해 Role 과 대조하게 한다.</li>
@@ -1478,26 +1489,28 @@ echo "확인: kubectl --kubeconfig $OUT auth can-i --list -n $TENANT"</code></pr
 <div class="tier" data-tier="3">
   <h3>세부: audience, 최대 수명, 옛 Secret 토큰</h3>
   <ul>
-    <li><b>audience</b>: TokenRequest 에 <code>audiences</code> 를 주면 토큰의 aud 가 그 값이 된다. 다른 서비스(예: Vault)에 보여 줄 토큰을 API 서버용과 분리할 수 있다. API 서버는 자기 audience(<code>--api-audiences</code>, 기본은 발급자)가 없는 토큰을 거절한다. <code>kubectl create token --audience=...</code> 로 지정한다.</li>
-    <li><b>수명</b>: <code>kubectl create token</code> 의 기본 수명은 1시간이고, API 서버의 <code>--service-account-max-token-expiration</code> 이 최대값을 자를 수 있다 【확인 필요: kind 기본 설정의 최대값】. 파드 projected 토큰의 <code>expirationSeconds</code> 기본은 3607초이며, 하위 호환을 위해 API 서버가 실제로는 더 길게 발급하고 사용 시 경고를 남기는 설정이 있다 【확인 필요: 확장 만료 동작의 현재 기본값】.</li>
+    <li><b>audience</b>: TokenRequest 에 <code>audiences</code> 를 주면 토큰의 aud 가 그 값이 된다. 다른 서비스(예: 비밀 저장소 Vault)에 보여 줄 토큰을 API 서버용과 분리할 수 있다. API 서버는 자기 audience(<code>--api-audiences</code>, 기본은 발급자)가 없는 토큰을 거절한다. <code>kubectl create token --audience=...</code> 로 지정한다.</li>
+    <li><b>수명</b>: <code>kubectl create token</code> 의 기본 수명은 1시간(TokenRequest 의 <code>expirationSeconds</code> 기본 3600)이고, API 서버 플래그 <code>--service-account-max-token-expiration</code> 이 있으면 그 값으로 잘라 발급한다. kind(kubeadm 기본)는 이 플래그를 두지 않으므로 8h 요청이 그대로 8h 로 나온다. 파드 projected 토큰의 <code>expirationSeconds</code> 기본은 3607초인데, <code>--service-account-extend-token-expiration</code>(기본 true) 때문에 어드미션이 파드에 넣어 준 토큰은 실제로는 최대 1년짜리로 발급되고, 원래 만료(warnafter)를 넘겨 쓰면 감사 로그 주석 <code>authentication.k8s.io/stale-token</code> 과 지표로 알려 준다. 옛 토큰 방식에서 넘어오는 동안 파일을 다시 읽지 않는 클라이언트가 끊기지 않게 한 장치다. <code>kubectl create token</code> 으로 받는 토큰에는 이 연장이 적용되지 않는다.</li>
     <li><b>옛 방식</b>: <code>type: kubernetes.io/service-account-token</code> Secret 을 직접 만들면 만료 없는 토큰이 생긴다. 공식 문서는 피하라고 한다. 1.24 이후 자동 생성은 멈췄고, 오래 안 쓴 옛 토큰을 정리하는 기능도 들어왔다.</li>
     <li><b>automountServiceAccountToken: false</b>: API 를 부를 일이 없는 파드(함수 파드)는 토큰을 아예 마운트하지 않는 것이 최소 권한이다. PoC 의 ksvc·hello-fn 은 이 설정을 쓰지 않았다(default SA 는 권한이 거의 없어 실해는 적다).</li>
   </ul>
   <pre class="pseudo"><code><span class="k">SA 토큰 인증</span>(Bearer):
   jwt = 파싱(Bearer)
-  <span class="k">만약</span> <span class="k">아니</span> 서명_검증(jwt, SA 공개키들[jwt.kid]): <span class="k">반환</span> 다음 인증기
-  <span class="k">만약</span> 지금 &gt; jwt.exp <span class="k">또는</span> 지금 &lt; jwt.nbf: <span class="k">반환</span> 401
+  <span class="k">만약</span> jwt.iss 가 내 발급자가 아님: <span class="k">반환</span> 다음 인증기            <span class="c">// 서명을 보기 전에 접두사로 거름</span>
+  <span class="k">만약</span> <span class="k">아니</span> 서명_검증(jwt, SA 공개키들[jwt.kid]): <span class="k">반환</span> 401
   <span class="k">만약</span> api_audiences ∩ jwt.aud 비어 있음: <span class="k">반환</span> 401
+  <span class="k">만약</span> 지금 &gt; jwt.exp <span class="k">또는</span> 지금 &lt; jwt.nbf: <span class="k">반환</span> 401
   sa = 조회(jwt.namespace, jwt.serviceaccount.name)
   <span class="k">만약</span> sa 없음 <span class="k">또는</span> sa.uid != jwt.serviceaccount.uid: <span class="k">반환</span> 401
-  <span class="k">만약</span> jwt 에 pod 가 있고 그 파드가 없거나 uid 다름: <span class="k">반환</span> 401
+  <span class="k">만약</span> jwt 에 pod(또는 secret, node)가 있고 그 객체가 없거나 uid 다름: <span class="k">반환</span> 401
+  <span class="k">만약</span> 지금 &gt; jwt.warnafter: 감사 주석 authentication.k8s.io/stale-token   <span class="c">// 거절은 안 함</span>
   <span class="k">반환</span> 사용자("system:serviceaccount:" + ns + ":" + 이름,
               그룹 = ["system:serviceaccounts", "system:serviceaccounts:" + ns])</code></pre>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>SA 셋. <code>tenant-a/deployer</code> (03 차트, 사람·CI 용, 지금은 쓰는 프로그램이 없다), <code>faas-system/control-plane</code> (05 Deployment 의 <code>serviceAccountName</code>, 주석: "안 쓰면 default SA 로 떠서 전부 403"), <code>tenant-a/ops-agent</code> (05 MCP 서버, kubeconfig 로 꺼내 씀). ops-agent 는 플랫폼 Application <code>platform-05</code>(default Project)가 tenant-a 에 만든다. 그래서 tenant-a AppProject 의 Role 금지 목록에 걸리지 않는다.</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: MCP 도구가 어느 날 모두 실패한다. <b>볼 곳</b>: 도구 응답의 HTTP 401 (403 이 아니라 401 이면 권한이 아니라 신분 문제). <code>kubectl --kubeconfig ~/.ops-mcp/kubeconfig-tenant-a auth whoami</code> 【확인 필요: kubectl 버전에 따른 auth whoami 지원】. <b>고치는 법</b>: 토큰 만료(8h)이므로 <code>scripts/make-agent-kubeconfig.sh</code> 를 다시 돌린다. 클러스터를 다시 만들었다면 서명 키와 SA uid 가 바뀌어 예전 파일은 무조건 무효다.</p></aside>
-<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>05 결정 3. 관리자 kubeconfig 를 에이전트에 주면 프롬프트 한 줄에 클러스터 전체가 걸린다. 영구 Secret 토큰은 유출되면 SA 를 지울 때까지 유효하다. TokenRequest 로 8시간짜리 토큰을 발급하면 유출 피해가 시간으로 묶인다. 더 나아가면 OIDC 로 사람 신분을 붙이거나, 워크로드 아이덴티티(클라우드 IAM 연동)를 쓴다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: MCP 도구가 어느 날 모두 실패한다. <b>볼 곳</b>: 도구 응답의 HTTP 401 (403 이 아니라 401 이면 권한이 아니라 신분 문제). <code>kubectl --kubeconfig ~/.ops-mcp/kubeconfig-tenant-a auth whoami</code>(SelfSubjectReview API, 1.28 부터 GA. 토큰이 만료됐으면 이 명령부터 401 이다). <b>고치는 법</b>: 토큰 만료(8h)이므로 <code>scripts/make-agent-kubeconfig.sh</code> 를 다시 돌린다. 클러스터를 다시 만들었다면 서명 키와 SA uid 가 바뀌어 예전 파일은 무조건 무효다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>05 결정 3. 관리자 kubeconfig 를 에이전트에 주면 프롬프트 한 줄에 클러스터 전체가 걸린다. 영구 Secret 토큰은 유출되면 SA 를 지울 때까지 유효하다. TokenRequest 로 8시간짜리 토큰을 발급하면 유출 피해가 시간으로 묶인다. 더 나아가면 OIDC(OpenID Connect, 외부 로그인 제공자가 사용자 신분을 토큰으로 증명하는 표준)로 사람 신분을 붙이거나, 워크로드 아이덴티티(파드의 SA 토큰을 클라우드 IAM 역할과 연결하는 방식)를 쓴다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/concepts/security/service-accounts/">Service Accounts</a> · <a href="https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/">Configure Service Accounts for Pods</a> · <a href="https://kubernetes.io/docs/reference/kubernetes-api/authentication-resources/token-request-v1/">TokenRequest</a> · <a href="https://kubernetes.io/docs/reference/access-authn-authz/service-accounts-admin/">Managing Service Accounts</a> · <a href="https://kubernetes.io/docs/concepts/storage/projected-volumes/#serviceaccounttoken">Projected volumes: serviceAccountToken</a></p></aside>
 
 <!-- ============================================================ -->
@@ -1505,7 +1518,7 @@ echo "확인: kubectl --kubeconfig $OUT auth can-i --list -n $TENANT"</code></pr
 
 <div class="tier" data-tier="1">
   <h3>배포 경로에 치는 울타리</h3>
-  <p>Argo CD 는 클러스터 관리자 권한으로 매니페스트를 적용한다. 그래서 테넌트가 Argo CD Application 을 쓸 수 있다면, RBAC 로 막아 둔 일도 Argo CD 를 통해 할 수 있게 된다. <b>AppProject</b> 는 Argo CD 안의 울타리다. Application 마다 하나의 Project 에 속하고, Project 가 "어느 저장소에서, 어느 클러스터·namespace 로, 어떤 종류의 리소스까지" 를 정한다. 위반하면 Argo CD 가 sync 전에 거절한다.</p>
+  <p>5겹 RBAC 는 API 서버에 직접 오는 요청을 막는다. 그런데 테넌트의 함수는 Argo CD 가 대신 배포하므로, 이 "우회로" 에도 같은 울타리가 필요하다. Argo CD 는 클러스터 관리자 권한으로 매니페스트를 적용한다. 그래서 테넌트가 Argo CD Application 을 쓸 수 있다면, RBAC 로 막아 둔 일도 Argo CD 를 통해 할 수 있게 된다. <b>AppProject</b> 는 Argo CD 안의 울타리다. Application 마다 하나의 Project 에 속하고, Project 가 "어느 저장소에서, 어느 클러스터·namespace 로, 어떤 종류의 리소스까지" 를 정한다. 위반하면 Argo CD 가 sync(Git 의 내용을 클러스터에 적용하는 동작) 전에 거절한다.</p>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 420" role="img" aria-labelledby="ap-t">
@@ -1573,7 +1586,7 @@ echo "확인: kubectl --kubeconfig $OUT auth can-i --list -n $TENANT"</code></pr
     <dt><code>destinations</code></dt><dd>배포할 수 있는 (클러스터, namespace) 쌍. 여기 없는 곳이면 거절.</dd>
     <dt><code>clusterResourceWhitelist</code> / <code>Blacklist</code></dt><dd>Namespace, ClusterRole 같은 클러스터 범위 리소스 중 허용·금지 목록. 화이트리스트가 비어 있으면 하나도 못 만든다.</dd>
     <dt><code>namespaceResourceWhitelist</code> / <code>Blacklist</code></dt><dd>namespace 안 리소스 종류(group, kind) 허용·금지.</dd>
-    <dt><code>roles</code>, <code>syncWindows</code>, <code>sourceNamespaces</code></dt><dd>Argo CD 사용자 권한(Project 범위 JWT), 배포 가능 시간대, Application 객체를 둘 수 있는 namespace. PoC 는 쓰지 않는다.</dd>
+    <dt><code>roles</code>, <code>syncWindows</code>, <code>sourceNamespaces</code>, <code>orphanedResources</code></dt><dd>Argo CD 사용자 권한(Project 범위 JWT), 배포 가능 시간대, Application 객체를 둘 수 있는 namespace, 그리고 "이 Project 의 목적지 namespace 에 있는데 어느 Application 에도 속하지 않은 리소스" 를 경고로 띄우는 고아 리소스 감시. PoC 는 쓰지 않지만, 마지막 것은 테넌트 namespace 에 kubectl 로 몰래 만든 객체를 찾는 데 쓸 수 있다.</dd>
   </dl>
   <pre class="mermaid">
 flowchart TD
@@ -1621,7 +1634,7 @@ flowchart TD
   <ul>
     <li><code>metadata.namespace: argocd</code>: 이 차트에서 유일하게 테넌트 ns 가 아닌 곳에 만들어지는 객체다. Argo CD 는 자기 namespace 의 AppProject 만 읽는다.</li>
     <li><code>printf … | quote</code>: 설명 문자열을 만들고 따옴표로 감싼다.</li>
-    <li>블랙리스트 방식이라 목록에 없는 종류(Deployment, Service, ConfigMap, ServiceAccount, Secret 등)는 허용된다. CiliumNetworkPolicy 까지 넣은 것은 "표준 NetworkPolicy 만 막고 Cilium 정책으로 우회" 하는 길을 닫으려는 것이다.</li>
+    <li>블랙리스트 방식이라 목록에 없는 종류(Deployment, Service, ConfigMap = 설정값을 키-값으로 담는 객체, ServiceAccount, Secret 등)는 허용된다. CiliumNetworkPolicy(CNP, Cilium 전용 확장 정책)까지 넣은 것은 "표준 NetworkPolicy 만 막고 Cilium 정책으로 우회" 하는 길을 닫으려는 것이다.</li>
   </ul>
 </div>
 
@@ -1629,7 +1642,7 @@ flowchart TD
   <h3>세부: 블랙리스트의 빈틈과 RBAC 와의 관계</h3>
   <ul>
     <li><b>블랙리스트 vs 화이트리스트</b>: 블랙리스트는 새 리소스 종류(예: 새 CRD)가 생기면 자동으로 허용된다. 화이트리스트(<code>namespaceResourceWhitelist</code>)는 반대로 안전하지만 테넌트가 쓸 종류를 미리 다 알아야 한다. hard 멀티테넌시라면 화이트리스트가 맞다.</li>
-    <li><b>빠진 것</b>: PodDisruptionBudget, ServiceAccount, Secret, Knative Service, ResourceQuota 와 겹치는 <code>count/...</code> 우회는 없다. ServiceAccount 를 만들 수 있지만 Role·RoleBinding 을 못 만드니 권한은 생기지 않는다. 다만 PDB 는 노드 drain 을 막는 데 쓰일 수 있다(<a href="ch08-resilience.html">08장</a> B12 참고) 【확인 필요: 테넌트 PDB 를 막을지 정책 결정】.</li>
+    <li><b>빠진 것</b>: PodDisruptionBudget(PDB, 노드를 비울 때 최소 몇 개는 남기라는 약속), ServiceAccount, Secret, Knative Service 는 블랙리스트에 없다. ServiceAccount 를 만들 수 있지만 Role·RoleBinding 을 못 만드니 권한은 생기지 않는다. 다만 PDB 는 노드 drain(파드를 내보내고 노드를 비우는 작업)을 막는 데 쓰일 수 있다(<a href="ch08-resilience.html">08장</a> B12 참고). 테넌트 PDB 를 블랙리스트에 넣을지는 본선 설계에서 정할 결정으로 남아 있다(PoC 에는 테넌트가 PDB 를 만드는 경로가 없다).</li>
     <li><b>Argo CD 는 RBAC 를 대신하지 않는다</b>: AppProject 는 Argo CD 를 거친 배포만 막는다. 테넌트가 kubectl 로 직접 API 서버에 오면 5겹 RBAC 가 막는다. 두 경로를 둘 다 막아야 한다.</li>
     <li><b>default Project</b>: 아무것도 제한하지 않는다. 테넌트가 default Project 의 Application 을 만들 수 있으면 6겹이 통째로 사라진다. 그래서 Application 객체를 만드는 권한(argocd ns 의 RBAC, Argo CD 자체 RBAC)을 테넌트에게 주지 않는다.</li>
   </ul>
@@ -1642,8 +1655,8 @@ flowchart TD
       <span class="k">만약</span> r.namespace != app.dest.namespace <span class="k">그리고</span> 그 ns 가 destinations 에 없음: sync 실패(r)</code></pre>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>테넌트 Application 둘 <code>gitops/tenant-a-hello.yaml</code>, <code>tenant-b-hello.yaml</code> 은 <code>project: tenant-a</code> / <code>tenant-b</code> 로 01 단계 hello-fn 차트를 배포한다. 주석: "CreateNamespace 는 쓰지 않는다. namespace 는 플랫폼(tenants ApplicationSet)이 만든다". 격리 실험 4번 묶음은 <code>scripts/fixtures/cross-tenant-app.yaml</code>(project tenant-a, destination tenant-b)을 붙이고 30초 동안 <code>status.conditions[*].message</code> 에 "not permitted" 가 나오는지 본다.</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: Argo CD UI 에서 Application 이 Unknown 이거나 SyncFailed, 조건에 <code>application destination server 'https://kubernetes.default.svc' and namespace 'tenant-b' do not match any of the allowed destinations in project 'tenant-a'</code> 류의 문구 【확인 필요: Argo CD 버전별 문구】. 리소스 단위 거절은 <code>resource :ResourceQuota is not permitted in project tenant-a</code> 류. <b>볼 곳</b>: <code>kubectl -n argocd get application &lt;이름&gt; -o jsonpath='{.status.conditions}'</code>. <b>고치는 법</b>: 의도된 거절이면 그대로. 테넌트 매니페스트에 울타리 리소스가 섞였다면 빼서 플랫폼 차트로 옮긴다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>테넌트 Application 둘 <code>gitops/tenant-a-hello.yaml</code>, <code>tenant-b-hello.yaml</code> 은 <code>project: tenant-a</code> / <code>tenant-b</code> 로 01 단계 hello-fn 차트를 배포한다. 주석: "CreateNamespace 는 쓰지 않는다. namespace 는 플랫폼(tenants ApplicationSet)이 만든다". 격리 실험 4번 묶음은 <code>scripts/fixtures/cross-tenant-app.yaml</code>(project tenant-a, destination tenant-b)을 붙이고 30초 동안 <code>status.conditions</code> 의 message 에 "not permitted" 가 나오는지 본다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: Argo CD UI 에서 Application 이 Unknown 이거나 SyncFailed, 조건에 <code>application destination server 'https://kubernetes.default.svc' and namespace 'tenant-b' do not match any of the allowed destinations in project 'tenant-a'</code> (Argo CD 소스 <code>util/argo/argo.go</code> 의 문구 그대로). 리소스 단위 거절은 sync 단계에서 <code>resource :ResourceQuota is not permitted in project tenant-a</code>(group:kind 모양이라 core 그룹은 콜론 앞이 빈다), 다른 namespace 로 가는 리소스는 <code>namespace tenant-b is not permitted in project 'tenant-a'</code> 다. <b>볼 곳</b>: <code>kubectl -n argocd get application &lt;이름&gt; -o jsonpath='{.status.conditions}'</code>. <b>고치는 법</b>: 의도된 거절이면 그대로. 테넌트 매니페스트에 울타리 리소스가 섞였다면 빼서 플랫폼 차트로 옮긴다.</p></aside>
 <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>03 README 결정 1 의 (라): 울타리와 함수를 한 Project 에 두면 테넌트가 자기 Quota 를 지울 수 있게 된다. 그래서 Project 를 둘로 나눴다. 대안인 "테넌트별 Argo CD 인스턴스" 는 격리가 강하지만 Argo CD 가 테넌트 수만큼 뜬다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://argo-cd.readthedocs.io/en/stable/user-guide/projects/">Argo CD Projects</a> · <a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#projects">Declarative Setup: Projects</a> · <a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/">Argo CD RBAC</a></p></aside>
 
@@ -1652,7 +1665,7 @@ flowchart TD
 
 <div class="tier" data-tier="1">
   <h3>values 두 장이 템플릿 여섯 장을 거쳐 오브젝트 열한 장이 된다</h3>
-  <p>테넌트 울타리는 Helm 차트 하나(<code>poc/03-tenant-isolation/charts/tenant/</code>)다. 차트의 기본값 <code>values.yaml</code> 위에 테넌트 파일 <code>tenants/tenant-a.yaml</code> 을 덮어쓰면, 템플릿 여섯 장이 테넌트 하나 분량의 오브젝트를 찍어 낸다. Argo CD 는 속으로 <code>helm template</code> 과 같은 렌더링을 해서 그 결과를 클러스터에 적용한다(Helm 릴리스를 만들지 않는다).</p>
+  <p>여섯 겹을 하나씩 봤으니, 이제 그 여섯 장이 실제로 어떻게 한 묶음으로 만들어지는지 본다. 테넌트 울타리는 Helm 차트 하나(<code>poc/03-tenant-isolation/charts/tenant/</code>)다. 차트의 기본값 <code>values.yaml</code> 위에 테넌트 파일 <code>tenants/tenant-a.yaml</code> 을 덮어쓰면, 템플릿 여섯 장이 테넌트 하나 분량의 오브젝트를 찍어 낸다. Argo CD 는 속으로 <code>helm template</code> 과 같은 렌더링을 해서 그 결과를 클러스터에 적용한다(<code>helm install</code> 이 남기는 설치 기록인 Helm 릴리스를 만들지 않는다).</p>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 440" role="img" aria-labelledby="ch-t">
@@ -1750,7 +1763,7 @@ flowchart TD
 <span class="k">argocd</span>:
   <span class="k">namespace</span>: argocd
   <span class="k">repoURL</span>: https://github.com/Pionia5375/Softbank_Study_1</code></pre>
-  <p>Helm 은 values 를 <b>깊은 병합(deep merge)</b> 한다. 테넌트 파일에 <code>quota</code> 만 적으면 <code>limitRange</code> 등은 기본값이 남는다. 다만 리스트는 통째로 교체된다. 테넌트 파일의 <code>allowFromNamespaces</code> 는 기본값 <code>[]</code> 를 대체한다.</p>
+  <p>Helm 의 템플릿 문법 <code>{{ }}</code> 은 Go 언어의 텍스트 템플릿이다. Helm 은 values 를 <b>깊은 병합(deep merge)</b> 한다. 테넌트 파일에 <code>quota</code> 만 적으면 <code>limitRange</code> 등은 기본값이 남는다. 다만 리스트는 통째로 교체된다. 테넌트 파일의 <code>allowFromNamespaces</code> 는 기본값 <code>[]</code> 를 대체한다.</p>
   <h4>templates/ 여섯 장의 Helm 문법</h4>
   <div class="table-wrap"><table>
   <thead><tr><th>문법</th><th>쓰인 곳</th><th>뜻</th></tr></thead>
@@ -1793,7 +1806,7 @@ flowchart TD
   <h3>세부: 렌더링 검증과 함정</h3>
   <ul>
     <li><b>주석 안 중괄호</b>: 템플릿 파일의 YAML 주석(<code>#</code>) 안에 중괄호 두 겹을 쓰면 Helm 이 그것도 해석한다. 주석은 YAML 의 주석일 뿐 Go 템플릿의 주석이 아니다(03 README 4.2절).</li>
-    <li><b>missingkey</b>: Helm 기본은 없는 키를 빈 값으로 렌더링한다. 오타(<code>.Values.quta.pods</code>)가 조용히 빈 값이 되어 API 서버의 스키마 검증에서야 터진다. ApplicationSet 쪽은 <code>missingkey=error</code> 로 이 문제를 막았지만 차트 쪽은 기본 동작이다.</li>
+    <li><b>missingkey</b>: Helm 기본은 없는 키를 빈 값으로 렌더링한다. 오타(<code>.Values.quta.pods</code>)가 조용히 빈 값이 되어 API 서버의 스키마 검증에서야 터진다. ApplicationSet 쪽은 <code>missingkey=error</code> 로 이 문제를 막았지만 차트 쪽은 기본 동작이다. 로컬에서는 <code>helm template --strict</code> 가 같은 검사를 한다.</li>
     <li><b>Namespace 를 차트가 만든다</b>: Argo CD Application 의 destination namespace 가 tenant-a 이고, 차트 안에 Namespace 객체가 있다. Argo CD 는 종류별 적용 순서(Namespace 를 먼저)를 갖고 있어서 같은 sync 안에서 namespace 를 먼저 만든다. 그래서 <code>CreateNamespace=true</code> 옵션이 필요 없다.</li>
     <li><b>정답 확인 명령</b> (README 4.6절): <code>helm template tenant-a charts/tenant -f tenants/tenant-a.yaml | grep '^kind:' | sort | uniq -c</code>, 이어서 <code>kubectl apply --dry-run=server</code> 로 API 서버 검사까지.</li>
   </ul>
@@ -1808,7 +1821,7 @@ flowchart TD
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>테넌트 정의는 "기본값과 다른 것만" 적는다는 원칙이다(tenant-a.yaml 주석). tenant-a 는 quota 를 기본값과 같은 값으로 명시하고 network 를 추가했다. tenant-b 는 quota 만 절반으로. 같은 파일이 ApplicationSet 의 입력이기도 하다(다음 절).</p></aside>
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: 테넌트 파일에서 <code>name</code> 을 빠뜨리면 ApplicationSet 쪽에서 먼저 <code>missingkey=error</code> 로 Application 생성이 실패하고, 차트만 렌더링하면 <code>values 에 name 이 필요하다</code> 로 실패한다. <b>볼 곳</b>: <code>kubectl -n argocd describe applicationset tenants</code> 의 Conditions, 또는 Application 의 ComparisonError. <b>고치는 법</b>: 파일에 name 을 넣는다. 로컬에서 <code>helm template</code> 으로 먼저 돌려 보는 습관.</p></aside>
-<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>Helm 차트를 고른 이유는 01 단계와 같은 도구로 "틀 + 값" 을 나누기 위해서다. 대안 Kustomize 는 테넌트마다 overlay 폴더가 필요해 "파일 하나 = 테넌트 하나" 가 깨진다. 평범한 YAML 복사는 테넌트 10개만 넘어도 수정이 어긋난다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>Helm 차트를 고른 이유는 01 단계와 같은 도구로 "틀 + 값" 을 나누기 위해서다. 대안 Kustomize(기본 YAML 위에 겹(overlay) 폴더로 차이만 덧씌우는 도구)는 테넌트마다 overlay 폴더가 필요해 "파일 하나 = 테넌트 하나" 가 깨진다. 평범한 YAML 복사는 테넌트 10개만 넘어도 수정이 어긋난다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://helm.sh/docs/chart_template_guide/">Helm Chart Template Guide</a> · <a href="https://helm.sh/docs/howto/charts_tips_and_tricks/">Charts Tips and Tricks (required, default)</a> · <a href="https://helm.sh/docs/chart_template_guide/control_structures/">Flow Control (if, range)</a> · <a href="https://argo-cd.readthedocs.io/en/stable/user-guide/helm/">Argo CD Helm</a></p></aside>
 
 <!-- ============================================================ -->
@@ -1816,7 +1829,7 @@ flowchart TD
 
 <div class="tier" data-tier="1">
   <h3>파일 하나 추가 = 테넌트 하나, 파일 삭제 = 테넌트 삭제</h3>
-  <p><b>ApplicationSet</b> 은 Application 을 찍어 내는 틀이다. <b>generator</b>(목록)가 항목을 만들고, 항목마다 <b>template</b> 에 값을 끼워 Application 을 하나씩 만든다. PoC 는 <b>Git files generator</b> 를 쓴다. Git 의 <code>poc/03-tenant-isolation/tenants/*.yaml</code> 에 맞는 파일 하나가 항목 하나이고, 파일 안의 키(<code>name</code>)가 템플릿 변수가 된다. 같은 파일이 차트 values 로도 쓰이므로 "파일 한 장 = 테넌트 정의 전부" 다.</p>
+  <p>차트는 "한 테넌트 분량" 을 만든다. 테넌트가 열 개면 Application 도 열 개가 필요한데, 그걸 손으로 쓰지 않게 해 주는 것이 이 절이다. <b>ApplicationSet</b> 은 Application 을 찍어 내는 틀이다. <b>generator</b>(목록)가 항목을 만들고, 항목마다 <b>template</b> 에 값을 끼워 Application 을 하나씩 만든다. PoC 는 <b>Git files generator</b> 를 쓴다. Git 의 <code>poc/03-tenant-isolation/tenants/*.yaml</code> 에 맞는 파일 하나가 항목 하나이고, 파일 안의 키(<code>name</code>)가 템플릿 변수가 된다. 같은 파일이 차트 values 로도 쓰이므로 "파일 한 장 = 테넌트 정의 전부" 다.</p>
   <pre class="mermaid">
 sequenceDiagram
   participant D as 운영자
@@ -1881,9 +1894,21 @@ sequenceDiagram
     <li><code>goTemplate: true</code> + <code>missingkey=error</code>: 파일에 <code>name</code> 이 없으면 빈 이름 Application 대신 에러.</li>
     <li><code>{{ .path.filename }}</code>: Git files generator 가 넣어 주는 변수(파일 이름). <code>.path.path</code> 는 폴더 경로, <code>.path.basename</code> 은 폴더 이름이다. 파일 내용의 키는 <code>.name</code> 처럼 바로 쓴다.</li>
     <li><code>valueFiles: '../../tenants/...'</code>: 차트 폴더 기준 상대 경로. 같은 저장소 안이면 차트 밖 파일도 values 로 쓸 수 있다.</li>
-    <li><code>finalizers: resources-finalizer.argocd.argoproj.io</code>: Application 이 지워질 때 그것이 만든 리소스도 지운다(cascade). 이게 오프보딩의 핵심이다.</li>
+    <li><code>finalizers: resources-finalizer.argocd.argoproj.io</code>: finalizer 는 객체를 지우기 전에 먼저 처리할 일을 적어 두는 목록으로, 목록이 빌 때까지 객체가 실제로 사라지지 않는다. 이 finalizer 는 Application 이 지워질 때 그것이 만든 리소스를 먼저 지운다(cascade, 연쇄 삭제). 이게 오프보딩의 핵심이다.</li>
+    <li><code>automated: prune: true, selfHeal: true</code>: 찍혀 나온 Application 의 동기화 정책. prune 은 Git 에서 사라진 객체를 클러스터에서도 지우고, selfHeal 은 누가 클러스터를 손으로 바꾸면 Git 상태로 되돌린다.</li>
     <li><code>applicationsSync: sync</code>: ApplicationSet 이 Application 생성·수정·삭제 모두 한다. 다른 값은 <code>create-only</code>, <code>create-update</code>(삭제 안 함), <code>create-delete</code>(수정 안 함).</li>
   </ul>
+  <p>generator 는 Git files 말고도 여럿이다. 어떤 "목록" 에서 Application 을 찍어 낼지가 다르다.</p>
+  <div class="table-wrap"><table>
+  <thead><tr><th>generator</th><th>목록의 출처</th><th>본선에서 쓸 때</th></tr></thead>
+  <tbody>
+  <tr><td><code>list</code></td><td>ApplicationSet 안에 직접 적은 항목</td><td>테넌트 2~3개를 빨리 시험할 때. 추가 = 플랫폼 YAML 수정</td></tr>
+  <tr><td><code>git</code> files / directories</td><td>저장소의 파일 또는 폴더</td><td>PoC 의 선택. 테넌트 = 파일, 이력 = git log</td></tr>
+  <tr><td><code>clusters</code></td><td>Argo CD 에 등록된 클러스터</td><td>cluster per tenant 모델(③)로 가서 클러스터마다 같은 플랫폼을 깔 때</td></tr>
+  <tr><td><code>matrix</code> / <code>merge</code></td><td>두 generator 의 곱 또는 병합</td><td>"테넌트 × 클러스터" 처럼 두 축이 생길 때</td></tr>
+  <tr><td><code>scmProvider</code> / <code>pullRequest</code></td><td>GitHub 조직의 레포 목록, 열린 PR</td><td>레포마다·PR 마다 미리보기 환경</td></tr>
+  <tr><td><code>plugin</code></td><td>외부 HTTP 플러그인이 돌려주는 항목</td><td>테넌트 목록이 DB 나 결제 시스템에 있을 때</td></tr>
+  </tbody></table></div>
   <pre class="mermaid">
 stateDiagram-v2
   [*] --> 파일있음: tenants/tenant-c.yaml push
@@ -1905,9 +1930,10 @@ stateDiagram-v2
     <li>ApplicationSet 컨트롤러가 다음 조정 때 generator 결과에서 tenant-c 가 빠진 것을 본다. <code>applicationsSync: sync</code> 이므로 Application tenant-c 를 삭제한다.</li>
     <li>Application 에 finalizer 가 있으므로 Argo CD 가 Application 이 관리하던 리소스(Namespace 포함 11장 또는 10장)를 먼저 지운다.</li>
     <li>Namespace 가 지워지면 Terminating 상태가 되고, namespace 컨트롤러가 그 안의 <b>모든</b> 객체를 지운다. 테넌트 함수(05 가 API 로 만든 ksvc, Knative Revision), Secret, 다른 Application 이 넣은 객체까지 전부다. 이 동안 NamespaceLifecycle 어드미션이 새 객체 생성을 거절한다.</li>
-    <li>AppProject tenant-c 는 argocd namespace 에 있으므로 2번 단계의 리소스 삭제로 따로 지워진다. 남아 있는 Application 이 그 Project 를 쓰고 있으면 Argo CD 는 사용 중인 Project 삭제를 막는다 【확인 필요: AppProject 의 finalizer 동작】.</li>
+    <li>Namespace 가 Terminating 에서 멈추면 대개 안의 어떤 객체에 finalizer 가 남아 있는 것이다(컨트롤러가 죽은 CRD 의 커스텀 리소스가 흔한 원인). <code>kubectl get ns tenant-c -o jsonpath='{.status.conditions}'</code> 의 <code>NamespaceContentRemaining</code> 조건이 무엇이 남았는지 알려 준다.</li>
+    <li>AppProject tenant-c 는 argocd namespace 에 있으므로 2번 단계의 리소스 삭제로 따로 지워진다. "사용 중인 Project 는 지울 수 없다"(<code>project is referenced by N applications</code>)는 검사는 Argo CD API 서버(CLI·UI)에만 있고, 애플리케이션 컨트롤러가 쿠버네티스 API 로 직접 지우는 이 경로에는 없다. 그래서 tenant-c-hello 같은 Application 이 남아 있었다면 그 Application 은 <code>Application referencing project tenant-c which does not exist</code> 조건으로 멈춘다.</li>
   </ol>
-  <pre class="pseudo"><code><span class="k">반복</span> 매 조정 주기 (기본 약 3분, 또는 refresh 주석 / 웹훅):
+  <pre class="pseudo"><code><span class="k">반복</span> 매 조정 주기 (Git generator 기본 3분, 또는 refresh 주석 / 웹훅):
   파일들 = git.ls(repo, main, "poc/03-tenant-isolation/tenants/*.yaml")
   원하는 = { 파일.name: 템플릿(파일) <span class="k">for</span> 파일 <span class="k">in</span> 파일들 }
   현재 = 이 ApplicationSet 이 소유한 Application 들
@@ -1916,7 +1942,7 @@ stateDiagram-v2
   <span class="k">반복</span> 이름 <span class="k">in</span> 현재 - 원하는:
       <span class="k">만약</span> applicationsSync <span class="k">in</span> [sync, create-delete]: 삭제(이름)   <span class="c">// finalizer → namespace 까지</span></code></pre>
   <p><b>안전장치 대안</b>: ApplicationSet 의 <code>spec.syncPolicy.preserveResourcesOnDeletion: true</code> 를 켜면 Application 이 지워져도 리소스는 남는다. 또는 <code>applicationsSync: create-update</code> 로 두고 삭제는 사람이 확인 후 손으로 한다. PoC 는 오프보딩 시간을 재려고(<code>measure.sh onboard</code>) 자동 삭제를 택했다.</p>
-  <p><b>refresh 신호</b>: <code>measure.sh</code> 는 push 직후 <code>kubectl -n argocd annotate applicationset tenants argocd.argoproj.io/application-set-refresh=true --overwrite</code> 로 대기 없이 다시 보게 한다. 새 Application 이 생기면 <code>argocd.argoproj.io/refresh=normal</code> 로 repo-server 캐시를 우회한다. 기본 주기 3분은 스크립트 주석에서도 【추정】이다.</p>
+  <p><b>refresh 신호</b>: <code>measure.sh</code> 는 push 직후 <code>kubectl -n argocd annotate applicationset tenants argocd.argoproj.io/application-set-refresh=true --overwrite</code> 로 대기 없이 다시 보게 한다. 새 Application 이 생기면 <code>argocd.argoproj.io/refresh=normal</code> 로 repo-server(Argo CD 에서 Git 을 받아 렌더링하는 부품) 캐시를 우회한다. Git generator 의 기본 폴링 주기 3분은 공식 문서에 있다(<code>requeueAfterSeconds</code> 또는 환경 변수 <code>ARGOCD_APPLICATIONSET_CONTROLLER_REQUEUE_AFTER</code> 로 바꾼다). 컨트롤러는 refresh 주석을 보고 한 번 조정한 뒤 주석을 스스로 지운다.</p>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>ApplicationSet 은 한 번만 손으로 붙인다(<code>kubectl apply -f poc/03-tenant-isolation/gitops/tenants-appset.yaml</code>, run-all.sh 의 tenants 단계). 이후 테넌트 추가·삭제는 tenants/ 파일 push 만으로 한다. RUN-ALL 0절: 10/20 에 이 파일이 <code>solution/</code> 경로를 보던 것을 원래 자리로 바꿨다. 정답본 ApplicationSet 과 동시에 붙이면 둘이 같은 이름 tenant-a Application 을 만들려고 싸운다(README 5.2절).</p></aside>
@@ -1929,7 +1955,7 @@ stateDiagram-v2
 
 <div class="tier" data-tier="1">
   <h3>파드 하나에 노드 하나를 고르는 일</h3>
-  <p>파드가 API 서버에 저장되면 <code>spec.nodeName</code> 이 비어 있다. <b>kube-scheduler</b> 는 이런 파드를 감시하다가 하나씩 꺼내 ① 갈 수 없는 노드를 <b>거르고(Filter)</b> ② 남은 노드에 <b>점수(Score)</b>를 매겨 ③ 가장 높은 노드에 <b>묶는다(Bind)</b>. 묶는다는 것은 API 서버에 "이 파드의 nodeName = 그 노드" 를 기록하는 것이고, 그 노드의 kubelet 이 이를 보고 컨테이너를 띄운다. 거를 때 쓰는 조건이 이 장 뒤쪽의 nodeSelector, affinity, taint, 자원 여유다.</p>
+  <p>여기까지가 namespace 축의 울타리였다. 이제 두 번째 축, "그 파드가 어느 노드에서 도는가" 로 넘어간다. 파드가 API 서버에 저장되면 <code>spec.nodeName</code> 이 비어 있다. <b>kube-scheduler</b> 는 이런 파드를 감시하다가 하나씩 꺼내 ① 갈 수 없는 노드를 <b>거르고(Filter)</b> ② 남은 노드에 <b>점수(Score)</b>를 매겨 ③ 가장 높은 노드에 <b>묶는다(Bind)</b>. 묶는다는 것은 API 서버에 "이 파드의 nodeName = 그 노드" 를 기록하는 것이고, 그 노드의 kubelet 이 이를 보고 컨테이너를 띄운다. 거를 때 쓰는 조건이 이 장 뒤쪽의 nodeSelector, affinity, taint, 자원 여유다. 그림에 보이는 그 사이의 작은 단계(Reserve = 고른 노드의 자원을 미리 잡아 둠, Permit = 묶기 직전 마지막 허락, PreBind·PostBind = 묶기 전후 처리)는 확장 지점의 이름일 뿐이라 이 장에서는 이름만 알면 된다.</p>
   <figure>
     <div class="fig scroll-l">
       <svg viewBox="0 0 1080 450" role="img" aria-labelledby="sch-t">
@@ -1979,7 +2005,7 @@ stateDiagram-v2
         <rect x="20" y="286" width="240" height="44" rx="8" class="d-card"/>
         <text x="34" y="313" class="d-mono">faas-worker2 (build)</text>
         <rect x="280" y="286" width="520" height="44" rx="8" class="d-fail-box"/>
-        <text x="296" y="313" class="d-mono">✗ selector 불일치 (taint pool=build 도 못 견딤)</text>
+        <text x="296" y="313" class="d-mono">✗ untolerated taint pool=build (selector 도 불일치)</text>
         <rect x="20" y="338" width="240" height="44" rx="8" class="d-card"/>
         <text x="34" y="365" class="d-mono">faas-worker3 (exec)</text>
         <rect x="280" y="338" width="520" height="44" rx="8" class="d-cp-box"/>
@@ -1987,10 +2013,10 @@ stateDiagram-v2
         <rect x="820" y="338" width="240" height="44" rx="8" class="d-agent"/>
         <text x="836" y="365" class="d-mono">점수 → 선택 → Bind</text>
         <path d="M800 360 L816 360" class="d-e-api" marker-end="url(#sch-m-api)"/>
-        <text x="20" y="418" class="d-sub">Filter 를 통과한 노드가 0 이면 PostFilter(선점) 시도 → 그래도 없으면 Pending 과 FailedScheduling 이벤트, 큐로 돌아가 다시 시도</text>
+        <text x="20" y="418" class="d-sub">Filter 통과 노드가 0 이면 PostFilter(선점: 우선순위 낮은 파드를 쫓아내 자리 만들기) 시도 → 그래도 없으면 Pending, 큐로 돌아가 재시도</text>
       </svg>
     </div>
-    <figcaption><b>그림 3-15.</b> 위: 스케줄링 프레임워크의 확장 지점. 아래: 함수 파드 하나가 네 노드 중 exec 노드로 가는 과정. 실패 문구는 실제 FailedScheduling 이벤트에 나오는 표현을 줄여 적었다. 노드 이름은 kind 기본 이름이며 <code>kubectl get nodes -L pool</code> 로 확인한다.</figcaption>
+    <figcaption><b>그림 3-15.</b> 위: 스케줄링 프레임워크의 확장 지점. 아래: 함수 파드 하나가 네 노드 중 exec 노드로 가는 과정. 실패 문구는 실제 FailedScheduling 이벤트에 나오는 표현을 줄여 적었다. 한 노드에서 여러 조건이 어긋나도 메시지에는 처음 실패한 검사 하나만 남는다(세부 절). 노드 이름은 kind 기본 이름이며 <code>kubectl get nodes -L pool</code> 로 확인한다.</figcaption>
   </figure>
 </div>
 
@@ -2000,13 +2026,13 @@ stateDiagram-v2
   <div class="table-wrap"><table>
   <thead><tr><th>플러그인</th><th>Filter 에서</th><th>Score 에서</th></tr></thead>
   <tbody>
-  <tr><td><code>NodeUnschedulable</code></td><td><code>kubectl cordon</code> 된 노드 제외</td><td></td></tr>
+  <tr><td><code>NodeUnschedulable</code></td><td><code>kubectl cordon</code>(노드에 새 파드 금지 표시)된 노드 제외</td><td></td></tr>
   <tr><td><code>NodeName</code></td><td>spec.nodeName 이 지정됐으면 그 노드만</td><td></td></tr>
   <tr><td><code>NodeAffinity</code></td><td>nodeSelector 와 required 노드 어피니티</td><td>preferred 노드 어피니티 가중치</td></tr>
   <tr><td><code>TaintToleration</code></td><td>NoSchedule, NoExecute taint 를 못 견디면 제외</td><td>PreferNoSchedule taint 개수만큼 감점</td></tr>
-  <tr><td><code>NodeResourcesFit</code></td><td>requests 합계(+ overhead)가 노드 allocatable 을 넘으면 제외</td><td>남는 자원 기준 점수 (기본 LeastAllocated)</td></tr>
+  <tr><td><code>NodeResourcesFit</code></td><td>requests 합계(+ overhead)가 노드 allocatable(전체 용량에서 kubelet·OS 몫을 뺀, 파드에 내줄 수 있는 자원)을 넘으면 제외</td><td>남는 자원 기준 점수 (기본 LeastAllocated)</td></tr>
   <tr><td><code>NodeResourcesBalancedAllocation</code></td><td></td><td>CPU 와 메모리 사용률이 고르게</td></tr>
-  <tr><td><code>PodTopologySpread</code></td><td>maxSkew 위반 노드 제외</td><td>흩어지는 쪽에 가점</td></tr>
+  <tr><td><code>PodTopologySpread</code></td><td>파드를 노드·존에 고르게 흩는 규칙의 maxSkew(허용 편차) 위반 노드 제외</td><td>흩어지는 쪽에 가점</td></tr>
   <tr><td><code>InterPodAffinity</code></td><td>required 파드 (안티)어피니티</td><td>preferred 파드 (안티)어피니티</td></tr>
   <tr><td><code>ImageLocality</code></td><td></td><td>이미지가 이미 있는 노드에 가점</td></tr>
   <tr><td><code>VolumeBinding</code> 등</td><td>볼륨을 붙일 수 있는 노드만</td><td></td></tr>
@@ -2018,7 +2044,7 @@ flowchart TD
   F --> C{"통과한 노드 수"}
   C -->|"0"| PO["PostFilter: 낮은 우선순위 파드 선점 시도"]
   PO -->|"실패"| P["Pending, FailedScheduling 이벤트<br/>클러스터 변화가 생기면 다시 큐로"]
-  PO -->|"성공"| N["선점 대상 축출 후 nominatedNodeName 기록"]
+  PO -->|"성공"| N["선점 대상 축출 후 nominatedNodeName 기록<br/>(선점으로 확보한 노드 이름)"]
   C -->|"1 이상"| S["Score: 플러그인 점수 × 가중치 합"]
   S --> R["가장 높은 노드 Reserve<br/>동점이면 무작위"]
   R --> B["Bind: API 서버에 nodeName 기록"]
@@ -2032,8 +2058,22 @@ flowchart TD
     <li><b>스케줄링 큐</b>: activeQ(바로 시도), backoffQ(실패 후 지수 대기), unschedulableQ(조건이 바뀔 때까지 대기)로 나뉜다. 노드 추가, taint 변경, 다른 파드 삭제 같은 이벤트가 오면 관련 파드를 다시 activeQ 로 옮긴다. 그래서 Pending 파드는 원인을 고치면 스스로 다시 스케줄된다.</li>
     <li><b>percentageOfNodesToScore</b>: 노드가 아주 많으면 Filter 를 통과한 노드를 일정 수 찾은 뒤 멈추고 그 안에서만 점수를 매긴다. 노드 4개인 PoC 에서는 상관없다.</li>
     <li><b>requests 만 본다</b>: NodeResourcesFit 은 실제 사용량이 아니라 requests 합계를 본다. limits 는 스케줄링에 쓰이지 않는다. RuntimeClass overhead 는 requests 에 더해진다(gVisor 함수는 50m/64Mi 를 더 차지).</li>
-    <li><b>실패 메시지</b>: <code>0/4 nodes are available: 1 node(s) didn't match Pod's node affinity/selector, 1 node(s) had untolerated taint {node-role.kubernetes.io/control-plane: }, 2 node(s) had untolerated taint {pool: ...}. preemption: 0/4 nodes are available: 4 Preemption is not helpful for scheduling.</code> 모양이다. 노드 수를 원인별로 나눠 보여 주므로, 합이 전체 노드 수가 되는지 세어 보면 원인을 다 찾은 것이다.</li>
+    <li><b>실패 메시지</b>: <code>0/4 nodes are available: 1 node(s) didn't match Pod's node affinity/selector, 1 node(s) had untolerated taint {node-role.kubernetes.io/control-plane: }, 1 node(s) had untolerated taint {pool: build}, 1 node(s) had untolerated taint {pool: exec}. preemption: 0/4 nodes are available: 4 Preemption is not helpful for scheduling.</code> 모양이다(05 함수 파드에서 toleration 만 뺀 경우). 노드 수를 원인별로 나눠 보여 주므로, 합이 전체 노드 수가 되는지 세어 보면 원인을 다 찾은 것이다.</li>
+    <li><b>노드마다 사유는 하나</b>: 스케줄러는 노드 하나에 Filter 플러그인을 정해진 순서로 돌리다가 <b>처음 실패한 플러그인에서 멈춘다</b>(<code>RunFilterPlugins</code>). 기본 순서는 NodeName → NodeUnschedulable → <b>TaintToleration → NodeAffinity</b> → NodePorts → NodeResourcesFit → 볼륨 검사 → PodTopologySpread → InterPodAffinity 다. 그래서 taint 도 못 견디고 selector 도 안 맞는 build 노드는 "untolerated taint" 로만 집계되고, selector 불일치는 taint 가 없는 system 노드에서만 보인다. 메시지의 분류가 "그 노드의 모든 문제" 가 아니라 "첫 번째 문제" 라는 점을 알고 읽는다.</li>
   </ul>
+  <pre class="mermaid">
+flowchart LR
+  N["노드 하나"] --> P1{"NodeUnschedulable<br/>cordon 됐나"}
+  P1 -->|"예"| M1["node(s) were unschedulable"]
+  P1 -->|"아니오"| P2{"TaintToleration<br/>못 견디는 taint 가 있나"}
+  P2 -->|"예"| M2["had untolerated taint"]
+  P2 -->|"아니오"| P3{"NodeAffinity<br/>selector 가 안 맞나"}
+  P3 -->|"예"| M3["didn't match node affinity/selector"]
+  P3 -->|"아니오"| P4{"NodeResourcesFit<br/>requests 가 안 들어가나"}
+  P4 -->|"예"| M4["Insufficient cpu / memory"]
+  P4 -->|"아니오"| OK["후보 노드"]
+  </pre>
+  <p>이 순서가 FailedScheduling 메시지의 분류를 정한다. 한 노드는 처음 걸린 칸의 문구로만 집계된다.</p>
   <pre class="pseudo"><code><span class="k">스케줄</span>(파드):
   상태 = PreFilter(파드)
   후보 = []
@@ -2059,7 +2099,7 @@ flowchart TD
 
 <div class="tier" data-tier="1">
   <h3>끌어당기는 도구와 밀어내는 도구</h3>
-  <p>노드 배치 도구는 방향이 둘이다. <b>끌어당기기</b>: 파드가 "나는 이런 노드에만 가겠다" 고 말한다(nodeSelector, node affinity). <b>밀어내기</b>: 노드가 "허가증 없는 파드는 오지 마라" 고 말한다(taint). 허가증이 <b>toleration</b> 이다. 둘은 독립적이다. toleration 이 있다고 그 노드로 <b>가는</b> 것이 아니고, nodeSelector 가 있다고 taint 를 <b>통과하는</b> 것이 아니다. 그래서 "build 노드에는 빌드만, 빌드는 build 노드에서만" 을 만들려면 taint + toleration + nodeSelector 셋을 다 쓴다(04 README 1.2절).</p>
+  <p>앞 절의 Filter 단계가 실제로 보는 조건이 이 절의 네 도구다. 노드 배치 도구는 방향이 둘이다. <b>끌어당기기</b>: 파드가 "나는 이런 노드에만 가겠다" 고 말한다(nodeSelector, node affinity). <b>밀어내기</b>: 노드가 "허가증 없는 파드는 오지 마라" 고 말한다(taint). 허가증이 <b>toleration</b> 이다. 둘은 독립적이다. toleration 이 있다고 그 노드로 <b>가는</b> 것이 아니고, nodeSelector 가 있다고 taint 를 <b>통과하는</b> 것이 아니다. 그래서 "build 노드에는 빌드만, 빌드는 build 노드에서만" 을 만들려면 taint + toleration + nodeSelector 셋을 다 쓴다(04 README 1.2절).</p>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 470" role="img" aria-labelledby="tt-t">
@@ -2131,6 +2171,7 @@ flowchart TD
     <dt>node affinity</dt><dd>nodeSelector 의 확장. <code>requiredDuringSchedulingIgnoredDuringExecution</code>(필수, Filter)과 <code>preferredDuringSchedulingIgnoredDuringExecution</code>(가중치, Score). 연산자 In, NotIn, Exists, DoesNotExist, Gt, Lt. nodeSelectorTerms 사이는 OR, 한 term 안의 matchExpressions 는 AND. "IgnoredDuringExecution" 은 파드가 뜬 뒤 라벨이 바뀌어도 쫓아내지 않는다는 뜻이다.</dd>
     <dt>taint / toleration</dt><dd>노드의 <code>key=value:effect</code>. 파드의 toleration 이 key·value·effect 와 맞으면(operator Equal) 또는 key 만 맞으면(operator Exists) 견딘다. effect 셋: <b>NoSchedule</b>(새 파드 금지, 있는 파드는 그대로), <b>PreferNoSchedule</b>(가능하면 피함, Score 감점), <b>NoExecute</b>(새 파드 금지 + 이미 있는 파드도 쫓아냄, <code>tolerationSeconds</code> 동안은 머무를 수 있음).</dd>
   </dl>
+  <p>아래가 04 의 kind 설정에서 build·exec 워커(worker, control-plane 이 아닌 보통 노드) 부분이다. 주석의 "스팟(spot)" 은 클라우드가 남는 용량을 회수 예고를 전제로 싸게 빌려주는 인스턴스다.</p>
   <div class="code-head"><span>poc/04-faas-runtime/cluster/kind-config.yaml</span><span>build·exec 워커</span></div>
   <pre><code>  <span class="c"># build 풀: Kaniko 빌드 Job 만. CPU·디스크를 크게 쓰고 잠깐 돌고 끝난다 (클라우드면 스팟 + CPU 큰 기계)</span>
   - <span class="k">role</span>: worker
@@ -2161,11 +2202,12 @@ flowchart TD
               <span class="k">value</span>: exec
               <span class="k">effect</span>: NoSchedule</code></pre>
   <ul>
-    <li><code>labels</code>: kind 가 지원하는 노드 칸. kubelet 이 등록할 때 이 라벨을 붙인다 【확인 필요: kind 내부에서 node-labels 로 넘기는지 등록 후 라벨링하는지】.</li>
-    <li><code>kubeadmConfigPatches</code>: kind 는 노드를 kubeadm 으로 만든다. 워커는 <code>kubeadm join</code> 을 하므로 JoinConfiguration 의 <code>nodeRegistration.taints</code> 에 넣으면 노드가 처음 등록될 때부터 taint 가 붙어 있다. 등록 뒤 <code>kubectl taint</code> 로 붙이는 것과 달리 "taint 없는 틈" 이 없다.</li>
+    <li><code>labels</code>: kind 가 지원하는 노드 칸. kind 는 이 값을 kubeadm 설정의 <code>nodeRegistration.kubeletExtraArgs</code> 에 <code>node-labels</code> 로 넣어서, kubelet 이 노드를 등록하는 순간부터 라벨이 붙어 있다(등록 뒤에 <code>kubectl label</code> 로 붙이는 것이 아니다).</li>
+    <li><code>kubeadmConfigPatches</code>: kind 는 노드를 kubeadm(쿠버네티스 공식 클러스터 설치 도구)으로 만든다. 워커는 <code>kubeadm join</code> 을 하므로 JoinConfiguration 의 <code>nodeRegistration.taints</code> 에 넣으면 노드가 처음 등록될 때부터 taint 가 붙어 있다. 등록 뒤 <code>kubectl taint</code> 로 붙이는 것과 달리 "taint 없는 틈" 이 없다.</li>
     <li>system 워커에는 taint 가 없다. control-plane 노드에는 kubeadm 이 기본으로 <code>node-role.kubernetes.io/control-plane:NoSchedule</code> 을 붙인다.</li>
   </ul>
   <h4>RuntimeClass 의 scheduling</h4>
+  <p><b>RuntimeClass</b> 는 "이 파드를 어떤 컨테이너 런타임으로 돌려라" 를 고르는 클러스터 범위 객체다. <code>handler</code> 는 노드의 containerd 에 등록된 런타임 이름이고, <code>runsc</code> 는 gVisor 의 실행 파일이다. 파드는 <code>spec.runtimeClassName: gvisor</code> 한 줄로 이것을 고른다.</p>
   <div class="code-head"><span>poc/04-faas-runtime/platform/runtimeclass-gvisor.yaml</span><span>발췌</span></div>
   <pre><code><span class="k">apiVersion</span>: node.k8s.io/v1
 <span class="k">kind</span>: RuntimeClass
@@ -2191,10 +2233,11 @@ flowchart TD
 <div class="tier" data-tier="3">
   <h3>세부: toleration 일치 규칙과 NoExecute</h3>
   <ul>
-    <li><b>일치 규칙</b>: <code>operator: Equal</code> 은 key, value, effect 가 모두 같아야 한다(toleration 의 effect 를 비우면 모든 effect 와 일치). <code>operator: Exists</code> 는 value 를 적지 않는다. key 도 비우고 Exists 면 <b>모든 taint</b> 를 견딘다. Cilium 같은 DaemonSet 이 이렇게 해서 모든 노드에 뜬다.</li>
+    <li><b>일치 규칙</b>: <code>operator: Equal</code> 은 key, value, effect 가 모두 같아야 한다(toleration 의 effect 를 비우면 모든 effect 와 일치). <code>operator: Exists</code> 는 value 를 적지 않는다. key 도 비우고 Exists 면 <b>모든 taint</b> 를 견딘다. Cilium 에이전트 같은 DaemonSet(모든 노드에 파드를 하나씩 두는 컨트롤러)이 이렇게 해서 모든 노드에 뜬다.</li>
     <li><b>여러 taint</b>: 노드의 taint 중 파드가 견디지 못하는 것이 하나라도 NoSchedule 이면 못 간다. 견디지 못하는 PreferNoSchedule 만 남으면 갈 수는 있되 감점이다.</li>
     <li><b>NoExecute 와 tolerationSeconds</b>: 노드에 NoExecute taint 가 새로 붙으면, 견디지 못하는 파드는 바로 쫓겨나고, 견디되 tolerationSeconds 가 있는 파드는 그 시간 뒤에 쫓겨난다. 노드 컨트롤러가 붙이는 <code>node.kubernetes.io/not-ready</code>, <code>node.kubernetes.io/unreachable</code> 가 NoExecute 이며, DefaultTolerationSeconds 어드미션이 모든 파드에 300초 toleration 을 기본으로 붙인다. 06 단계의 "tolerationSeconds 20" 이 이 값을 줄여 노드 장애 시 파드를 더 빨리 옮기는 설정이다(<a href="ch08-resilience.html">08장</a>).</li>
     <li><b>DaemonSet</b>: DaemonSet 컨트롤러는 not-ready, unreachable, disk-pressure 등에 대한 toleration 을 자동으로 추가한다. 사용자 taint(<code>pool=build</code>)는 자동으로 견디지 않으므로, 모든 노드에 떠야 하는 에이전트는 Exists toleration 이 필요하다.</li>
+    <li><b>노드 상태 taint</b>: not-ready·unreachable 말고도 노드 컨트롤러가 노드 상태에 따라 <code>node.kubernetes.io/memory-pressure</code>, <code>disk-pressure</code>, <code>pid-pressure</code>, <code>unschedulable</code>(cordon), <code>network-unavailable</code> taint 를 자동으로 붙였다 뗀다. 사용자 taint(<code>pool=…</code>)와 달리 설정 파일에 없어도 생기므로, Pending 의 원인이 "내가 건 taint" 가 아닐 수도 있다.</li>
     <li><b>kind 에서 확인</b>: <code>kubectl describe nodes | grep -E "^Name:|^Taints:"</code>, <code>kubectl get nodes -L pool</code> (04 README 1단계).</li>
   </ul>
   <pre class="mermaid">
@@ -2221,8 +2264,8 @@ stateDiagram-v2
       <span class="k">만약</span> <span class="k">아니</span> 파드.tolerations 중 하나가 견디나(·, x): <span class="k">반환</span> "untolerated taint " + x</code></pre>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>세 곳이 같은 모양의 nodeSelector + toleration 을 쓴다: 04 <code>build/kaniko-job.yaml</code> 과 05 <code>templates/build-job.yaml</code>(build), 04 <code>functions/ksvc/*.yaml</code> 과 05 <code>templates/ksvc.yaml</code>(exec). Knative 는 ksvc 의 nodeSelector·tolerations·runtimeClassName 칸을 기본으로 막으므로, 04 가 <code>config-features</code> 의 <code>kubernetes.podspec-nodeselector</code>, <code>kubernetes.podspec-tolerations</code>, <code>kubernetes.podspec-runtimeclassname</code> 을 enabled 로 켰다. hello-gvisor 는 RuntimeClass 가 붙여 주는데도 nodeSelector·toleration 을 직접 한 번 더 적었다(RuntimeClass 를 빼먹었을 때도 exec 에 가도록).</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: toleration 을 빠뜨리면 (ANALYSIS B7)</p><p><b>증상</b>: hello-runc 에서 tolerations 를 빼고 push 하면 새 Revision 의 파드가 Pending. 그동안 트래픽은 옛 Revision 이 받는다(Knative 가 새 Revision 이 Ready 가 될 때까지 트래픽을 옮기지 않음). 05 빌드 Job 이라면 상태가 BUILDING 에서 멈춘다. <b>볼 곳</b>: <code>kubectl -n fn-runtime describe pod</code> 의 <code>0/4 nodes are available: 1 node(s) had untolerated taint {pool: exec}, 3 node(s) didn't match Pod's node affinity/selector</code> 류 【확인 필요: 노드 수 분류는 스케줄러가 처음 실패한 플러그인 기준】. <code>kubectl -n faas-build get pods</code>. <b>고치는 법</b>: toleration 의 key·value·effect 를 taint 와 한 글자까지 같게 되살린다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>세 곳이 같은 모양의 nodeSelector + toleration 을 쓴다: 04 <code>build/kaniko-job.yaml</code> 과 05 <code>templates/build-job.yaml</code>(build), 04 <code>functions/ksvc/*.yaml</code> 과 05 <code>templates/ksvc.yaml</code>(exec). Knative 는 ksvc 의 nodeSelector·tolerations·runtimeClassName 칸을 기본으로 막으므로, 04 가 Knative 설정 ConfigMap <code>config-features</code> 의 <code>kubernetes.podspec-nodeselector</code>, <code>kubernetes.podspec-tolerations</code>, <code>kubernetes.podspec-runtimeclassname</code> 을 enabled 로 켰다. hello-gvisor 는 RuntimeClass 가 붙여 주는데도 nodeSelector·toleration 을 직접 한 번 더 적었다(RuntimeClass 를 빼먹었을 때도 exec 에 가도록).</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: toleration 을 빠뜨리면 (ANALYSIS B7)</p><p><b>증상</b>: hello-runc 에서 tolerations 를 빼고 push 하면 새 Revision 의 파드가 Pending. 그동안 트래픽은 옛 Revision 이 받는다(Knative 가 새 Revision 이 Ready 가 될 때까지 트래픽을 옮기지 않음). 05 빌드 Job 이라면 상태가 BUILDING 에서 멈춘다. <b>볼 곳</b>: <code>kubectl -n fn-runtime describe pod</code> 의 <code>0/4 nodes are available: 1 node(s) didn't match Pod's node affinity/selector, 1 node(s) had untolerated taint {node-role.kubernetes.io/control-plane: }, 1 node(s) had untolerated taint {pool: build}, 1 node(s) had untolerated taint {pool: exec}</code>. nodeSelector 는 남아 있어도 taint 검사(TaintToleration)가 selector 검사(NodeAffinity)보다 먼저라, taint 가 있는 세 노드는 전부 "untolerated taint" 로, taint 없는 system 노드만 "selector 불일치" 로 집계된다(스케줄러 절 세부). <code>kubectl -n faas-build get pods</code>. <b>고치는 법</b>: toleration 의 key·value·effect 를 taint 와 한 글자까지 같게 되살린다.</p></aside>
 <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>nodeSelector 대신 node affinity 를 쓰면 "exec 또는 exec-gpu" 같은 OR 조건과 선호도 가중치를 쓸 수 있지만, PoC 는 풀이 하나씩이라 nodeSelector 로 충분하고 읽기 쉽다. taint 를 kind 의 kubeadmConfigPatches 로 건 이유는 노드 등록과 동시에 걸려 틈이 없고, 클러스터를 다시 만들어도 설정 파일이 정답이기 때문이다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/">Assigning Pods to Nodes</a> · <a href="https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/">Taints and Tolerations</a> · <a href="https://kubernetes.io/docs/concepts/containers/runtime-class/">Runtime Class</a> · <a href="https://kubernetes.io/docs/reference/labels-annotations-taints/">Well-Known Labels, Annotations and Taints</a> · <a href="https://kind.sigs.k8s.io/docs/user/configuration/#nodes">kind Configuration: nodes</a> · <a href="https://kind.sigs.k8s.io/docs/user/configuration/#kubeadm-config-patches">kind: kubeadm Config Patches</a></p></aside>
 
@@ -2231,7 +2274,7 @@ stateDiagram-v2
 
 <div class="tier" data-tier="1">
   <h3>system / build / exec: 무엇이 어디에, 왜</h3>
-  <p><b>노드 풀(node pool)</b> 은 같은 라벨·taint·기계 종류를 가진 노드 묶음이다. PoC 는 용도별로 셋을 둔다. 플랫폼 부품은 system, 이미지 빌드는 build, 사용자 함수는 exec. 나누는 이유는 셋이다. ① 빌드의 CPU·디스크 폭주가 함수와 플랫폼을 흔들지 않게(옆집 소음을 풀 단위로). ② 남의 코드(함수)가 도는 노드를 따로 두어, 탈출해도 플랫폼 비밀(Argo CD, 컨트롤 플레인 토큰)이 그 노드에 없게. ③ 클라우드에서 풀마다 기계 종류와 구매 방식(스팟/온디맨드)을 다르게.</p>
+  <p>도구를 알았으니, 그 도구로 PoC 가 실제로 그린 배치가 이 절이다. <b>노드 풀(node pool)</b> 은 같은 라벨·taint·기계 종류를 가진 노드 묶음이다. PoC 는 용도별로 셋을 둔다. 플랫폼 부품은 system, 이미지 빌드는 build, 사용자 함수는 exec. 나누는 이유는 셋이다. ① 빌드의 CPU·디스크 폭주가 함수와 플랫폼을 흔들지 않게(옆집 소음을 풀 단위로). ② 남의 코드(함수)가 도는 노드를 따로 두어, 탈출해도 플랫폼 비밀(Argo CD, 컨트롤 플레인 토큰)이 그 노드에 없게. ③ 클라우드에서 풀마다 기계 종류와 구매 방식(스팟 / 온디맨드 = 보통 요금)을 다르게.</p>
   <figure>
     <div class="fig scroll-l">
       <svg viewBox="0 0 1100 470" role="img" aria-labelledby="np-t">
@@ -2283,16 +2326,18 @@ stateDiagram-v2
         <text x="876" y="338" class="d-sub">노드</text>
 
         <rect x="20" y="420" width="1060" height="40" rx="10" class="d-obs-box"/>
-        <text x="36" y="445" class="d-sub">DaemonSet (cilium 에이전트, kube-proxy 대체 등)은 모든 taint 를 견뎌 네 노드 모두에 하나씩 뜬다</text>
+        <text x="36" y="445" class="d-sub">DaemonSet (cilium 에이전트, kube-proxy 등)은 모든 taint 를 견뎌 네 노드 모두에 하나씩 뜬다</text>
       </svg>
     </div>
-    <figcaption><b>그림 3-17.</b> 최종 클러스터(04 설정)에서 노드 풀별로 뜨는 것. 테넌트 namespace 는 노드를 가리지 않는다. 같은 tenant-a 라도 hello-fn(01 차트, toleration 없음)은 system 에, 05 함수 hello(ksvc, exec toleration)는 exec 에 뜬다. namespace 경계와 노드 경계는 별개의 축이다. CoreDNS 는 control-plane taint 를 견디므로 control-plane 또는 system 에 뜰 수 있다 【확인 필요】.</figcaption>
+    <figcaption><b>그림 3-17.</b> 최종 클러스터(04 설정)에서 노드 풀별로 뜨는 것. 테넌트 namespace 는 노드를 가리지 않는다. 같은 tenant-a 라도 hello-fn(01 차트, toleration 없음)은 system 에, 05 함수 hello(ksvc, exec toleration)는 exec 에 뜬다. namespace 경계와 노드 경계는 별개의 축이다. CoreDNS(kubeadm 이 까는 클러스터 DNS)는 <code>CriticalAddonsOnly</code> 와 control-plane taint 만 견디고 서로 다른 노드를 선호하므로, control-plane 과 system 두 노드에 하나씩 뜨는 것이 보통이다(04 README 1단계 확인 질문). Cilium 1.20 의 kube-proxy 대체(<code>kubeProxyReplacement</code>)는 기본 false 라 kube-proxy DaemonSet 도 그대로 돈다.</figcaption>
   </figure>
+  <p>그림의 system 풀 부품을 한 줄씩 풀면 이렇다. Argo Rollouts 는 카나리 배포 컨트롤러(<a href="ch02-rollouts.html">02장</a>), Prometheus 는 지표를 긁어 모으는 시계열 DB, Knative Serving 의 activator 는 함수 파드가 0개일 때 요청을 대신 받아 두는 부품이고 autoscaler 는 파드 수를 정하는 부품이다(<a href="ch05-knative.html">05장</a>). Kourier 는 앞에서 본 함수 입구(Envoy 프록시 기반의 Knative 용 인그레스)다(<a href="ch04-network.html">04장</a>). 그림의 "NodePort 31080" 은 모든 노드의 같은 포트를 열어 클러스터 밖에서 Service 에 닿게 하는 방식으로, 맥의 8081 포트가 여기로 이어진다.</p>
 </div>
 
 <div class="tier" data-tier="2">
   <h3>"기본 착지점" 을 어디로 둘 것인가: 로컬과 EC2 가 다른 이유</h3>
   <p>taint 를 어느 풀에 걸지 결정하는 질문은 "toleration 을 아무것도 적지 않은 파드가 어디로 가야 하나" 다. taint 가 없는 풀이 <b>기본 착지점</b>이 된다.</p>
+  <p>비교 대상인 07 은 AWS EC2 위에 k3s(바이너리 하나로 설치되는 가벼운 쿠버네티스 배포판. API 서버·스케줄러·kubelet 이 한 프로세스에 들어 있다)를 올린 구성이다(<a href="ch09-ec2-k3s.html">09장</a>).</p>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 380" role="img" aria-labelledby="ke-t">
@@ -2346,7 +2391,7 @@ flowchart TD
 <div class="tier" data-tier="3">
   <h3>세부: kind 에서는 스케줄링만 나뉜다</h3>
   <ul>
-    <li><b>kind 노드는 같은 맥 위의 컨테이너</b>다. 풀을 나눠도 CPU 는 Docker Desktop VM 의 같은 코어를 나눠 쓴다. 04 README 8.3절의 결론처럼 "kind 에선 노드 풀이 스케줄링만 나눈다. CPU 까지 나누려면 기계가 달라야 한다". 그래서 빌드 중 함수 지연 비교는 EC2(07)에서 다시 재야 의미가 있다.</li>
+    <li><b>kind 노드는 같은 맥 위의 컨테이너</b>다. 풀을 나눠도 CPU 는 Docker Desktop VM(맥에서 Docker 가 실제로 도는 리눅스 가상 머신)의 같은 코어를 나눠 쓴다. 04 README 8.3절의 결론처럼 "kind 에선 노드 풀이 스케줄링만 나눈다. CPU 까지 나누려면 기계가 달라야 한다". 그래서 빌드 중 함수 지연 비교는 EC2(07)에서 다시 재야 의미가 있다.</li>
     <li><b>테넌트별 풀 대안</b>: 테넌트마다 전용 exec 풀(taint <code>tenant=a:NoSchedule</code>)을 두면 커널 공유까지 테넌트 단위로 끊긴다. 대신 테넌트 수만큼 노드 최소 비용이 들고, 파드 템플릿이 테넌트마다 달라진다. 큰 고객에게만 "전용 풀" 요금제로 주는 것이 흔한 절충이다.</li>
     <li><b>풀 이름의 일관성</b>: 라벨 키 <code>pool</code> 은 03·04·05·07 이 모두 같다. 07 은 <code>capacity-type=spot|on-demand</code> 라벨을 더한다. 06 대역 클러스터 chaos 는 exec 노드가 둘이다(장애 실험용).</li>
     <li><b>run-all.sh 의 클러스터</b>: 03 의 <code>cluster/kind-config.yaml</code> 은 라벨만 있고 taint 가 없다. 실제로 쓰는 최종 클러스터는 04 의 <code>rebuild-cluster.sh</code> 가 04 설정(라벨 + taint + 8081 포트)으로 만든다. 03 의 <code>rebuild-cluster.sh</code> 를 단독으로 돌리면 taint 없는 클러스터가 생긴다는 점에 주의한다.</li>
@@ -2370,7 +2415,7 @@ flowchart TD
 
 <div class="tier" data-tier="1">
   <h3>울타리가 정말 막는지 표로 남긴다</h3>
-  <p>울타리는 "만들었다" 가 아니라 "막는 것을 봤다" 로 증명한다. <code>poc/03-tenant-isolation/scripts/test-isolation.sh</code> 는 네 묶음(net, cpu, rbac, argocd)을 차례로 돌며 항목마다 <b>기대값</b>과 <b>실제값</b>을 비교해 PASS/FAIL 을 찍고 CSV(<code>results/isolation-&lt;시각&gt;.csv</code>)로 남긴다. <code>scripts/measure.sh</code> 는 설계 문서에 넣을 두 가지(옆집 소음 지연, 테넌트 추가·삭제 시간)를 잰다. 이 가이드는 숫자 대신 실험 설계를 설명한다.</p>
+  <p>두 축(namespace 울타리, 노드 풀)을 다 봤다. 남은 것은 그것이 정말 막는지 확인하는 실험이다. 울타리는 "만들었다" 가 아니라 "막는 것을 봤다" 로 증명한다. <code>poc/03-tenant-isolation/scripts/test-isolation.sh</code> 는 네 묶음(net, cpu, rbac, argocd)을 차례로 돌며 항목마다 <b>기대값</b>과 <b>실제값</b>을 비교해 PASS/FAIL 을 찍고 CSV(<code>results/isolation-&lt;시각&gt;.csv</code>)로 남긴다. <code>scripts/measure.sh</code> 는 설계 문서에 넣을 두 가지(옆집 소음 지연, 테넌트 추가·삭제 시간)를 잰다. 이 가이드는 숫자 대신 실험 설계를 설명한다.</p>
   <pre class="mermaid">
 flowchart TD
   S["test-isolation.sh 인자"] --> N0{"tenant-a, tenant-b ns 있나"}
@@ -2424,7 +2469,7 @@ probe() {
 
 <div class="tier" data-tier="3">
   <h3>세부: 옆집 소음 측정 설계</h3>
-  <p><code>measure.sh neighbor</code> 는 같은 측정(tenant-b 안에서 iso-client 가 iso-echo 를 200번 부르고 p50/p95/max)을 세 상황에서 반복한다. 비교가 성립하려면 <b>세 상황의 차이가 폭주하는 쪽의 울타리 유무 하나뿐</b>이어야 한다.</p>
+  <p><code>measure.sh neighbor</code> 는 같은 측정(tenant-b 안에서 iso-client 가 iso-echo 를 200번 부르고 p50/p95/max = 지연을 정렬했을 때 50%·95% 지점과 최댓값)을 세 상황에서 반복한다. 비교가 성립하려면 <b>세 상황의 차이가 폭주하는 쪽의 울타리 유무 하나뿐</b>이어야 한다.</p>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 420" role="img" aria-labelledby="nn-t">
@@ -2466,7 +2511,7 @@ probe() {
   </figure>
   <ul>
     <li><b>같은 노드</b>: 실험 파드에 toleration 이 없으니 모두 system 노드로 간다. 그래서 의도하지 않아도 "같은 노드의 옆집" 조건이 성립한다. 반대로 Argo CD, Prometheus, 컨트롤 플레인도 같은 노드에 있으므로 측정 중 그 부품들의 활동이 잡음이 된다.</li>
-    <li><b>BestEffort 의 함정</b>: fn-demo 의 hog 는 requests 도 없어 BestEffort 이고 cpu.weight 가 최소다. CPU 가 경쟁 상태면 커널은 weight 비율로 나누므로 echo(requests 10m)가 생각보다 덜 밀릴 수 있다. hog-free 가 크게 흔들리는 것은 주로 "노드 코어 수보다 hog 가 많을 때" 다 【확인 필요: Docker Desktop 에 준 CPU 수에 따라 결과 해석이 달라진다】. 이 점을 알고 숫자를 읽어야 "울타리 덕분" 과 "가중치 덕분" 을 구분한다.</li>
+    <li><b>BestEffort 의 함정</b>: fn-demo 의 hog 는 requests 도 없어 BestEffort 이고 cpu.weight 가 최소다. CPU 가 경쟁 상태면 커널은 weight 비율로 나누므로 echo(requests 10m)가 생각보다 덜 밀릴 수 있다. hog-free 가 크게 흔들리는 것은 주로 "노드 코어 수보다 hog 가 많을 때" 다. 그래서 결과를 읽을 때 Docker Desktop 에 준 CPU 수(run-all.sh preflight 가 찍는 <code>Docker: N CPU</code>)를 같이 적어 둔다. hog 4개보다 코어가 많으면 hog-free 와 hog-tenant 의 차이가 작게 나올 수 있다. 이 점을 알고 숫자를 읽어야 "울타리 덕분" 과 "가중치 덕분" 을 구분한다.</li>
     <li><b>반복</b>: README 8절은 3번 반복해 중앙값을 쓰라고 한다. p95 는 200개 중 190번째 값이라 한두 개 튀는 값에 민감하다.</li>
     <li><b>onboard</b>: tenant-c 파일을 만들어 commit·push 하고 refresh 주석을 단 뒤, (Quota 존재) AND (default-deny 존재) AND (Application Synced/Healthy) 가 될 때까지 1초 간격으로 확인한다. 파일을 지워 push 한 뒤 namespace 가 사라질 때까지가 오프보딩이다. <b>main 에 실제로 push 한다</b>는 점이 주의할 부분이다.</li>
   </ul>
@@ -2485,7 +2530,7 @@ probe() {
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>기대 결과는 README 10절: <code>합계: PASS 17 / FAIL 0</code> (net 5 + cpu 3 + rbac 8 + argocd 1). run-all.sh 의 check 단계는 네트워크 묶음만 돌린다(RUN-ALL 3절 "5줄 전부 PASS"). 실험 파드는 모두 <code>poc03: fixture</code> 라벨을 달고 restricted 기준을 지키도록 securityContext 를 갖췄다(iso-client 는 runAsUser 100, 나머지 65532).</p></aside>
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: "net: a -&gt; a (같은 테넌트)" 가 FAIL(BLOCKED). <b>볼 곳</b>: allow-dns 가 있는지 <code>kubectl -n tenant-a get networkpolicy</code>, Hubble 의 53번 포트 DROPPED. <b>고치는 법</b>: README 7절 순서. <b>증상</b>: cpu 2-2 가 UNCAPPED. <b>볼 곳</b>: quota 가 실제로 있는지, 30개가 다 생겼다면 pods hard 가 30 이상인지. <b>증상</b>: argocd 가 ALLOWED. <b>볼 곳</b>: AppProject tenant-a 가 argocd namespace 에 있는지(없으면 스크립트는 "건너뜀" 을 찍는다).</p></aside>
-<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>테넌트 함수(hello-fn)가 아니라 전용 과녁 iso-echo 를 쓴 이유는 실험이 함수 배포 상태에 의존하지 않게 하기 위해서다. 대안으로 kube-bench 나 sonobuoy 같은 적합성 도구가 있지만 "우리 울타리" 의 경계를 직접 찌르지는 않는다. CPU 측정에 metrics-server 대신 cgroup 파일을 읽은 것은 설치할 부품을 하나 줄이고, 10초 평균을 직접 계산해 해석을 투명하게 하려는 것이다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>테넌트 함수(hello-fn)가 아니라 전용 과녁 iso-echo 를 쓴 이유는 실험이 함수 배포 상태에 의존하지 않게 하기 위해서다. 대안으로 kube-bench(보안 벤치마크 점검 도구)나 sonobuoy(쿠버네티스 적합성 테스트 도구) 같은 도구가 있지만 "우리 울타리" 의 경계를 직접 찌르지는 않는다. CPU 측정에 metrics-server 대신 cgroup 파일을 읽은 것은 설치할 부품을 하나 줄이고, 10초 평균을 직접 계산해 해석을 투명하게 하려는 것이다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/reference/access-authn-authz/authorization/#checking-api-access">Checking API access (auth can-i)</a> · <a href="https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/#how-pods-with-resource-limits-are-run">How Pods with resource limits are run</a> · <a href="https://docs.cilium.io/en/stable/observability/hubble/">Hubble</a></p></aside>
 
 <!-- ============================================================ -->
@@ -2493,7 +2538,7 @@ probe() {
 
 <div class="tier" data-tier="1">
   <h3>네 장애, 네 증상 위치</h3>
-  <p>울타리 장애의 공통점은 <b>에러가 원인과 다른 곳에 보인다</b>는 것이다. 아래 그림은 이 장의 네 가지 대표 장애가 각각 어디에서 처음 보이고, 어디를 보면 원인이 나오는지 한 장으로 모은 것이다.</p>
+  <p>실험이 전부 PASS 인 상태에서 하나씩 깨뜨리면 무엇이 보이는가. 울타리 장애의 공통점은 <b>에러가 원인과 다른 곳에 보인다</b>는 것이다. 아래 그림은 이 장의 네 가지 대표 장애가 각각 어디에서 처음 보이고, 어디를 보면 원인이 나오는지 한 장으로 모은 것이다.</p>
   <figure>
     <div class="fig scroll-l">
       <svg viewBox="0 0 1100 420" role="img" aria-labelledby="brk-t">
@@ -2573,7 +2618,7 @@ probe() {
         <path d="M820 359 L856 359" class="d-e-git" marker-end="url(#brk-m-git)"/>
       </svg>
     </div>
-    <figcaption><b>그림 3-20.</b> 네 장애의 경로. 빨간 점선은 장애가 퍼지는 방향, 초록 화살표는 Git 으로 고쳐 Argo CD 가 되돌리는 방향이다. 넷 다 "kubectl apply 는 성공" 하거나 "Argo CD 는 Synced" 라서 첫눈에 정상처럼 보인다는 점이 같다.</figcaption>
+    <figcaption><b>그림 3-20.</b> 네 장애의 경로. 빨간 점선은 장애가 퍼지는 방향, 초록 화살표는 Git 으로 고쳐 Argo CD 가 되돌리는 방향이다. 넷 다 "kubectl apply 는 성공" 하거나 "Argo CD 는 Synced" 라서 첫눈에 정상처럼 보인다는 점이 같다. RS = ReplicaSet.</figcaption>
   </figure>
 </div>
 
@@ -2610,7 +2655,7 @@ flowchart TD
   <tr><td>toleration 누락 → Pending</td><td>04 <code>hello-runc.yaml</code> 에서 tolerations 삭제 push (ANALYSIS B7)</td><td>새 Revision 파드 Pending, 옛 Revision 이 트래픽 계속</td><td>되살려 push</td></tr>
   <tr><td>RBAC 제거 → 403</td><td>05 <code>k8s/platform/control-plane/tenant-a.yaml</code> 의 RoleBinding 삭제 push (B9), 또는 ops-agent Role 에서 patch 제거 (B11)</td><td>AUDIT 줄 decision error, 403. MCP 는 <code>{"forbidden": ...}</code></td><td>되살려 push</td></tr>
   </tbody></table></div>
-  <aside class="callout warn"><p class="callout-title">주의</p><p>selfHeal 이 켜진 Application 이 관리하는 객체를 kubectl 로 직접 바꾸면 Argo CD 가 곧 되돌린다. 깨뜨리기 실험은 Git 에서 바꿔 push 하는 방식으로 해야 상태가 유지된다. 반대로 "Git 에는 없고 API 로 만든 것"(05 의 ksvc)은 selfHeal 이 되살려 주지 않는다.</p></aside>
+  <aside class="callout warn"><p class="callout-title">주의</p><p>selfHeal(Argo CD 옵션: 누가 클러스터를 손으로 바꾸면 Git 상태로 되돌린다)이 켜진 Application 이 관리하는 객체를 kubectl 로 직접 바꾸면 Argo CD 가 곧 되돌린다. 깨뜨리기 실험은 Git 에서 바꿔 push 하는 방식으로 해야 상태가 유지된다. 반대로 "Git 에는 없고 API 로 만든 것"(05 의 ksvc)은 selfHeal 이 되살려 주지 않는다.</p></aside>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>ANALYSIS 3절의 깨뜨리기 목록 중 이 장과 직접 닿는 것은 B5(테넌트 추가 시간), B7(toleration 누락), B9(컨트롤 플레인 RoleBinding 삭제), B11(ops-agent patch 제거)이다. B3, B4(DNS 와 allow-from-namespaces)는 04장에서 다룬다.</p></aside>
@@ -2633,7 +2678,7 @@ flowchart TD
   <li>ServiceAccount 토큰이 TokenRequest 로 발급되는 짧게 사는 JWT 이고 audience·만료·바운드 객체로 검증된다는 것을 안다.</li>
   <li>AppProject 의 sourceRepos, destinations, clusterResourceWhitelist, namespaceResourceBlacklist 와, 울타리·함수를 다른 Project 로 나눈 이유를 안다.</li>
   <li>ApplicationSet Git files generator 로 파일 하나가 테넌트 하나가 되고, 파일 삭제가 finalizer 를 거쳐 namespace 삭제까지 이어진다는 것을 안다.</li>
-  <li>스케줄러의 Filter → Score → Bind 와, nodeSelector·affinity(끌어당김)와 taint·toleration(밀어냄)의 역할 분담, RuntimeClass scheduling 을 안다.</li>
+  <li>스케줄러의 Filter → Score → Bind 와, nodeSelector·affinity(끌어당김)와 taint·toleration(밀어냄)의 역할 분담, RuntimeClass scheduling 을 안다. FailedScheduling 메시지가 노드마다 "처음 실패한 검사" 하나로 집계된다는 것을 안다.</li>
   <li>kind 에서 kubeadmConfigPatches 로 taint 를 거는 법과, 로컬과 EC2 에서 기본 착지점이 다른 이유를 안다.</li>
 </ul>
 
