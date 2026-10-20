@@ -7,7 +7,7 @@
 ## 0. 무엇이 바뀌었나 (10/20, Claude)
 
 - `poc/02~07` 의 원래 자리 파일을 `solution/` 정답본으로 덮었다. 그래서 Argo CD 가 Git 에서 읽어 가는 파일(원래 자리)이 이제 완성본이다. `solution/` 폴더는 비교용으로 그대로 둔다.
-  - 빈칸 버전은 Git 태그 `poc-skeleton-2026-10-20` 에 남아 있다. 보고 싶으면 `git show poc-skeleton-2026-10-20:poc/02-rollouts/app/rollout.yaml`.
+  - 빈칸 버전은 바로 앞 커밋 `bee91f2` 에 남아 있다 (태그는 클라우드에서 push 가 막혀 못 만들었다. 맥에서 원하면 `git tag poc-skeleton bee91f2 && git push origin poc-skeleton`). 보고 싶으면 `git show bee91f2:poc/02-rollouts/app/rollout.yaml`.
   - `01-argocd` 는 Jeong 이 직접 채운 것을 그대로 둔다(bye-fn 포함).
 - 단계 간 이음새에서 고친 것 두 개.
   1. `03/gitops/tenants-appset.yaml` 이 `solution/` 경로를 보던 것을 원래 자리(`tenants/`, `charts/tenant`)로 바꿈. 07 의 root-app, placement-check 도 같은 이유로 바꿈. 이제 분석할 때 원래 자리 파일을 고치면 바로 클러스터에 반영된다.
