@@ -1,0 +1,62 @@
+
+# ---- gVisor (Claude 작성, 완성본) ----
+# enable_gvisor = true 일 때만 "실행 풀" user_data 맨 뒤에 붙는다 (k3s/install.sh.tftpl 이 끝난 다음).
+# 4단계 scripts/install-gvisor.sh 가 kind 노드에 docker cp 로 하던 일을, EC2 첫 부팅 때 노드 안에서 한다.
+# 스팟이 회수돼 ASG 가 새 노드를 띄워도 같은 user_data 라서 gVisor 가 다시 깔린다.
+# 문서: https://gvisor.dev/docs/user_guide/install/
+#       https://docs.k3s.io/advanced#configuring-containerd
+echo "[gvisor] start $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+GV='${gvisor_version}'
+ARCH=$(uname -m)                                   # t3/t3a 는 x86_64
+URL="https://storage.googleapis.com/gvisor/releases/release/$GV/$ARCH"
+TMP=$(mktemp -d)
+
+# 1) 받기 + sha512 확인 + 풀기. 2026-07 부터 runsc + shim + gvisor-bin/ 묶음 (4단계 README 1.5)
+command -v bzip2 >/dev/null || { apt-get update -q && apt-get install -y -q bzip2; }
+curl -fsSL -o "$TMP/gvisor.tar.bz2" "$URL/gvisor.tar.bz2"
+curl -fsSL -o "$TMP/gvisor.tar.bz2.sha512" "$URL/gvisor.tar.bz2.sha512"
+want=$(awk '{print $1}' "$TMP/gvisor.tar.bz2.sha512")
+got=$(sha512sum "$TMP/gvisor.tar.bz2" | awk '{print $1}')
+[ "$want" = "$got" ] || { echo "[gvisor] sha512 불일치, 중단"; exit 1; }
+tar -xjf "$TMP/gvisor.tar.bz2" -C "$TMP"
+install -m 0755 "$TMP/runsc" "$TMP/containerd-shim-runsc-v1" /usr/local/bin/
+cp -r "$TMP/gvisor-bin" /usr/local/bin/
+runsc --version | head -1
+
+# 2) k3s 의 containerd 가 runsc 를 아는지 확인. k3s 는 시작할 때 PATH 의 일부 런타임을 스스로 등록하는데,
+#    runsc 가 그 목록에 있는지는 【미확인】 → 재시작 후 직접 보고, 없을 때만 설정 템플릿을 쓴다.
+crictl_info() {   # containerd 가 뜰 때까지(agent 가 server 에 붙은 뒤) 최대 5분 기다렸다가 설정을 JSON 으로
+  for _ in $(seq 1 60); do
+    out=$(k3s crictl info 2>/dev/null || true)
+    [ -n "$out" ] && { printf '%s' "$out"; return 0; }
+    sleep 5
+  done
+  return 1
+}
+systemctl restart k3s-agent
+info=$(crictl_info) || { echo "[gvisor] containerd 가 안 뜸. journalctl -u k3s-agent 확인"; exit 1; }
+
+if grep -q '"runsc"' <<<"$info"; then
+  echo "[gvisor] k3s 가 runsc 를 스스로 등록함"
+else
+  # k3s 는 이 폴더의 템플릿이 있으면 그걸로 config.toml 을 만든다. "base" = k3s 기본 설정 전부, 그 뒤에 runsc 만 덧붙인다.
+  # containerd 2 (설정 version = 3) 와 1.x (version = 2) 는 파일 이름·플러그인 이름이 다르다 → 지금 생성된 설정을 보고 고른다
+  D=/var/lib/rancher/k3s/agent/etc/containerd
+  if grep -q '^version = 3' "$D/config.toml"; then
+    F="$D/config-v3.toml.tmpl"; PLUGIN="'io.containerd.cri.v1.runtime'"
+  else
+    F="$D/config.toml.tmpl";    PLUGIN='"io.containerd.grpc.v1.cri"'
+  fi
+  {
+    echo '{{ template "base" . }}'
+    echo
+    echo "[plugins.$PLUGIN.containerd.runtimes.runsc]"
+    echo '  runtime_type = "io.containerd.runsc.v1"'
+  } > "$F"
+  echo "[gvisor] $F 작성, k3s-agent 재시작"
+  systemctl restart k3s-agent
+  info=$(crictl_info) || { echo "[gvisor] 재시작 후 containerd 가 안 뜸"; exit 1; }
+  grep -q '"runsc"' <<<"$info" || { echo "[gvisor] 템플릿을 써도 runsc 가 안 보임"; exit 1; }
+fi
+rm -rf "$TMP"
+echo "[gvisor] done $(date -u +%Y-%m-%dT%H:%M:%SZ)"

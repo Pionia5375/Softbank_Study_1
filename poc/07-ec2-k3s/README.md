@@ -164,6 +164,7 @@ poc/07-ec2-k3s/
 ├── terraform/                    ── Claude 완성본. 읽기만 ──
 │   ├── budget/                   예산 알람 (먼저, 계속 둠)
 │   ├── cluster/                  VPC·EC2·ASG·FIS (당일 만들고 당일 지움)
+│   │   └── gvisor.sh.tftpl       (선택) 실행 풀 user_data 뒤에 붙는 gVisor 설치 (8.5절)
 │   └── modules/node-pool/        Launch Template + ASG + 23:00 예약 (실행·빌드 풀이 같이 씀)
 ├── k3s/                          ── Jeong 작성 (4.1) ──
 │   ├── install.sh.tftpl          user_data 본체: config.yaml 쓰기 + k3s 설치    빈칸 5
@@ -187,7 +188,8 @@ poc/07-ec2-k3s/
 │   ├── get-kubeconfig.sh         SSM 으로 k3s.yaml 가져오기 → ./kubeconfig
 │   ├── bootstrap-argocd.sh       Argo CD 설치 + root-ec2 적용 (--solution 가능)
 │   ├── measure.sh                up / ready / argo / spot / down 시간 → results/times.csv
-│   └── check-leftovers.sh        destroy 뒤 과금 리소스 남았나
+│   ├── check-leftovers.sh        destroy 뒤 과금 리소스 남았나
+│   └── gvisor-ec2.sh             (선택) Knative + 4단계 RuntimeClass·ksvc 재사용, runc vs gVisor 콜드 스타트 (8.5절)
 ├── results/                      times.csv (측정), rendered/ (렌더 결과, gitignore)
 └── solution/                     k3s/, gitops/ 정답본 + README
 ```
@@ -325,6 +327,7 @@ terraform fmt -check -recursive ..   # 들여쓰기 규칙. 기대: 출력 없�
 | 노드 Ready | `measure.sh ready 4` (apply 직후) | → 4대 Ready | 콜드 스타트 상한 (스팟 교체 때도 이만큼) |
 | Argo 동기화 | `measure.sh argo` (root 적용 직후) | → 모든 Application Synced+Healthy | "클러스터 재생성 → 서비스 복구 N분" |
 | 스팟 회수 | `measure.sh spot http://<실행 노드 IP>/fn` | FIS 시작 → cordon / 파드 이동 / 교체 노드 Ready + 실패 요청 수 | 스팟 채택 근거 (싸지만 복구 N초, 실패 M건) |
+| (선택) 콜드 스타트 | `gvisor-ec2.sh measure 10` | 0개 상태에서 첫 요청 → 응답 (runc, gVisor 각각) | 격리 런타임 선택 근거 (gVisor 가 +N ms) |
 | destroy | `measure.sh down` | destroy 시작 → 끝 | 비용 통제 |
 | 실비용 | 다음 날 Cost Explorer (일별, 서비스별) | 10/27 하루 | 7절 추정과 비교 |
 
@@ -402,6 +405,61 @@ aws ec2 describe-spot-price-history --region ap-northeast-2 \
 
 ---
 
+## 8.5 (선택) EC2 에서 runc vs gVisor 콜드 스타트
+
+4단계(poc/04-faas-runtime) 에서 gVisor 는 runsc 설치까지만 되고 함수 실행은 컨테이너 권한 문제로 실패했다(4단계 README "9절 보충"). EC2 는 진짜 리눅스 VM 이라 그 제약이 없다 【추정, 당일 확인】. 그래서 **gVisor 측정은 여기서 한다.** 시간이 모자라면 통째로 건너뛰어도 1~4번 목표에는 영향 없다.
+
+### 무엇이 다른가 (4단계와 비교)
+
+| | 4단계 (kind) | 7단계 (EC2 k3s) |
+|---|---|---|
+| runsc 설치 | `install-gvisor.sh` 가 맥에서 `docker cp` | `enable_gvisor = true` 면 Terraform 이 실행 풀 user_data 뒤에 `terraform/cluster/gvisor.sh.tftpl` 을 붙인다. 스팟 교체 노드에도 자동으로 깔린다 |
+| containerd 등록 | `/etc/containerd/config.toml` 에 직접 추가 | k3s 는 config.toml 을 매번 새로 만든다 → 손으로 고치면 사라진다. 그래서 **템플릿 파일**(`config-v3.toml.tmpl` 또는 `config.toml.tmpl`)에 "기본 설정 + runsc" 를 쓴다 【사실: https://docs.k3s.io/advanced#configuring-containerd】. k3s 가 runsc 를 스스로 찾으면 그 단계는 건너뛴다 【미확인: 자동 감지 대상 목록에 runsc 가 있는지】 |
+| RuntimeClass·기능 플래그·ksvc | Jeong 이 4단계에서 쓴 파일 | **같은 파일 그대로** (`--solution` 으로 정답본도 가능). ksvc 는 이미지 주소만 바꿔서 적용 |
+| 이미지 | kind-registry | `ttl.sh` (로그인 없는 공개 임시 레지스트리, 24시간 뒤 삭제). 맥이 애플 실리콘이면 `--platform linux/amd64` 로 빌드해야 t3 에서 돈다 |
+| 입구 | 맥 8081 → NodePort 31080 | `kubectl port-forward svc/kourier 8081:80` (SSM 터널 위). 그래서 `coldstart.sh` 를 손대지 않고 그대로 쓴다 |
+| 측정 | `scripts/coldstart.sh` | 같은 스크립트를 `scripts/gvisor-ec2.sh measure` 가 부르고, 결과를 `results/coldstart-ec2.csv` 로 옮긴다 |
+
+차이 하나 더: 4단계 로컬은 실행 풀에도 `pool=exec:NoSchedule` taint 를 걸었고, 7단계는 안 건다(결정 3). 4단계 RuntimeClass·ksvc 의 toleration 은 taint 가 없는 노드에선 그냥 무시되니 그대로 써도 된다. 둘 중 하나로 맞추는 건 아래 부가 결정 표에서 Jeong 이 고른다.
+
+### 읽을 파일 (Claude 작성)
+
+- `terraform/cluster/gvisor.sh.tftpl` — 위에서 아래로: 받기 → sha512 확인 → `/usr/local/bin` 에 runsc·shim·gvisor-bin → `k3s-agent` 재시작 → `k3s crictl info` 에 runsc 가 보이나 → 없으면 템플릿 작성 후 다시 재시작.
+  - `{{ template "base" . }}` = k3s 가 원래 만들던 설정 전부를 그대로 넣으라는 뜻(Go 템플릿). 그 뒤에 runsc 4줄만 덧붙인다.
+  - containerd 2.x(설정 `version = 3`)와 1.x 는 플러그인 이름이 다르다(`io.containerd.cri.v1.runtime` vs `io.containerd.grpc.v1.cri`). 지금 생성된 설정을 보고 고른다.
+- `terraform/cluster/k3s.tf` 의 `agent_user_data` — `join("", [install 스크립트, 조건부 gvisor 스크립트])`. 빌드 풀엔 안 붙는다.
+- `scripts/gvisor-ec2.sh` — check / platform / image / deploy / measure.
+
+### 순서 (10/27, RUNBOOK H)
+
+```bash
+# 0) apply 할 때부터 켜 둔다. 이미 떠 있으면: tfvars 에 enable_gvisor = true → apply →
+#    aws autoscaling start-instance-refresh --auto-scaling-group-name poc07-exec   (실행 노드를 새 설정으로 갈아 끼움)
+./scripts/render-k3s.sh                        # exec-gvisor.sh 문법 ok 확인 (AWS 없이)
+./scripts/gvisor-ec2.sh check                  # 실행 노드마다: runsc version / runsc 개수 1 이상 / [gvisor] done
+./scripts/gvisor-ec2.sh platform               # Knative 1.23.0 + Kourier + 4단계 기능 플래그 + RuntimeClass (막히면 --solution)
+./scripts/gvisor-ec2.sh image                  # 출력 마지막 줄의 ttl.sh/... 주소를 복사
+./scripts/gvisor-ec2.sh deploy ttl.sh/poc07-hello-xxxxxxxx:24h
+curl -s -H "Host: hello-gvisor.fn-runtime.faas.local" localhost:8081/   # (measure 가 아닐 땐 port-forward 를 직접 켜고) kernel 값이 runc 와 다르면 gVisor
+./scripts/gvisor-ec2.sh measure 10             # 함수당 약 10분. 20회면 p95 가 의미 있다
+kubectl -n fn-runtime top pod                  # (요청 중일 때) gVisor 쪽 메모리가 얼마나 더 드나 → 4단계 RuntimeClass overhead 값 고치기
+```
+
+확인 질문: `measure` 결과의 절대값에는 SSM 터널과 port-forward 지연이 섞여 있다. 그런데도 "gVisor 가 콜드 스타트를 몇 ms 늘린다" 는 결론을 낼 수 있는 이유는? 낼 수 **없는** 결론은 무엇인가?
+
+→ `grep coldstart results/times.csv` 두 줄을 붙여 줘.
+
+### 실패하면
+
+| 증상 | 볼 것 |
+|---|---|
+| `check` 에서 runsc 개수 0 | 실행 노드 `sudo grep gvisor /var/log/k3s-bootstrap.log`, `sudo cat /var/lib/rancher/k3s/agent/etc/containerd/config*.toml.tmpl` |
+| hello-gvisor Pod 가 `FailedCreatePodSandBox` | `kubectl -n fn-runtime describe pod -l serving.knative.dev/service=hello-gvisor \| tail -5`, 노드에서 `sudo journalctl -u k3s-agent \| grep -i runsc \| tail -20` |
+| 이미지 `exec format error` | 맥에서 amd64 로 안 빌드됨. `image` 단계를 다시 |
+| 4단계 결과와 크게 다름 | kind 는 맥 VM 안이라 원래 숫자가 다르다. 비교는 **같은 클러스터 안 runc vs gVisor** 로만 |
+
+---
+
 ## 9. 이 단계가 끝난 상태
 
 | 항목 | 값 |
@@ -428,6 +486,8 @@ aws ec2 describe-spot-price-history --region ap-northeast-2 \
 | 결정 | 선택 | 이유 한 줄 |
 |---|---|---|
 | `write-kubeconfig-mode` | ___ | ___ |
+| 실행 풀 taint (4단계 로컬은 건다, 7단계는 안 건다) | ___ | ___ |
+| (선택) gVisor 를 실행 풀 전체에 깔기 vs 전용 풀 | 실행 풀 전체 (`enable_gvisor`) | 대안 gVisor 전용 풀: 신뢰 못 할 함수만 거기로 보내 runc 함수는 오버헤드 0. 노드 풀이 하나 늘어 비용·관리 증가 |
 | 클러스터 접속 | SSM 포트 포워딩 (6443·22 닫음) | 대안 6443 을 내 IP 로만 열기: IP 가 바뀔 때마다 apply, 인증서에 퍼블릭 IP 추가 필요 |
 | 스팟 회수 대응 | NTH(drain) + graceful node shutdown | 대안 shutdown 만: 2분 예고를 못 쓰고 마지막 60초에 몰아서 정리 |
 | 토큰 전달 | Terraform random_password → user_data | 대안 SSM Parameter Store: 더 안전(user_data 는 EC2 권한 있는 사람이 읽음)하지만 IAM·스크립트가 늘어남. 본선에서 팀 계정이면 Parameter Store 로 |

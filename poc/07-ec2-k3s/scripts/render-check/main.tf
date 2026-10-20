@@ -35,6 +35,11 @@ output "exec" {
   value = local.agent["exec"]
 }
 
+# (선택) enable_gvisor = true 일 때 실행 노드 user_data = exec + gvisor.sh.tftpl
+output "exec_gvisor" {
+  value = join("", [local.agent["exec"], templatefile("${path.module}/../../terraform/cluster/gvisor.sh.tftpl", { gvisor_version = "20261012.0" })])
+}
+
 output "build" {
   value = local.agent["build"]
 }

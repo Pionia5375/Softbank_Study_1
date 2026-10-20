@@ -46,15 +46,21 @@ locals {
       exec  = var.exec_capacity_type
       build = var.build_capacity_type
     } :
-    pool => templatefile("${path.module}/${local.tpl}/install.sh.tftpl", {
-      role        = "agent"
-      k3s_channel = var.k3s_channel
-      config = templatefile("${path.module}/${local.tpl}/agent-config.yaml.tftpl", {
-        token         = random_password.k3s_token.result
-        server_url    = "https://${aws_instance.server.private_ip}:6443"
-        pool          = pool
-        capacity_type = capacity_type
-      })
-    })
+    pool => join("", [
+      templatefile("${path.module}/${local.tpl}/install.sh.tftpl", {
+        role        = "agent"
+        k3s_channel = var.k3s_channel
+        config = templatefile("${path.module}/${local.tpl}/agent-config.yaml.tftpl", {
+          token         = random_password.k3s_token.result
+          server_url    = "https://${aws_instance.server.private_ip}:6443"
+          pool          = pool
+          capacity_type = capacity_type
+        })
+      }),
+      # (선택) 실행 풀에만 gVisor 설치를 뒤에 붙인다. Claude 작성 파일이라 k3s_template_dir 과 상관없이 이 폴더에 있다
+      var.enable_gvisor && pool == "exec" ? templatefile("${path.module}/gvisor.sh.tftpl", {
+        gvisor_version = var.gvisor_version
+      }) : "",
+    ])
   }
 }

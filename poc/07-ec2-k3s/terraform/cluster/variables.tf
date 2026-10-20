@@ -104,3 +104,17 @@ variable "enable_fis" {
   type        = bool
   default     = true
 }
+
+# ---- (선택) gVisor: 4단계에서 kind 로 못 잰 runc vs gVisor 콜드 스타트를 EC2 에서 ----
+
+variable "enable_gvisor" {
+  description = "true 면 실행 풀 노드 첫 부팅 때 gVisor(runsc)를 깔고 k3s containerd 에 등록한다 (README 8.5절)"
+  type        = bool
+  default     = false
+}
+
+variable "gvisor_version" {
+  description = "gVisor 릴리스. 4단계 scripts/install-gvisor.sh 와 같은 값으로 맞춘다"
+  type        = string
+  default     = "20261012.0"
+}

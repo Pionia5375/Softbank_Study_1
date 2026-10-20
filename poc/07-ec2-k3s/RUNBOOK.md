@@ -14,6 +14,7 @@
 | 10:15 | C. Argo CD + 배치 확인 | 4 |
 | 11:00 | D. 스팟 회수 실험 ×3 | 4~5 |
 | 12:00 | E. 깨뜨렸다 고치기 + 셀프 연습 | 3~4 |
+| (선택) | H. gVisor 콜드 스타트 (E 대신 또는 E 다음, +1시간) | 4 |
 | 12:45 | F. destroy + 잔여 확인 | 0 |
 | 다음 날 | G. 실제 청구액 기록 | 0 |
 
@@ -129,6 +130,21 @@ README 6절(toleration 지우기) → README 셀프 연습(빌드 풀 0 → 1 �
 
 ---
 
+## H. (선택) runc vs gVisor 콜드 스타트
+
+B 의 `terraform.tfvars` 에 미리 `enable_gvisor = true` 를 넣어 두면 실행 노드가 처음부터 gVisor 를 갖고 뜬다 (켜 두는 비용 차이 없음). 순서와 설명은 README 8.5절.
+
+```bash
+./scripts/gvisor-ec2.sh check
+./scripts/gvisor-ec2.sh platform            # 막히면 --solution
+./scripts/gvisor-ec2.sh image               # 마지막 줄 주소 복사
+./scripts/gvisor-ec2.sh deploy <주소>
+./scripts/gvisor-ec2.sh measure 10
+```
+**출력 붙여 주기**: `grep coldstart results/times.csv`.
+
+---
+
 ## F. 지우기 (당일 필수)
 
 ```bash
@@ -138,7 +154,7 @@ README 6절(toleration 지우기) → README 셀프 연습(빌드 풀 0 → 1 �
 - 실패 항목이 있으면: 그 ID 를 콘솔에서 확인 → 손으로 지우고 다시 `check-leftovers.sh`.
 - `terraform/budget` 은 **지우지 않는다.**
 - 터널 창(Ctrl+C), `unset KUBECONFIG`, `rm kubeconfig` (토큰이 든 파일).
-- 측정 결과 커밋: `git add results/times.csv && git commit -m "poc07: 10/27 measurements" && git pull --rebase origin main && git push origin main`.
+- 측정 결과 커밋: `git add results/ && git commit -m "poc07: 10/27 measurements" && git pull --rebase origin main && git push origin main`.
 
 23:00 에 실행·빌드 풀이 자동으로 0대가 되는 예약은 destroy 와 함께 사라진다. **시스템 노드는 예약이 없다** → destroy 를 잊으면 그대로 과금된다.
 
