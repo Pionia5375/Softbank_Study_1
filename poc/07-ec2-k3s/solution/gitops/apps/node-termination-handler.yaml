@@ -23,6 +23,8 @@ spec:
     repoURL: oci://public.ecr.aws/aws-ec2/helm/aws-node-termination-handler
     # 버전 고정 (2026-10-20 기준 차트 0.27.6 = 앱 v1.25.6). 10/27 아침 helm show chart oci://public.ecr.aws/aws-ec2/helm/aws-node-termination-handler 로 다시 확인
     targetRevision: 0.27.6
+    # oci 소스는 path 가 필수다 (path 도 chart 도 없으면 Argo CD 가 InvalidSpec). 차트 루트 = "."
+    path: .
     helm:
       valuesObject:
         enableSpotInterruptionDraining: true    # 회수 경고 → drain

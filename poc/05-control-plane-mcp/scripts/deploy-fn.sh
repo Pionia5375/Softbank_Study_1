@@ -28,9 +28,13 @@ BUILD_ID=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["buildId"]
 echo "접수: buildId=$BUILD_ID"
 
 BUILD_S=""; PHASE=""; LAST=""
+TMPF=$(mktemp); trap 'rm -f "$TMPF"' EXIT
 while true; do
-  STATUS=$(curl -sS "$CP/api/v1/tenants/$TENANT/functions/$NAME" || true)
+  HTTP=$(curl -sS -o "$TMPF" -w '%{http_code}' "$CP/api/v1/tenants/$TENANT/functions/$NAME" || echo 000)
+  STATUS=$(cat "$TMPF")
   PHASE=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("phase",""))' "$STATUS" 2>/dev/null || echo "")
+  # 상태 조회가 200 이 아니면(예: RoleBinding 이 없어 ksvc 를 못 읽는 502) 그 코드를 phase 자리에 찍어서 10분을 조용히 기다리지 않게
+  if [[ "$HTTP" != "200" ]]; then PHASE="HTTP $HTTP"; fi
   SERVING=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("buildId") or "")' "$STATUS" 2>/dev/null || echo "")
   if [[ "$PHASE" != "$LAST" ]]; then echo "  $(since "$T0")s  $PHASE"; LAST=$PHASE; fi
   if [[ -z "$BUILD_S" && "$PHASE" != "BUILDING" ]]; then BUILD_S=$(since "$T0"); fi

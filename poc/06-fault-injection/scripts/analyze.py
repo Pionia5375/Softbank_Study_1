@@ -30,7 +30,8 @@ def pct(vals, p):
     if not vals:
         return None
     v = sorted(vals)
-    k = max(0, min(len(v) - 1, int(round(p / 100.0 * len(v) + 0.5)) - 1))
+    import math
+    k = max(0, min(len(v) - 1, math.ceil(p / 100.0 * len(v)) - 1))  # nearest-rank: p% 가 정수 순위에 딱 떨어질 때도 한 칸 느리지 않게
     return v[k]
 
 

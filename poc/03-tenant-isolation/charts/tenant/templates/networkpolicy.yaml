@@ -74,3 +74,24 @@ spec:
               kubernetes.io/metadata.name: {{ . }}
       {{- end }}
 {{- end }}
+{{- if .Values.network.allowToNamespaces }}
+---
+# 5) 지정한 namespace 로 나가는 것을 허용 (예: 테넌트 안에서 자기 함수 URL 을 부를 때 kourier-system 의 입구로 나간다).
+#    2)번 default-deny 는 egress 도 같은 ns 로만 막아 두어서, 밖으로 나가려면 이렇게 하나씩 연다
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-to-namespaces
+  namespace: {{ .Values.name }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+      {{- range .Values.network.allowToNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+      {{- end }}
+{{- end }}

@@ -196,7 +196,7 @@ ROLLOUT_NS=fn-canary ROLLOUT=podinfo APP=podinfo ./scripts/s3-bad-deploy.sh git
 - 쿼터: tenant-a limits.cpu 2·pods 10, tenant-b limits.cpu **1**·pods **5**. LimitRange 기본 cpu limit 200m / max 1. 그래서 시나리오 2 에서 폭주 파드(limits 1코어)는 대역의 2개가 아니라 **1개만** 뜬다.
 
 - 4단계 함수가 **Knative Service** 면: Knative 가 만든 Deployment 이름(`<서비스>-00001-deployment`)을 `FN_NAME` 으로, 라벨 `serving.knative.dev/service=<서비스>` 를 `FN_SELECTOR` 로. 단 scale-to-zero 라 파드가 0개면 시나리오 1 이 칠 대상이 없다 → `autoscaling.knative.dev/min-scale: "2"` 를 잠깐 걸고 한다. 【미검증】 이 컨테이너에선 Knative 로 돌려 보지 못했다.
-- 프로브는 피해자와 **같은 네임스페이스** 에 뜬다 (NetworkPolicy 가 같은 ns 끼리만 열어 주므로). Knative 는 요청이 kourier(앞단 게이트웨이)를 거쳐서, tenant 네임스페이스 ingress 정책에 kourier-system(과 knative-serving activator) 이 들어오도록 열려 있어야 (03 tenant-a.yaml 의 network.allowFromNamespaces) 프로브가 닿는다 【미검증】.
+- 프로브는 피해자와 **같은 네임스페이스** 에 뜬다 (NetworkPolicy 가 같은 ns 끼리만 열어 주므로). Knative 는 요청이 kourier(앞단 게이트웨이)를 거쳐서, tenant 네임스페이스 ingress 정책에 kourier-system(과 knative-serving activator) 이 들어오도록 열려 있어야 (03 tenant-a.yaml 의 network.allowFromNamespaces) 프로브가 닿는다. 그리고 프로브는 테넌트 안에서 kourier-system 으로 **나가야** 하므로 egress 도 열어야 한다 (tenant-a.yaml 의 network.allowToNamespaces: [kourier-system]) 【미검증】.
 - Cilium 을 쓰면 `hubble` CLI 를 깔아 두면 시나리오 4 가 막힌 연결 목록도 보여 준다: `cilium hubble port-forward &` 를 먼저.
 
 ### 알림 규칙 먼저 쓰기 (빈칸 8개) — `defenses/prometheus-alerts-values.yaml`
@@ -486,7 +486,7 @@ api Rollout 4개, 카나리 첫 단계 25%(=파드 1개), 분석 = 5초 간격 �
 | D1 TenantPolicyDenied 알림 | P1 뒤 **28s** firing | (Prometheus 안 깖) | |
 
 읽는 법
-- **N1~N4 가 kindnet 에서 FAIL 인 건 정책이 틀려서가 아니다.** 이 클라우드 컨테이너의 커널이 kindnet 의 NetworkPolicy 구현(nftables)을 못 돌려서 정책이 그냥 무시됐다. 같은 `standin/targets.yaml` 을 Calico 를 깐 두 번째 kind 클러스터에 넣으니 8/8 PASS. 맥의 kind(kindnet)나 3단계 Cilium 에선 정상 동작할 것이다 【추정】. **CNI 가 NetworkPolicy 를 실제로 집행하는지는 정책 YAML 만 봐선 모른다. 이 스크립트처럼 한 번 뚫어 봐야 안다.**
+- **N1~N4 가 kindnet 에서 FAIL 인 건 정책이 틀려서가 아니다.** kindnet 은 kind v0.24 부터 NetworkPolicy 를 집행하지만(kube-network-policies), 이 클라우드 컨테이너의 커널이 그 구현(nftables)을 못 돌려서 정책이 그냥 무시됐다. 같은 `standin/targets.yaml` 을 Calico 를 깐 두 번째 kind 클러스터에 넣으니 8/8 PASS. 맥의 kind(kindnet)나 3단계 Cilium 에선 정상 동작할 것이다 【추정】. **CNI 가 NetworkPolicy 를 실제로 집행하는지는 정책 YAML 만 봐선 모른다. 이 스크립트처럼 한 번 뚫어 봐야 안다.**
 - 깨뜨리기: tenant-b 정책을 지워도 N1·N2 는 막힌다. **tenant-a 쪽 ingress 정책**이 막기 때문이다 (방어가 양쪽에 있다). 대신 tenant-b 에서 나가는 egress 제한이 사라져서 API 서버와 메타데이터 주소에 닿았다. 403 은 연결은 됐고 그 뒤에서(API 서버 인증, 여기선 컨테이너의 프록시) 거절했다는 뜻이다. EC2 에선 메타데이터 주소가 노드 IAM 자격증명을 준다 → 7단계 전에 IMDSv2 hop limit 1 도 같이 건다 (RB-04).
 - RBAC·PSA·LimitRange 는 API 서버 안에서 바로 거절해서 0.1~0.2초. 알림은 지표 긁기·평가 주기 때문에 28초 늦다. 막는 건 즉시, 사람이 아는 건 30초 뒤.
 

@@ -182,7 +182,7 @@ kubectl get nodes -L pool                    # POOL 열에 build 가 붙은 노�
 ### 2단계: Knative Service 템플릿 (`templates/ksvc.yaml`, 빈칸 8개)
 
 1. 주석을 읽고 채운다. 문서: https://knative.dev/docs/serving/reference/serving-api/#serving.knative.dev/v1.Service
-2. 결정 2(max-scale): 3단계 quota 가 `limits.memory: 2Gi`, 이 템플릿의 컨테이너 limits 가 128Mi. Knative 가 붙이는 queue-proxy 사이드카도 메모리를 쓴다. 숫자로 계산해서 5절 표에.
+2. 결정 2(max-scale): 3단계 quota 가 `limits.memory: 2Gi`·`limits.cpu: 2`, 이 템플릿의 컨테이너 limits 가 128Mi(cpu 는 안 적어도 LimitRange 가 200m 을 붙인다). Knative 가 붙이는 queue-proxy 사이드카도 같은 LimitRange 기본값을 받는다. 메모리와 CPU 둘 다 계산해서 어느 쪽이 먼저 닿는지 5절 표에.
 3. 왜 min-scale 을 안 적는지(1.5) 한 줄로 말할 수 있으면 통과.
 
 확인 질문: 이 템플릿으로 두 번 배포하면 Revision 은 몇 개가 되고, 트래픽은 어디로 가나?
@@ -351,7 +351,7 @@ claude mcp list        # faas-ops 가 보이고 연결됨(✓)이면 OK
 ```json
 { "permissions": { "deny": ["Bash(*ops_mcp.approve*)"] } }
 ```
-【미확인】 패턴 문법은 Claude Code 버전마다 조금 다르다. 넣은 뒤 Claude 에게 "approve 명령을 실행해 봐" 를 시켜서 거부되는지 확인한다. 이게 안 돼도 `approve.py` 는 터미널(TTY)이 아니면 거부한다.
+【사실】 `Bash(*ops_mcp.approve*)` 형식은 공식 문서(https://code.claude.com/docs/en/permissions)의 패턴 규칙에 맞다: `*` 는 어디든, deny 가 allow 보다 먼저 적용, 복합 명령은 각 부분에 적용된다. 단 보안 경계는 아니다. 넣은 뒤 Claude 에게 "approve 명령을 실행해 봐" 를 시켜서 거부되는지 확인한다. 이게 안 돼도 `approve.py` 는 터미널(TTY)이 아니면 거부한다.
 
 확인 질문: 왜 `scale` 은 승인 없이, `rollback` 은 승인이 필요하게 나눴나? 반대로 했다면 무엇이 불편/위험한가?
 
@@ -408,7 +408,7 @@ GW=http://localhost:8081 scripts/measure-deploy.sh 3
 | 결정 | 선택 | 대안 | 이유 | 측정값 | 심사 항목 |
 |---|---|---|---|---|---|
 | 빌드 재시도 (backoffLimit) | ___ | 0 / 1~2 | | 실패 알림까지 ___s | 완성도·데모 |
-| 함수 max-scale | ___ | 3 / 5 / 10 | quota 2Gi ÷ (128Mi + queue-proxy ___Mi) | | 클라우드 활용 |
+| 함수 max-scale | 5 (실제론 4에서 멈춤) | 3 / 5 / 10 | 메모리: 2Gi ÷ (128Mi + queue-proxy 128Mi) = 8. CPU: limits.cpu 2 − hello-fn 2개(400m) = 1.6 ÷ 파드 400m(함수 200m 기본 limit + queue-proxy 200m) = 4 → CPU 가 먼저 닿는다 | | 클라우드 활용 |
 | 배포 경로 | API 직접 (기본값, 아래 결정 1) | GitOps 커밋 | | 새 빌드 p50 ___s / 재사용 ___s | 완성도·데모, 팀 개발 |
 | 에이전트 권한 | ops-agent Role ___줄 (can-i --list) | deployer 재사용 / 관리자 | | Forbidden 3/3 | AI, 클라우드 활용 |
 | 롤백 승인 | 터미널 승인 (TTY) | Slack 버튼 / GitHub PR 리뷰 | | 탐지 ___s / 승인 대기 ___s / 실행 ___s | AI |
@@ -439,7 +439,7 @@ GW=http://localhost:8081 scripts/measure-deploy.sh 3
 | 결정 | 이 PoC 의 선택 | 대안과 버린 이유 |
 |---|---|---|
 | 1. 함수 배포 경로 | **컨트롤 플레인이 쿠버네티스 API 로 직접** (빌드 Job 생성 + Knative Service server-side apply). 플랫폼 자체(컨트롤 플레인·RBAC)는 Argo CD GitOps | (가) **함수도 GitOps**: API 가 매니페스트를 Git 에 커밋 → Argo CD 반영. 이력·롤백이 git 으로 공짜지만, ① 배포마다 커밋 → push → Argo 감지(1단계 폴링 설정 또는 refresh) → sync 가 더해져 "Instantly" 와 멀어지고 【추정, 셀프 연습으로 측정】 ② 컨트롤 플레인에 Git 쓰기 토큰이 들어가고 ③ 사용자 함수(런타임 데이터)가 플랫폼 설정 레포를 커밋으로 채우고 ④ selfHeal 이 에이전트의 scale 을 드리프트로 보고 되돌린다. (나) 컨트롤 플레인이 kubectl 을 셸로 호출: 에러 처리·테스트가 어렵다 |
-| 2. 빌드 위치와 이미지 고정 | **클러스터 안 kaniko Job**, 테넌트가 아닌 `faas-build` ns + 빌드 노드 풀, 결과는 **digest** 로 고정 (`--digest-file=/dev/termination-log`) | (가) 노드 Docker 소켓으로 빌드: 그 파드가 사실상 노드 root. (나) GitHub Actions 같은 외부 CI: 코드가 레포에 있어야 하고 왕복이 길다. (다) BuildKit rootless: kaniko 보다 빠르다는 평이 많지만 seccomp/AppArmor 설정이 더 필요. 참고로 kaniko 원 레포는 2025년에 보관(archived) 처리됐다 【미확인: 4단계 스레드 확인 필요, https://github.com/GoogleContainerTools/kaniko 】. 본선 전에 대체 이미지(포크) 여부를 확인. (라) 태그로 배포: 같은 태그가 다른 이미지를 가리키면 롤백이 거짓말이 된다 |
+| 2. 빌드 위치와 이미지 고정 | **클러스터 안 kaniko Job**, 테넌트가 아닌 `faas-build` ns + 빌드 노드 풀, 결과는 **digest** 로 고정 (`--digest-file=/dev/termination-log`) | (가) 노드 Docker 소켓으로 빌드: 그 파드가 사실상 노드 root. (나) GitHub Actions 같은 외부 CI: 코드가 레포에 있어야 하고 왕복이 길다. (다) BuildKit rootless: kaniko 보다 빠르다는 평이 많지만 seccomp/AppArmor 설정이 더 필요. 참고로 kaniko 원 레포는 2025-06-03 에 보관(archived, 읽기 전용) 처리됐다 【사실: https://github.com/GoogleContainerTools/kaniko 】. 본선 전에 대체 이미지(포크) 여부를 확인. (라) 태그로 배포: 같은 태그가 다른 이미지를 가리키면 롤백이 거짓말이 된다 |
 | 3. 에이전트 구조 | **별도 파이썬 MCP 서버 + 테넌트 하나에 묶인 `ops-agent` SA + 도구 3개 + 5층 가드레일** | (가) Spring 컨트롤 플레인 안에 MCP 내장(Spring AI): 서버는 하나로 줄지만, 에이전트가 컨트롤 플레인의 넓은 권한(모든 테넌트에 배포)을 같이 쥔다. (나) 에이전트에게 kubectl + 관리자 kubeconfig: 도구 설계가 필요 없지만 프롬프트 한 줄에 클러스터 전체가 걸린다. (다) 도구를 잘게 10개 이상: LLM 이 고르기 어려워지고 검사할 표면이 커진다. 승인 방식 대안: Slack 버튼 / GitHub PR 리뷰(가장 "회사스럽다", 본선이면 이쪽) — 이번엔 외부 연동 없이 끝내려고 터미널 승인 |
 
 ## 셀프 연습 1개
@@ -453,6 +453,7 @@ cd poc/05-control-plane-mcp
 scripts/check-solution.sh --mine
 # 기대: 1) 없음  2) 통과  3) 19 passed  4) 통과 (server dry-run)
 
+# 아래 8080 은 4단계(맥에서 mvn spring-boot:run) 기준. 5단계 port-forward 로 돌렸으면 8090
 curl -s localhost:8080/api/v1/tenants/tenant-a/functions/hello | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["phase"], d["image"].split("@")[1][:19])'
 # 기대: READY sha256:xxxxxxxxxxxx   (태그가 아니라 digest)
 

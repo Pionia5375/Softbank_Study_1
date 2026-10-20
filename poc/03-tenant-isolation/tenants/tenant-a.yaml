@@ -11,5 +11,7 @@ quota:
 # 5단계 Knative 함수(tenant-a/hello)가 이 namespace 에 뜬다. 요청은 kourier-system(입구)이나
 # knative-serving(activator: 파드가 0개일 때 요청을 잡아 두는 곳)을 거쳐 들어오고, autoscaler(knative-serving)가
 # queue-proxy 지표를 긁으러 들어온다. 이 둘을 안 열면 default-deny 에 막혀 ksvc 가 READY 여도 curl 이 응답을 못 받는다.
+# 6단계 프로브처럼 테넌트 안에서 자기 함수 URL 을 부르면 kourier-system 으로 "나가야" 한다. default-deny 는 egress 도 막으므로 따로 연다
 network:
   allowFromNamespaces: [knative-serving, kourier-system]
+  allowToNamespaces: [kourier-system]

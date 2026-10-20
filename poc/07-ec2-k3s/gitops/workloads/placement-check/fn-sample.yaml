@@ -18,11 +18,24 @@ spec:
       # 실행 풀에만. 실행 풀엔 taint 가 없어서 toleration 은 필요 없다
       nodeSelector:
         pool: exec
-      # 두 파드를 서로 다른 노드에 흩는다. 한 노드가 회수돼도 나머지 하나가 응답한다
+      # 노드가 죽으면 기본 300초 대신 20초만 기다리고 다른 노드로 옮긴다 (06 단계 방어 조합과 같음)
+      tolerations:
+        - key: node.kubernetes.io/not-ready
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 20
+        - key: node.kubernetes.io/unreachable
+          operator: Exists
+          effect: NoExecute
+          tolerationSeconds: 20
+      # 두 파드를 서로 다른 노드에 흩는다. 한 노드가 회수돼도 나머지 하나가 응답한다.
+      # 06 단계 결론 그대로: DoNotSchedule(평소 반드시 흩음) + Honor(죽은·cordon 된 노드는 자리로 안 셈) + matchLabelKeys(배포 중 옛 파드 안 셈)
       topologySpreadConstraints:
         - maxSkew: 1
           topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
+          whenUnsatisfiable: DoNotSchedule
+          nodeTaintsPolicy: Honor
+          matchLabelKeys: [pod-template-hash]
           labelSelector:
             matchLabels:
               app: fn-sample

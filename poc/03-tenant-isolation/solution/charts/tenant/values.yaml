@@ -37,6 +37,8 @@ podSecurity:
 network:
   # 이 테넌트로 들어오는 트래픽을 허용할 namespace 이름들 (예: 공용 게이트웨이). 기본은 없음
   allowFromNamespaces: []
+  # 이 테넌트에서 나가도 되는 namespace 이름들 (예: 자기 함수 URL 을 부르려면 kourier-system). 기본은 없음(같은 ns + DNS 만)
+  allowToNamespaces: []
 
 # ---- 권한 ----
 rbac:
