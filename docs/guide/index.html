@@ -1,0 +1,2183 @@
+<title>FaaS PoC 가이드</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="guide.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="guide.js" defer></script>
+<style>
+  /* 이 장에서만 쓰는 최소 보조 클래스. 색은 전부 토큰 */
+  .d-dash { stroke-dasharray: 6 4; }
+  .d-stick { fill: none; stroke: var(--text); stroke-width: 1.6; }
+  .d-stick-sys { fill: none; stroke: var(--edge); stroke-width: 1.6; stroke-dasharray: 4 3; }
+  .d-mid { text-anchor: middle; }
+  .d-end { text-anchor: end; }
+  .grid > .item .ch-tag { font-family: var(--font-mono); font-size: 0.78rem; color: var(--muted); }
+  .grid > .item h4 a { text-decoration: none; }
+</style>
+
+<div class="shell">
+<nav class="nav" aria-label="장 목록"></nav>
+<main>
+<article class="page">
+
+<header class="chapter-head">
+  <p class="eyebrow">00장 · 전체 그림 · 관련 폴더 poc/01~07 전부</p>
+  <h1>멀티테넌트 FaaS PoC, 한 장으로 보기</h1>
+  <p class="lede">코드만 HTTP 로 보내면 쿠버네티스 위에서 함수가 빌드되고, 테넌트 울타리 안에서 0개와 N개 사이를 오가며 응답하는 플랫폼. 7단계로 쌓은 이 PoC 의 전체 구조, 요청 다섯 가지가 흐르는 길, 이름과 경계를 이 장 하나로 머릿속에 그린다. 다음 장들은 이 그림의 한 칸씩을 확대한다.</p>
+  <div class="chapter-meta">
+    <span class="chip">PoC 폴더 <b>poc/01-argocd ~ poc/07-ec2-k3s</b></span>
+    <span class="chip">클러스터 <b>kind faas · kind-faas</b></span>
+    <span class="chip">핵심 기술 <b>Argo CD · Rollouts · Cilium · Knative · kaniko · gVisor · MCP · k3s</b></span>
+  </div>
+</header>
+
+<h2 id="map">이 장의 지도</h2>
+
+<p>이 장은 특정 기술 하나가 아니라 가이드 전체의 지도다. 아래 그림에서 테두리 전체가 이 장이 다루는 범위이고, 안의 칸 하나하나가 다음 장들이다. 아래층(기반)이 무너지면 위층이 다 같이 무너진다는 점을 기억해 두면 장애를 추적할 때 순서가 생긴다.</p>
+
+<figure>
+  <div class="fig scroll">
+    <svg viewBox="0 0 960 340" role="img" aria-labelledby="f01-t">
+      <title id="f01-t">가이드 장들이 아키텍처의 어느 층인지 보여 주는 지도</title>
+      <rect x="10" y="10" width="940" height="320" rx="16" class="d-cp"/>
+      <text x="30" y="40" class="d-lbl">00 전체 그림 = 이 테두리 전체 · 위로 갈수록 사용자에 가깝다</text>
+      <text x="30" y="84" class="d-lbl">운영</text>
+      <text x="30" y="148" class="d-lbl">실행</text>
+      <text x="30" y="212" class="d-lbl">격리</text>
+      <text x="30" y="276" class="d-lbl">기반</text>
+      <rect x="110" y="56" width="196" height="46" rx="10" class="d-cp-box"/>
+      <text x="124" y="85" class="d-subd">01 GitOps · Argo CD</text>
+      <rect x="316" y="56" width="196" height="46" rx="10" class="d-prov-box"/>
+      <text x="330" y="85" class="d-subd">02 카나리 · 자동 롤백</text>
+      <rect x="522" y="56" width="206" height="46" rx="10" class="d-agent"/>
+      <text x="536" y="85" class="d-subd">07 컨트롤 플레인 · MCP</text>
+      <rect x="738" y="56" width="196" height="46" rx="10" class="d-fail-box"/>
+      <text x="752" y="85" class="d-subd">08 장애 주입 · 관측</text>
+      <rect x="110" y="120" width="404" height="46" rx="10" class="d-user-box"/>
+      <text x="124" y="149" class="d-subd">05 Knative · Kourier · activator · 0↔N 스케일</text>
+      <rect x="524" y="120" width="410" height="46" rx="10" class="d-user-box"/>
+      <text x="538" y="149" class="d-subd">06 kaniko 빌드 · 레지스트리 · gVisor 샌드박스</text>
+      <rect x="110" y="184" width="404" height="46" rx="10" class="d-warn-box"/>
+      <text x="124" y="213" class="d-subd">03 테넌트 울타리 6겹 · system/build/exec 풀</text>
+      <rect x="524" y="184" width="410" height="46" rx="10" class="d-obs-box"/>
+      <text x="538" y="213" class="d-subd">04 Cilium CNI · eBPF · NetworkPolicy · Hubble</text>
+      <rect x="110" y="248" width="824" height="46" rx="10" class="d-plain-box"/>
+      <text x="124" y="277" class="d-subd">로컬: 맥 → Docker Desktop → kind 클러스터 faas   ·   09 클라우드: EC2 + 스팟 + k3s + Terraform (코드만)</text>
+      <text x="30" y="318" class="d-sub">층 사이 의존: 운영 → 실행 → 격리 → 기반. 아래가 깨지면 위의 증상으로 보인다 (예: Cilium 정책 하나가 함수 호출 타임아웃으로)</text>
+    </svg>
+  </div>
+  <figcaption><b>그림 0-1.</b> 가이드의 장들을 아키텍처 층에 배치한 지도. 이 장(00)은 테두리 전체를 한 번에 본다.</figcaption>
+</figure>
+
+<p>이 장의 절과 한 줄 요약.</p>
+<ul>
+  <li><a href="#arch">전체 아키텍처</a>: 큰 그림 한 장과 층 쌓기 그림. 이름·포트·풀이 전부 여기 있다.</li>
+  <li><a href="#two-paths">두 갈래: GitOps 와 API</a>: 플랫폼은 Git, 함수는 API. 왜 나눴고 어디서 만나나.</li>
+  <li><a href="#usecase">유즈케이스</a>: 누가 이 플랫폼으로 무엇을 하나. UML 그림과 표.</li>
+  <li><a href="#catalog">컴포넌트 카탈로그</a>: namespace 와 부품 전부, 어느 풀에 뜨고 어떻게 깔렸나. Argo CD Application 나무.</li>
+  <li><a href="#tree">디렉토리 지도</a>: <code>poc/</code> 의 폴더가 실행 중인 어느 부품이 되나.</li>
+  <li><a href="#flows">핵심 흐름 다섯</a>: 함수 배포, 호출과 콜드 스타트, git push, 카나리 롤백, 노드 장애. 그리고 함수의 일생.</li>
+  <li><a href="#install">설치 순서</a>: run-all.sh 의 단계와, 클러스터를 왜 한 번만 만드나.</li>
+  <li><a href="#trust">경계와 신뢰</a>: 관리자, 컨트롤 플레인, 에이전트, 테넌트, 빌드가 각각 무엇을 할 수 있나.</li>
+  <li><a href="#local-vs-ec2">로컬과 EC2</a>: kind 와 k3s 의 같은 점과 다른 점.</li>
+  <li><a href="#glossary">용어집</a>: 가이드 전체에 나오는 말 80개와 설명한 장.</li>
+  <li><a href="#recap">정리</a>: 체크리스트, 결정 표, 본선에서 떠올릴 패턴, 스스로 답해 볼 질문.</li>
+</ul>
+
+<h2 id="what">이 PoC 는 무엇인가</h2>
+
+<p>한 문장으로: <strong>"Run your function over HTTP"</strong> 를 직접 운영하는(self-managed) 쿠버네티스 위에 세운 멀티테넌트(multi-tenant) FaaS(Function as a Service) 플랫폼이다. 함수 개발자는 파이썬 함수 파일 하나를 <code>POST /api/v1/tenants/tenant-a/functions</code> 로 보낸다. 플랫폼은 클러스터 안에서 이미지를 빌드하고(kaniko), 이미지 내용의 지문(digest)으로 고정해 Knative Service 로 띄우고, 요청이 없으면 파드를 0개로 줄였다가 첫 요청이 오면 다시 띄운다. 테넌트끼리는 Namespace·ResourceQuota·NetworkPolicy·RBAC 같은 울타리 여러 겹으로 나누고, 남의 코드를 돌리는 실행 노드는 별도 풀(pool)로 떼어 gVisor 샌드박스를 쓸 수 있게 했다.</p>
+
+<p>플랫폼 자체(Argo CD, Rollouts, 울타리, 컨트롤 플레인)는 Git 이 정답인 GitOps 로 관리하고, 사용자 함수는 컨트롤 플레인이 쿠버네티스 API 로 직접 만든다. 이 <strong>두 갈래</strong>가 이 PoC 의 가장 중요한 구조 결정이다. 그 위에 AI 운영 에이전트(Claude Code + MCP)가 좁은 권한의 토큰 하나로 지표를 보고, 스케일을 조정하고, 사람 승인을 받아 롤백한다.</p>
+
+<div class="grid">
+  <div class="item"><h4>무엇을 만들었나</h4><p>함수 배포 API, 클러스터 안 빌드, 0↔N 서버리스 실행, 테넌트 격리, 점진 배포와 자동 롤백, AI 운영 도구, 장애 주입 실험, EC2 이전 코드.</p></div>
+  <div class="item"><h4>어디서 도나</h4><p>맥의 Docker Desktop 위 kind 클러스터 <code>faas</code> 하나 (노드 4개). 06 장애 주입은 대역 클러스터 <code>chaos</code>, 07 은 AWS EC2 위 k3s 코드만 있다.</p></div>
+  <div class="item"><h4>어떻게 세우나</h4><p><code>poc/run-all.sh</code> 한 줄. platform → rollouts → tenants → control-plane → check 순서로 "최종 모양" 클러스터를 한 번에 올린다.</p></div>
+  <div class="item"><h4>왜 이렇게 나눴나</h4><p>본선(11/7~8)에서 "왜 이 구조인가, 깨지면 어디를 보나" 에 답하려고. 단계마다 결정 3개와 대안, 깨뜨렸다 고치는 실험이 붙어 있다.</p></div>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+<p>단계 번호(PoC 01~07)와 이 가이드의 장 번호(01~09)는 다르다. PoC 는 만든 순서대로, 가이드는 기술 주제별로 나눴다. 예를 들어 PoC 04 단계 하나에 노드 풀·Cilium 재설치·Knative·kaniko·gVisor 가 다 들어 있어서, 가이드에서는 3·4·5·6장으로 쪼개 설명한다. 아래 <a href="#chapters">장 목록</a>의 표가 그 대응이다.</p></aside>
+
+<h2 id="how-to-read">이 가이드를 읽는 법</h2>
+
+<div class="tier" data-tier="1">
+  <h3>깊이 세 단계</h3>
+  <p>모든 장은 같은 틀을 쓴다. 기술 하나마다 깊이를 세 단계로 나눠 쌓는다. 처음 읽을 때는 1·2단계만 읽고, 본선 전 복습이나 심사 Q&amp;A 대비 때 3단계까지 내려가면 된다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 250" role="img" aria-labelledby="f12-t">
+        <title id="f12-t">깊이 세 단계와 3단계 숨기기 버튼</title>
+        <defs>
+          <marker id="f12-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <rect x="20" y="20" width="280" height="150" rx="12" class="d-user-box"/>
+        <text x="40" y="52" class="d-ttl">1단계 · 개괄</text>
+        <text x="40" y="82" class="d-subd">무엇이고 왜 쓰나</text>
+        <text x="40" y="106" class="d-sub">한 장 그림, 한 문단 요약</text>
+        <text x="40" y="130" class="d-sub">처음 읽을 때 여기까지</text>
+        <rect x="340" y="20" width="280" height="150" rx="12" class="d-cp-box"/>
+        <text x="360" y="52" class="d-ttl">2단계 · 동작 원리</text>
+        <text x="360" y="82" class="d-subd">안에서 어떻게 도나</text>
+        <text x="360" y="106" class="d-sub">구성 요소, 흐름, 상태</text>
+        <text x="360" y="130" class="d-sub">설명할 수 있으려면 여기까지</text>
+        <rect x="660" y="20" width="280" height="150" rx="12" class="d-agent"/>
+        <text x="680" y="52" class="d-ttl">3단계 · 세부 로직</text>
+        <text x="680" y="82" class="d-subd">공식 문서 수준의 세부</text>
+        <text x="680" y="106" class="d-sub">필드, 알고리즘, 엣지 케이스</text>
+        <text x="680" y="130" class="d-sub">의사코드, 순서도</text>
+        <path d="M300 95 L340 95" class="d-e-api" marker-end="url(#f12-m)"/>
+        <path d="M620 95 L660 95" class="d-e-api" marker-end="url(#f12-m)"/>
+        <rect x="660" y="190" width="280" height="44" rx="10" class="d-plain-box"/>
+        <text x="680" y="218" class="d-sub">왼쪽 목차의 "3단계 숨기기" = 이 칸만 접기</text>
+        <path d="M800 190 L800 170" class="d-e-api d-dash" marker-end="url(#f12-m)"/>
+        <text x="20" y="218" class="d-lbl">각 기술 끝: 우리 PoC 에서는 · 깨지면 이렇게 보인다 · 왜 이걸 골랐나 · 공식 문서</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 0-2.</b> 한 기술을 세 겹으로 읽는다. 왼쪽 목차 아래 "3단계 숨기기" 버튼을 누르면 보라색 3단계 칸이 모든 장에서 접히고, 선택은 브라우저에 기억된다.</figcaption>
+  </figure>
+  <p>각 기술 끝에는 같은 모양의 상자가 붙는다.</p>
+  <ul>
+    <li><b>우리 PoC 에서는</b> (초록): 이 개념이 어느 폴더·파일에서 어떤 값으로 쓰였나.</li>
+    <li><b>깨지면 이렇게 보인다</b> (빨강): 증상, 볼 곳, 고치는 법. 심사 Q&amp;A 의 "깨지면?" 질문에 바로 쓰는 칸.</li>
+    <li><b>왜 이걸 골랐나</b> (보라): 대안과 버린 이유. 설계 문서의 결정 표로 그대로 옮길 수 있게 썼다.</li>
+    <li><b>공식 문서</b> (파랑): 세부를 확인할 원문 링크.</li>
+  </ul>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>읽는 순서 추천</h3>
+  <p>장은 독립적으로 읽히게 썼지만, 기반부터 쌓으면 덜 헷갈린다. 아래 순서는 "아래층을 알아야 위층이 보이는" 순서다. 00장의 전체 아키텍처 그림(그림 0-3)을 옆에 띄워 두고, 각 장을 읽을 때 지금 그림의 어느 칸인지 확인한다.</p>
+  <pre class="mermaid">
+flowchart LR
+  A["00 전체 그림<br/>이 장"] --> B["01 GitOps<br/>Argo CD"]
+  B --> C["03 멀티테넌시<br/>노드 풀"]
+  C --> D["04 Cilium<br/>eBPF"]
+  D --> E["05 Knative<br/>0↔N"]
+  E --> F["06 kaniko<br/>gVisor"]
+  F --> G["07 컨트롤 플레인<br/>MCP"]
+  B --> H["02 카나리<br/>자동 롤백"]
+  H --> I["08 장애 주입<br/>관측"]
+  G --> I
+  I --> J["09 EC2 k3s<br/>코드만"]
+  </pre>
+  <p>시간이 부족하면 01 → 05 → 07 세 장만 읽어도 "코드가 올라가서 응답하기까지" 를 끝까지 설명할 수 있다. 02·03·08 은 "안전하게" 를, 04·06 은 "격리" 를, 09 는 "클라우드로 옮기면" 을 채운다.</p>
+</div>
+
+<aside class="callout warn"><p class="callout-title">주의: 숫자는 넣지 않았다</p><p>이 가이드는 구조와 동작 원리를 설명한다. 측정값(초, ms, 비용)은 각 단계 <code>results/*.csv</code> 와 README 측정 절에 있고, 맥에서 다시 재면 달라진다. 설정값·기본값(예: 폴링 120초 + jitter 60초, tolerationSeconds 20)은 그대로 적었다.</p></aside>
+
+<h2 id="chapters">장 목록</h2>
+
+<p>장마다 다루는 PoC 폴더와 핵심 질문 하나. 카드를 누르면 그 장으로 간다.</p>
+
+<div class="grid">
+  <div class="item"><span class="ch-tag">01 · poc/01-argocd</span><h4><a href="ch01-gitops.html">GitOps와 Argo CD</a></h4><p>git push 한 번에 클러스터가 따라오는 원리. Application, App of Apps, selfHeal·prune, 폴링과 jitter.</p></div>
+  <div class="item"><span class="ch-tag">02 · poc/02-rollouts</span><h4><a href="ch02-rollouts.html">점진 배포와 자동 롤백</a></h4><p>Argo Rollouts 카나리 20 → 60 → 100%, Prometheus 성공률 판정, 판정 못 하면 멈추는 fail-closed.</p></div>
+  <div class="item"><span class="ch-tag">03 · poc/03 + 04 kind-config</span><h4><a href="ch03-tenancy.html">멀티테넌시와 노드 풀</a></h4><p>테넌트 울타리 6겹, ApplicationSet 테넌트 공장, taint·toleration·nodeSelector 로 나눈 system/build/exec 풀.</p></div>
+  <div class="item"><span class="ch-tag">04 · poc/03·04 rebuild-cluster</span><h4><a href="ch04-network.html">네트워크: eBPF와 Cilium</a></h4><p>CNI 가 NetworkPolicy 를 강제하는 법, default deny, Hubble 로 DROPPED 흐름 보기, 10/20 이음새.</p></div>
+  <div class="item"><span class="ch-tag">05 · poc/04-faas-runtime</span><h4><a href="ch05-knative.html">서버리스: Knative</a></h4><p>ksvc → Revision → 파드, activator·autoscaler·queue-proxy, 콜드 스타트, Kourier 와 Host 헤더 라우팅.</p></div>
+  <div class="item"><span class="ch-tag">06 · poc/04-faas-runtime</span><h4><a href="ch06-build-runtime.html">이미지 빌드와 gVisor</a></h4><p>Docker 없이 빌드하는 kaniko Job, 레지스트리 두 이름, RuntimeClass 와 runsc 샌드박스.</p></div>
+  <div class="item"><span class="ch-tag">07 · poc/05-control-plane-mcp</span><h4><a href="ch07-control-plane.html">컨트롤 플레인과 MCP</a></h4><p>202 + 상태 조회, 멱등 빌드 ID, digest 고정, server-side apply, MCP 도구 3개와 가드레일 5층.</p></div>
+  <div class="item"><span class="ch-tag">08 · poc/06-fault-injection</span><h4><a href="ch08-resilience.html">장애 주입과 관측</a></h4><p>노드 다운·함수 폭주·나쁜 배포·테넌트 침범. 감지와 복구의 타임라인, tolerationSeconds·PDB·런북.</p></div>
+  <div class="item"><span class="ch-tag">09 · poc/07-ec2-k3s</span><h4><a href="ch09-ec2-k3s.html">EC2·k3s·Terraform</a></h4><p>스팟 실행 풀, k3s server/agent, SSM 터널, Node Termination Handler, 비용 안전장치 (코드만, apply 안 함).</p></div>
+</div>
+
+<div class="table-wrap"><table>
+<thead><tr><th>PoC 단계 (만든 날)</th><th>폴더</th><th>가이드 장</th><th>그 단계가 남긴 것</th></tr></thead>
+<tbody>
+<tr><td>01 (10/21)</td><td><code>poc/01-argocd</code></td><td>01</td><td>Argo CD (Helm 10.10.5), root App of Apps, hello-fn·bye-fn (fn-demo)</td></tr>
+<tr><td>02 (10/22)</td><td><code>poc/02-rollouts</code></td><td>02</td><td>Argo Rollouts, Prometheus, podinfo Rollout (fn-canary), AnalysisTemplate success-rate</td></tr>
+<tr><td>03 (10/23)</td><td><code>poc/03-tenant-isolation</code></td><td>03, 04</td><td>Cilium + Hubble, tenant 차트, ApplicationSet tenants, tenant-a/b 와 각자의 hello-fn</td></tr>
+<tr><td>04 (10/24)</td><td><code>poc/04-faas-runtime</code></td><td>03, 05, 06</td><td>노드 풀 taint, kind-registry, Knative + Kourier, gVisor, kaniko 빌드, fn-runtime 함수 3개</td></tr>
+<tr><td>05 (10/25)</td><td><code>poc/05-control-plane-mcp</code></td><td>07</td><td>컨트롤 플레인 API (faas-system), faas-build, ops-agent SA, MCP 서버 ops_mcp</td></tr>
+<tr><td>06 (10/26)</td><td><code>poc/06-fault-injection</code></td><td>08</td><td>대역 클러스터 chaos, 장애 스크립트 4종, 방어 설정, 알림 규칙 5개, 런북 4개</td></tr>
+<tr><td>07 (10/27 예정)</td><td><code>poc/07-ec2-k3s</code></td><td>09</td><td>Terraform (VPC·EC2·ASG·FIS·예산), k3s 템플릿, root-ec2 GitOps (코드만)</td></tr>
+</tbody></table></div>
+
+<h2 id="arch">전체 아키텍처</h2>
+
+<div class="tier" data-tier="1">
+  <h3>한 장으로 보는 구조</h3>
+  <p>아래 그림이 이 가이드 전체의 기준 그림이다. 왼쪽 열은 플랫폼을 쓰는 사람과 에이전트(입구), 가운데 점선 영역은 클러스터 안의 플랫폼 부품(컨트롤 플레인), 그 아래 점선 상자는 노드 풀, 오른쪽 열은 클러스터 밖 저장소, 아래쪽 띠는 차례로 데이터 플레인(사용자 요청이 지나는 길), 관측, 설계 원칙이다. 선의 종류가 뜻을 가진다: 회색 실선은 API 호출, 보라 점선은 비동기·승인 대기, 주황은 배포·생성, 파랑은 사용자 트래픽, 청록 점선은 관측, 초록은 Git, 빨강 점선은 차단 지점.</p>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1900 2040" role="img" aria-labelledby="f03-t">
+        <title id="f03-t">멀티테넌트 FaaS PoC 전체 아키텍처: 입구, 컨트롤 플레인, 노드 풀, 저장소, 데이터 플레인, 관측, 설계 원칙</title>
+        <defs>
+          <marker id="f03-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f03-m-async" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-async"/></marker>
+          <marker id="f03-m-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+          <marker id="f03-m-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+          <marker id="f03-m-obs" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-obs"/></marker>
+          <marker id="f03-m-git" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-git"/></marker>
+        </defs>
+        <rect x="0" y="0" width="1900" height="2040" class="d-bg"/>
+
+        <!-- 제목과 범례 -->
+        <text x="40" y="52" class="d-h">멀티테넌트 FaaS PoC 전체 아키텍처 · poc/01~05 최종 모양</text>
+        <text x="40" y="80" class="d-sub">맥 Docker Desktop 위 kind 클러스터 faas · CNI Cilium + Hubble · 노드 4 (control-plane + system / build / exec) · 06 은 대역 클러스터 chaos, 07 은 EC2 + k3s 코드</text>
+        <path d="M40 112 L90 112" class="d-e-api"/><text x="100" y="117" class="d-sub">API 호출 (kubectl · REST)</text>
+        <path d="M290 112 L340 112" class="d-e-async"/><text x="350" y="117" class="d-sub">비동기 · 승인 대기</text>
+        <path d="M540 112 L590 112" class="d-e-prov"/><text x="600" y="117" class="d-sub">배포 · 생성 (sync · apply)</text>
+        <path d="M790 112 L840 112" class="d-e-user"/><text x="850" y="117" class="d-sub">사용자 트래픽</text>
+        <path d="M1040 112 L1090 112" class="d-e-obs"/><text x="1100" y="117" class="d-sub">관측 데이터</text>
+        <path d="M1290 112 L1340 112" class="d-e-git"/><text x="1350" y="117" class="d-sub">Git · GitOps</text>
+        <path d="M1540 112 L1590 112" class="d-e-fail"/><text x="1600" y="117" class="d-sub">차단 · 실패 지점</text>
+
+        <!-- 왼쪽 열: 입구 -->
+        <rect x="40" y="160" width="310" height="110" rx="12" class="d-card"/>
+        <text x="60" y="188" class="d-ttl">함수 개발자</text>
+        <text x="60" y="213" class="d-sub">deploy-fn.sh · curl POST {name, code}</text>
+        <text x="60" y="238" class="d-mono">POST /api/v1/tenants/…/functions</text>
+        <text x="60" y="260" class="d-sub">맥 8090 → 컨트롤 플레인</text>
+
+        <rect x="40" y="280" width="310" height="110" rx="12" class="d-card"/>
+        <text x="60" y="308" class="d-ttl">플랫폼 운영자</text>
+        <text x="60" y="333" class="d-sub">git push (main) · run-all.sh</text>
+        <text x="60" y="358" class="d-mono">kubectl · helm · cilium · kind</text>
+        <text x="60" y="380" class="d-sub">맥 8080 → Argo CD UI</text>
+
+        <rect x="40" y="405" width="310" height="115" rx="12" class="d-agent"/>
+        <text x="60" y="433" class="d-ttl">AI 운영 에이전트</text>
+        <text x="60" y="458" class="d-sub">Claude Code + MCP (stdio)</text>
+        <text x="60" y="483" class="d-mono">get_metrics · scale · rollback</text>
+        <text x="60" y="507" class="d-sub">ops-agent 토큰 · tenant-a 만</text>
+
+        <rect x="40" y="545" width="310" height="75" rx="12" class="d-warn-box"/>
+        <text x="60" y="572" class="d-ttl-s">사람 승인 (터미널)</text>
+        <text x="60" y="600" class="d-mono">python -m ops_mcp.approve</text>
+        <path d="M195 545 L195 523" class="d-e-async" marker-end="url(#f03-m-async)"/>
+        <text x="205" y="538" class="d-lbl">approval_id</text>
+
+        <rect x="40" y="640" width="310" height="110" rx="12" class="d-user-box"/>
+        <text x="60" y="668" class="d-ttl">최종 사용자</text>
+        <text x="60" y="693" class="d-mono">Host: hello.tenant-a.faas.local</text>
+        <text x="60" y="718" class="d-sub">curl → 맥 localhost:8081</text>
+        <text x="60" y="740" class="d-sub">Host 헤더로 함수를 고른다</text>
+
+        <!-- 왼쪽 열 → 다른 곳 -->
+        <path d="M40 335 H24 V140 H1625 V156" class="d-e-git" marker-end="url(#f03-m-git)"/>
+        <text x="800" y="134" class="d-lbl">git push</text>
+        <path d="M350 212 H380 V640 H422" class="d-e-api" marker-end="url(#f03-m-api)"/>
+        <path d="M350 460 H366 V870 H417" class="d-e-api" marker-end="url(#f03-m-api)"/>
+        <path d="M350 700 H358 V1300 H417" class="d-e-user" marker-end="url(#f03-m-user)"/>
+
+        <!-- 컨트롤 플레인 영역 -->
+        <rect x="395" y="150" width="950" height="595" rx="18" class="d-cp"/>
+        <text x="425" y="184" class="d-h">컨트롤 플레인 · 플랫폼 부품</text>
+        <text x="740" y="183" class="d-sub">(이 영역의 파드는 전부 system 풀 노드에 뜬다)</text>
+
+        <rect x="425" y="200" width="425" height="150" rx="12" class="d-card"/>
+        <text x="445" y="230" class="d-ttl">Argo Rollouts</text>
+        <text x="830" y="230" class="d-lbl d-end">argo-rollouts · 02</text>
+        <text x="445" y="256" class="d-sub">Rollout podinfo (fn-canary, 파드 5)</text>
+        <text x="445" y="280" class="d-sub">카나리 20% → 60% → 100%, pause 60s</text>
+        <text x="445" y="304" class="d-sub">AnalysisRun: 30s 뒤부터 15초마다 질의</text>
+        <text x="445" y="328" class="d-sub">2xx 비율 &lt; 0.95 두 번 → abort</text>
+
+        <rect x="895" y="200" width="425" height="150" rx="12" class="d-card"/>
+        <text x="915" y="230" class="d-ttl">Argo CD</text>
+        <text x="1300" y="230" class="d-lbl d-end">argocd · 01</text>
+        <text x="915" y="256" class="d-sub">repo-server: Git clone → helm template</text>
+        <text x="915" y="280" class="d-sub">controller: 비교 → sync · selfHeal · prune</text>
+        <text x="915" y="304" class="d-sub">폴링 120s + jitter 60s · AppSet tenants</text>
+        <text x="915" y="328" class="d-sub">Application 10개 + ApplicationSet 1개</text>
+
+        <rect x="425" y="375" width="425" height="150" rx="12" class="d-obs-box"/>
+        <text x="445" y="405" class="d-ttl">Prometheus</text>
+        <text x="830" y="405" class="d-lbl d-end">monitoring · 02</text>
+        <text x="445" y="431" class="d-sub">prometheus-server:80 · scrape 10s</text>
+        <text x="445" y="455" class="d-sub">prometheus.io/scrape 주석 붙은 파드</text>
+        <text x="445" y="479" class="d-sub">카나리 파드만 골라 2xx 비율 계산</text>
+        <text x="445" y="503" class="d-sub">Helm 차트 29.37.0 (v3.15.0)</text>
+
+        <rect x="895" y="375" width="425" height="150" rx="12" class="d-card"/>
+        <text x="915" y="405" class="d-ttl">Knative Serving</text>
+        <text x="1300" y="405" class="d-lbl d-end">knative-serving · 04</text>
+        <text x="915" y="431" class="d-sub">controller: ksvc → Configuration → Revision</text>
+        <text x="915" y="455" class="d-sub">autoscaler: 동시 요청 수 → 파드 수 (0↔N)</text>
+        <text x="915" y="479" class="d-sub">activator: 파드 0개일 때 요청 보관</text>
+        <text x="915" y="503" class="d-sub">Kourier 연결 · 기능 플래그 3개 enabled</text>
+
+        <rect x="425" y="550" width="425" height="170" rx="12" class="d-card"/>
+        <text x="445" y="580" class="d-ttl">컨트롤 플레인 API</text>
+        <text x="830" y="580" class="d-lbl d-end">faas-system · 05</text>
+        <text x="445" y="606" class="d-sub">Spring Boot + fabric8 · SA control-plane</text>
+        <text x="445" y="630" class="d-sub">POST → 202 + Location (BUILDING)</text>
+        <text x="445" y="654" class="d-sub">kaniko Job + 소스 ConfigMap (faas-build)</text>
+        <text x="445" y="678" class="d-sub">digest 읽기 → Knative Service SSA</text>
+        <text x="445" y="702" class="d-sub">자신의 배포: Argo CD platform-05</text>
+
+        <rect x="895" y="550" width="425" height="170" rx="12" class="d-card"/>
+        <text x="915" y="580" class="d-ttl">Cilium · Hubble</text>
+        <text x="1300" y="580" class="d-lbl d-end">kube-system · 03·04</text>
+        <text x="915" y="606" class="d-sub">cilium agent: 노드마다 eBPF 데이터 경로</text>
+        <text x="915" y="630" class="d-sub">cilium-operator · cilium CLI 1.20.3</text>
+        <text x="915" y="654" class="d-sub">NetworkPolicy 강제 (default deny)</text>
+        <text x="915" y="678" class="d-sub">hubble-relay · hubble-ui: 흐름 기록</text>
+        <text x="915" y="702" class="d-sub">tenant-a: knative·kourier 출발만 허용</text>
+
+        <!-- 컨트롤 플레인 안 선 -->
+        <path d="M895 275 H852" class="d-e-prov" marker-end="url(#f03-m-prov)"/>
+        <text x="857" y="267" class="d-lbl">sync</text>
+        <path d="M1107 350 V373" class="d-e-prov" marker-end="url(#f03-m-prov)"/>
+        <text x="1117" y="367" class="d-lbl">faas-functions</text>
+        <path d="M637 350 V373" class="d-e-api" marker-end="url(#f03-m-api)"/>
+        <text x="647" y="367" class="d-lbl">PromQL 질의</text>
+        <path d="M850 600 H872 V450 H893" class="d-e-api" marker-end="url(#f03-m-api)"/>
+        <text x="853" y="592" class="d-lbl">SSA</text>
+        <path d="M700 720 V778 H900 V813" class="d-e-prov" marker-end="url(#f03-m-prov)"/>
+        <text x="710" y="764" class="d-lbl">Job 생성</text>
+        <path d="M1320 470 H1335 V790 H1210 V813" class="d-e-prov" marker-end="url(#f03-m-prov)"/>
+        <text x="1218" y="806" class="d-lbl">파드 생성</text>
+
+        <!-- 노드 풀 -->
+        <text x="40" y="800" class="d-h">노드 풀</text>
+        <text x="40" y="828" class="d-sub">kind 노드 = 맥 위 Docker 컨테이너</text>
+        <text x="40" y="852" class="d-sub">taint 가 남을 막고</text>
+        <text x="40" y="876" class="d-sub">toleration 은 통과증</text>
+        <text x="40" y="900" class="d-sub">nodeSelector 로 거기로만 간다</text>
+        <text x="40" y="932" class="d-lbl">모든 노드: kubelet · containerd</text>
+        <text x="40" y="952" class="d-lbl">· cilium agent (eBPF)</text>
+
+        <rect x="395" y="770" width="950" height="390" rx="14" class="d-pool"/>
+        <text x="420" y="797" class="d-ttl-s">kind 클러스터 faas · 노드 4대</text>
+
+        <rect x="420" y="815" width="165" height="305" rx="12" class="d-card"/>
+        <text x="434" y="843" class="d-ttl-s">control-plane</text>
+        <text x="432" y="866" class="d-mono">faas-control-plane</text>
+        <text x="434" y="892" class="d-sub">API 서버 · etcd</text>
+        <text x="434" y="914" class="d-sub">스케줄러 · 컨트롤러</text>
+        <text x="434" y="962" class="d-sub">NodePort 31080</text>
+        <text x="434" y="984" class="d-sub">extraPortMappings</text>
+        <text x="434" y="1006" class="d-sub">hostPort 8081</text>
+
+        <rect x="597" y="815" width="250" height="305" rx="12" class="d-card"/>
+        <text x="612" y="843" class="d-ttl-s">system 풀</text>
+        <text x="612" y="866" class="d-mono">faas-worker · pool=system</text>
+        <text x="612" y="890" class="d-lbl">taint 없음 → 플랫폼이 모인다</text>
+        <text x="612" y="916" class="d-sub">argocd · argo-rollouts</text>
+        <text x="612" y="938" class="d-sub">monitoring · knative-serving</text>
+        <text x="612" y="960" class="d-sub">kourier-system · faas-system</text>
+        <text x="612" y="982" class="d-sub">fn-demo (hello-fn · bye-fn)</text>
+        <text x="612" y="1004" class="d-sub">fn-canary (podinfo ×5)</text>
+        <text x="612" y="1026" class="d-sub">tenant-a/b 의 hello-fn</text>
+        <text x="612" y="1048" class="d-sub">(toleration 없는 파드 전부)</text>
+
+        <rect x="859" y="815" width="225" height="305" rx="12" class="d-card"/>
+        <text x="874" y="843" class="d-ttl-s">build 풀</text>
+        <text x="874" y="866" class="d-mono">faas-worker2 · pool=build</text>
+        <text x="874" y="890" class="d-lbl">pool=build:NoSchedule</text>
+        <text x="874" y="916" class="d-sub">faas-build: kaniko Job</text>
+        <text x="874" y="938" class="d-sub">build-hello-xxxxxxxxxx (05)</text>
+        <text x="874" y="960" class="d-sub">fn-build: build-hello (04)</text>
+        <text x="874" y="982" class="d-sub">executor v1.23.2 · 일회용</text>
+        <text x="874" y="1004" class="d-sub">nodeSelector + toleration</text>
+
+        <rect x="1096" y="815" width="229" height="305" rx="12" class="d-card"/>
+        <text x="1111" y="843" class="d-ttl-s">exec 풀</text>
+        <text x="1111" y="866" class="d-mono">faas-worker3 · pool=exec</text>
+        <text x="1111" y="890" class="d-lbl">pool=exec:NoSchedule</text>
+        <text x="1111" y="916" class="d-sub">fn-runtime:</text>
+        <text x="1111" y="938" class="d-sub">hello-runc · hello-gvisor</text>
+        <text x="1111" y="960" class="d-sub">hello-gvisor-warm (min 1)</text>
+        <text x="1111" y="982" class="d-sub">tenant-a: hello (05)</text>
+        <text x="1111" y="1004" class="d-sub">runsc (gVisor) 설치됨</text>
+        <text x="1111" y="1026" class="d-sub">함수 + queue-proxy</text>
+
+        <!-- 레지스트리 push / pull -->
+        <path d="M972 1120 V1140 H1375 V450 H1388" class="d-e-prov" marker-end="url(#f03-m-prov)"/>
+        <text x="1180" y="1156" class="d-lbl">이미지 push</text>
+        <path d="M1390 420 H1350 V950 H1328" class="d-e-prov d-dash" marker-end="url(#f03-m-prov)"/>
+
+        <!-- 오른쪽 열: 클러스터 밖 저장소 -->
+        <rect x="1390" y="160" width="470" height="150" rx="12" class="d-cp-box"/>
+        <text x="1410" y="190" class="d-ttl">GitHub · main 브랜치</text>
+        <text x="1410" y="215" class="d-mono">Pionia5375/Softbank_Study_1 (public)</text>
+        <text x="1410" y="240" class="d-sub">Argo CD 가 2~3분마다 읽는다 (정답 원천)</text>
+        <text x="1410" y="264" class="d-sub">01 gitops/apps · 02 app · 03 charts·tenants</text>
+        <text x="1410" y="288" class="d-sub">04 functions/ksvc · 05 k8s/platform</text>
+        <path d="M1388 240 H1323" class="d-e-git" marker-end="url(#f03-m-git)"/>
+        <text x="1334" y="232" class="d-lbl">폴링</text>
+
+        <rect x="1390" y="330" width="470" height="150" rx="12" class="d-prov-box"/>
+        <text x="1410" y="360" class="d-ttl">kind-registry (registry:2)</text>
+        <text x="1410" y="385" class="d-sub">맥 localhost:5001 = 안에서 kind-registry:5000</text>
+        <text x="1410" y="410" class="d-mono">push kind-registry:5000/tenant-a/hello:&lt;id&gt;</text>
+        <text x="1410" y="435" class="d-mono">pull localhost:5001/tenant-a/hello@sha256</text>
+        <text x="1410" y="460" class="d-sub">노드 containerd 의 hosts.toml 이 두 이름을 한 곳으로</text>
+
+        <rect x="1390" y="500" width="470" height="150" rx="12" class="d-plain-box"/>
+        <text x="1410" y="530" class="d-ttl">외부 이미지 · 차트 저장소</text>
+        <text x="1410" y="555" class="d-sub">Docker Hub: python:3.12-slim · busybox · http-echo</text>
+        <text x="1410" y="580" class="d-sub">gcr.io: kaniko executor · ghcr.io: podinfo 6.14.1</text>
+        <text x="1410" y="605" class="d-sub">GitHub releases: Knative · Kourier v1.23.0</text>
+        <text x="1410" y="630" class="d-sub">Helm: argo-helm · prometheus-community</text>
+
+        <rect x="1390" y="670" width="470" height="150" rx="12" class="d-agent"/>
+        <text x="1410" y="700" class="d-ttl">맥 로컬 상태 (클러스터 밖)</text>
+        <text x="1410" y="725" class="d-mono">~/.ops-mcp/audit.jsonl · approvals/</text>
+        <text x="1410" y="750" class="d-mono">~/.ops-mcp/kubeconfig-tenant-a</text>
+        <text x="1410" y="775" class="d-sub">poc/0N-*/results/*.csv (측정 기록)</text>
+        <text x="1410" y="800" class="d-sub">kubeconfig 컨텍스트 kind-faas (관리자)</text>
+
+        <rect x="1390" y="840" width="470" height="150" rx="12" class="d-plain-box"/>
+        <text x="1410" y="870" class="d-ttl">함수 이력 = Knative Revision</text>
+        <text x="1410" y="895" class="d-sub">hello-00001, hello-00002 … (불변 스냅샷)</text>
+        <text x="1410" y="920" class="d-sub">Git 이 아니라 Revision + 감사 로그에 남는다</text>
+        <text x="1410" y="945" class="d-sub">롤백 = traffic 을 옛 Revision 으로 고정</text>
+        <text x="1410" y="970" class="d-sub">클러스터 재생성 = 함수는 다시 배포</text>
+
+        <rect x="1390" y="1010" width="470" height="130" rx="12" class="d-plain-box"/>
+        <text x="1410" y="1040" class="d-ttl">고정한 버전</text>
+        <text x="1410" y="1065" class="d-sub">kindest/node v1.37.0 · Cilium 1.20.3</text>
+        <text x="1410" y="1090" class="d-sub">argo-cd 10.10.5 · argo-rollouts 2.43.8</text>
+        <text x="1410" y="1115" class="d-sub">prometheus 29.37.0 · gVisor 20261012.0</text>
+
+        <!-- 데이터 플레인 -->
+        <text x="40" y="1230" class="d-h">데이터 플레인</text>
+        <text x="40" y="1258" class="d-sub">사용자 요청이 지나는 길</text>
+        <text x="40" y="1282" class="d-sub">Argo CD·컨트롤 플레인이</text>
+        <text x="40" y="1306" class="d-sub">멈춰도 떠 있는 함수는 응답</text>
+
+        <rect x="395" y="1195" width="1465" height="310" rx="14" class="d-user-box d-dash"/>
+        <rect x="420" y="1255" width="180" height="90" rx="12" class="d-card"/>
+        <text x="435" y="1283" class="d-ttl-s">맥 :8081</text>
+        <text x="435" y="1307" class="d-sub">Docker Desktop</text>
+        <text x="435" y="1330" class="d-sub">Host 헤더 그대로</text>
+        <path d="M600 1300 H633" class="d-e-user" marker-end="url(#f03-m-user)"/>
+        <rect x="635" y="1255" width="200" height="90" rx="12" class="d-card"/>
+        <text x="650" y="1283" class="d-ttl-s">control-plane 노드</text>
+        <text x="650" y="1307" class="d-mono">hostPort 8081 → 31080</text>
+        <text x="650" y="1330" class="d-sub">kind extraPortMappings</text>
+        <path d="M835 1300 H868" class="d-e-user" marker-end="url(#f03-m-user)"/>
+        <rect x="870" y="1255" width="220" height="90" rx="12" class="d-card"/>
+        <text x="885" y="1283" class="d-ttl-s">Kourier (Envoy)</text>
+        <text x="885" y="1307" class="d-mono">kourier-system · NodePort</text>
+        <text x="885" y="1330" class="d-sub">Host → 어느 함수인지</text>
+
+        <path d="M1090 1285 H1110 V1250 H1393" class="d-e-user" marker-end="url(#f03-m-user)"/>
+        <text x="1150" y="1243" class="d-lbl">파드 ≥ 1: 바로 파드로</text>
+        <path d="M1090 1315 H1110 V1427 H1133" class="d-e-user" marker-end="url(#f03-m-user)"/>
+        <text x="1140" y="1373" class="d-lbl">파드 0개 = 콜드 스타트</text>
+        <rect x="1135" y="1380" width="200" height="95" rx="12" class="d-card"/>
+        <text x="1150" y="1406" class="d-ttl-s">activator</text>
+        <text x="1150" y="1430" class="d-sub">요청을 붙잡아 둔다</text>
+        <text x="1150" y="1453" class="d-sub">autoscaler 에 0→1</text>
+        <path d="M1335 1427 H1393" class="d-e-user" marker-end="url(#f03-m-user)"/>
+
+        <path d="M1368 1222 V1492" class="d-e-fail"/>
+        <text x="1342" y="1214" class="d-lbl d-tag-fail">정책 벽</text>
+
+        <rect x="1395" y="1222" width="445" height="268" rx="12" class="d-card"/>
+        <text x="1412" y="1248" class="d-ttl-s">함수 파드 · exec 풀</text>
+        <text x="1412" y="1270" class="d-mono">tenant-a/hello · fn-runtime/hello-*</text>
+        <rect x="1407" y="1282" width="421" height="122" rx="10" class="d-pool"/>
+        <rect x="1419" y="1292" width="190" height="70" rx="8" class="d-plain-box"/>
+        <text x="1431" y="1318" class="d-subd">queue-proxy :8012</text>
+        <text x="1431" y="1342" class="d-sub">동시 요청 수 집계</text>
+        <path d="M1609 1327 H1624" class="d-e-user" marker-end="url(#f03-m-user)"/>
+        <rect x="1626" y="1292" width="190" height="70" rx="8" class="d-plain-box"/>
+        <text x="1638" y="1318" class="d-subd">user-container :8080</text>
+        <text x="1638" y="1342" class="d-sub">handler.py · Go 함수</text>
+        <text x="1419" y="1392" class="d-lbl">gVisor runsc 샌드박스 (RuntimeClass gvisor 일 때만)</text>
+        <text x="1412" y="1428" class="d-sub">들어오는 순간 Cilium eBPF 가 NetworkPolicy 검사</text>
+        <text x="1412" y="1452" class="d-mono">allow-from: knative-serving · kourier-system</text>
+        <text x="1412" y="1476" class="d-sub d-tag-fail">허용 없으면 DROPPED → READY 인데 curl 타임아웃</text>
+
+        <!-- 관측 -->
+        <path d="M527 1505 V1583" class="d-e-obs" marker-end="url(#f03-m-obs)"/>
+        <path d="M767 1505 V1583" class="d-e-obs" marker-end="url(#f03-m-obs)"/>
+        <path d="M1727 1490 V1583" class="d-e-obs" marker-end="url(#f03-m-obs)"/>
+        <text x="40" y="1580" class="d-h">관측 · 증거</text>
+        <text x="40" y="1606" class="d-sub">무슨 일이 일어났나를</text>
+        <text x="40" y="1630" class="d-sub">어디서 확인하나</text>
+        <rect x="395" y="1545" width="1465" height="175" rx="14" class="d-obs-box d-dash"/>
+        <text x="900" y="1536" class="d-lbl">지표 · 흐름 · 응답이 아래로</text>
+
+        <rect x="413" y="1585" width="228" height="115" rx="12" class="d-card"/>
+        <text x="428" y="1612" class="d-ttl-s">Prometheus</text>
+        <text x="428" y="1638" class="d-sub">prometheus-server:80</text>
+        <text x="428" y="1662" class="d-sub">카나리 2xx 비율 · 알림</text>
+        <text x="428" y="1686" class="d-mono">rate(...[1m])</text>
+
+        <rect x="653" y="1585" width="228" height="115" rx="12" class="d-card"/>
+        <text x="668" y="1612" class="d-ttl-s">Hubble</text>
+        <text x="668" y="1638" class="d-mono">hubble observe</text>
+        <text x="668" y="1662" class="d-mono">--verdict DROPPED</text>
+        <text x="668" y="1686" class="d-sub">어디서 왜 버려졌나</text>
+
+        <rect x="893" y="1585" width="228" height="115" rx="12" class="d-card"/>
+        <text x="908" y="1612" class="d-ttl-s">Argo CD UI</text>
+        <text x="908" y="1638" class="d-sub">맥 localhost:8080</text>
+        <text x="908" y="1662" class="d-sub">Sync · Health 두 상태</text>
+        <text x="908" y="1686" class="d-sub">OutOfSync · Degraded</text>
+
+        <rect x="1133" y="1585" width="228" height="115" rx="12" class="d-card"/>
+        <text x="1148" y="1612" class="d-ttl-s">kubectl 상태</text>
+        <text x="1148" y="1638" class="d-mono">get ksvc · rollout</text>
+        <text x="1148" y="1662" class="d-mono">get nodes -L pool</text>
+        <text x="1148" y="1686" class="d-sub">describe · 이벤트</text>
+
+        <rect x="1373" y="1585" width="228" height="115" rx="12" class="d-card"/>
+        <text x="1388" y="1612" class="d-ttl-s">감사 로그</text>
+        <text x="1388" y="1638" class="d-sub">컨트롤 플레인 AUDIT 줄</text>
+        <text x="1388" y="1662" class="d-mono">~/.ops-mcp/audit.jsonl</text>
+        <text x="1388" y="1686" class="d-sub">allowed · denied · executed</text>
+
+        <rect x="1613" y="1585" width="228" height="115" rx="12" class="d-card"/>
+        <text x="1628" y="1612" class="d-ttl-s">합성 프로브 (06)</text>
+        <text x="1628" y="1638" class="d-sub">probe.sh · 0.1초마다</text>
+        <text x="1628" y="1662" class="d-sub">사용자가 본 에러</text>
+        <text x="1628" y="1686" class="d-mono">results/*.csv</text>
+
+        <!-- 설계 원칙 -->
+        <text x="40" y="1795" class="d-h">설계 원칙</text>
+        <text x="40" y="1822" class="d-sub">본선 Q&amp;A 에서</text>
+        <text x="40" y="1846" class="d-sub">한 문장씩 말할 것</text>
+        <rect x="395" y="1760" width="1465" height="250" rx="14" class="d-card"/>
+        <text x="420" y="1805" class="d-ttl-s d-tag-cp">플랫폼은 GitOps, 함수는 API</text>
+        <text x="420" y="1831" class="d-sub">Git 이 정답, Argo CD 가 맞춘다</text>
+        <text x="420" y="1855" class="d-sub">함수는 컨트롤 플레인이 SSA 로 바로</text>
+        <text x="905" y="1805" class="d-ttl-s d-tag-cp">울타리는 여러 겹</text>
+        <text x="905" y="1831" class="d-sub">Namespace · Quota · LimitRange · NetPol · RBAC · AppProject</text>
+        <text x="905" y="1855" class="d-sub">한 겹이 뚫려도 다음 겹이 막는다</text>
+        <text x="1390" y="1805" class="d-ttl-s d-tag-cp">taint + toleration + nodeSelector</text>
+        <text x="1390" y="1831" class="d-sub">남을 막고, 나는 통과하고, 거기로만 간다</text>
+        <text x="1390" y="1855" class="d-sub">system 은 taint 없음 → 플랫폼이 자연히 모인다</text>
+        <text x="420" y="1910" class="d-ttl-s d-tag-cp">digest 고정 · 멱등 빌드</text>
+        <text x="420" y="1936" class="d-sub">buildId = 이름 + 코드 해시 앞 10자</text>
+        <text x="420" y="1960" class="d-sub">Revision = 이 이미지, 롤백이 정확하다</text>
+        <text x="905" y="1910" class="d-ttl-s d-tag-cp">AI 는 작은 열쇠 + 사람 승인</text>
+        <text x="905" y="1936" class="d-sub">막는 건 프롬프트가 아니라 RBAC</text>
+        <text x="905" y="1960" class="d-sub">rollback 승인: 대상 고정 · 1회용 · 15분</text>
+        <text x="1390" y="1910" class="d-ttl-s d-tag-cp">판정 못 하면 멈춘다</text>
+        <text x="1390" y="1936" class="d-sub">Prometheus 질의 실패도 abort (fail-closed)</text>
+        <text x="1390" y="1960" class="d-sub">READY 와 실제로 닿는다는 다르다</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 0-3.</b> 전체 아키텍처. 예선 v5.5 그림과 같은 어휘(카드, 점선 영역, 선 종류)로 그렸다. 가운데 점선 영역의 부품은 논리적으로 "플랫폼", 물리적으로는 전부 system 풀 노드(faas-worker)에서 돈다. 함수 파드만 exec 풀, 빌드 Job 만 build 풀로 간다.</figcaption>
+  </figure>
+  <p>그림을 읽는 순서를 하나 정해 두면 설명할 때 덜 흔들린다. <strong>사람(왼쪽) → 무엇을 바꾸나(가운데) → 어디에 뜨나(노드 풀) → 사용자는 어떻게 닿나(데이터 플레인) → 어떻게 확인하나(관측)</strong>. 이 순서는 아래 <a href="#flows">핵심 흐름</a>의 다섯 시퀀스와 1:1 로 맞는다.</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>영역별로 무엇을 하나</h3>
+  <h4>입구 (왼쪽 열)</h4>
+  <p>사람과 에이전트가 플랫폼에 닿는 길은 네 가지다. 각 길마다 쥔 권한이 다르다는 점이 핵심이다. 플랫폼 운영자는 Git 쓰기 권한과 관리자 kubeconfig 를 갖는다. 함수 개발자는 컨트롤 플레인 API 만 부른다(지금은 인증 없음, 알려진 한계). AI 에이전트는 tenant-a 하나에 묶인 <code>ops-agent</code> ServiceAccount 토큰만 갖고, 롤백은 사람이 터미널에서 승인해야 실행된다. 최종 사용자는 맥 8081 포트로 HTTP 만 보낸다.</p>
+  <h4>컨트롤 플레인 (가운데 점선)</h4>
+  <p>쿠버네티스 자체의 컨트롤 플레인(API 서버, etcd, 스케줄러)과 구별해서, 이 영역은 <strong>우리 플랫폼의 컨트롤 플레인</strong>이다. 무엇을 어디에 몇 개 띄울지 정하고 지시하는 부품들이다. Argo CD 는 Git 을 원하는 상태로 삼아 클러스터를 맞추고, Argo Rollouts 는 그 위에서 새 버전을 조금씩 내보내며 Prometheus 숫자로 판정한다. Knative Serving 은 함수 하나를 Revision·오토스케일러·주소로 펼친다. 컨트롤 플레인 API(Spring Boot)는 사람 말(함수 이름, 코드)을 쿠버네티스 말(Job, ConfigMap, Knative Service)로 번역한다. Cilium 은 모든 노드의 커널에 eBPF 프로그램을 꽂아 파드 사이 패킷을 나르고 NetworkPolicy 를 강제한다.</p>
+  <h4>노드 풀 (가운데 아래 점선)</h4>
+  <p>kind 노드 4개가 맥 위 Docker 컨테이너로 뜬다. 워커 3대에 <code>pool</code> 라벨을 붙이고, build·exec 두 풀에는 <code>NoSchedule</code> taint 를 걸었다. 설치 YAML 을 하나도 고치지 않아도 Argo CD·Knative 같은 플랫폼 파드는 toleration 이 없으니 taint 없는 system 노드로만 간다. 빌드 Job 과 함수 파드만 toleration 과 nodeSelector 를 둘 다 달고 자기 풀로 들어간다.</p>
+  <h4>저장소 (오른쪽 열)</h4>
+  <p>클러스터 밖에 있지만 클러스터가 기대는 것들. GitHub 의 main 브랜치는 플랫폼의 정답 원천이고, kind-registry 는 클러스터 안에서 빌드한 함수 이미지가 쌓이는 곳이다. 같은 레지스트리를 파드(kaniko)는 <code>kind-registry:5000</code>, 노드(containerd)는 <code>localhost:5001</code> 로 부르고, 노드 설정 <code>hosts.toml</code> 이 두 이름을 같은 곳으로 돌린다. 함수의 이력은 Git 이 아니라 Knative Revision 과 감사 로그에 남는다.</p>
+  <h4>데이터 플레인 (파란 띠)</h4>
+  <p>맥 8081 → kind 의 extraPortMappings → control-plane 노드 31080 (NodePort) → Kourier(Envoy). Kourier 는 Host 헤더 <code>&lt;함수&gt;.&lt;namespace&gt;.faas.local</code> 로 어느 함수인지 고른다. 파드가 있으면 바로 파드의 queue-proxy(8012) → 사용자 컨테이너(8080). 파드가 0개면 activator 가 요청을 붙잡고 autoscaler 에 수요를 알리고, 파드가 준비되면 넘긴다. 이 0→1 구간이 콜드 스타트다. tenant-a 파드로 들어가는 순간 Cilium 이 NetworkPolicy 를 검사한다.</p>
+  <h4>관측과 설계 원칙 (아래 두 띠)</h4>
+  <p>관측 띠는 "무슨 일이 일어났나" 를 볼 곳 여섯 가지다. 같은 사건을 서로 다른 눈으로 본다: Prometheus(숫자), Hubble(패킷 흐름), Argo CD(Git 과의 차이), kubectl(쿠버네티스 상태), 감사 로그(누가 무엇을 했나), 합성 프로브(사용자가 실제로 겪은 것). 설계 원칙 띠는 결정 여섯 개를 한 문장씩 줄인 것이다. 본선 발표에서 그대로 말할 수 있게 썼다.</p>
+</div>
+
+<h3>같은 구조를 층으로 쌓으면</h3>
+
+<p>그림 0-3 은 "누가 누구를 부르나" 를 보여 준다. 그림 0-4 는 같은 구성 요소를 "무엇이 무엇 위에 서 있나" 로 다시 쌓았다. 장애를 추적할 때는 이 그림을 아래에서 위로 훑는다: 맥의 Docker 메모리가 모자라면 노드 컨테이너가 흔들리고, 그러면 kubelet 이, 그러면 API 서버가 보는 노드 상태가, 결국 맨 위 함수 응답이 흔들린다.</p>
+
+<figure>
+  <div class="fig scroll">
+    <svg viewBox="0 0 1100 780" role="img" aria-labelledby="f04-t">
+      <title id="f04-t">맥부터 함수까지 층으로 쌓은 구조</title>
+      <text x="40" y="40" class="d-ttl">아래층이 위층을 받친다 · 오른쪽은 그 층을 설명하는 장</text>
+
+      <rect x="40" y="70" width="740" height="58" rx="10" class="d-user-box"/>
+      <text x="60" y="95" class="d-ttl-s">테넌트 · 함수 · 샘플 앱</text>
+      <text x="60" y="117" class="d-sub">tenant-a · tenant-b · fn-runtime · fn-demo · fn-canary — 사용자 코드와 실험용 앱</text>
+      <rect x="800" y="70" width="260" height="58" rx="10" class="d-plain-box"/>
+      <text x="815" y="104" class="d-lbl">03 · 05 · 07장</text>
+
+      <rect x="40" y="142" width="740" height="58" rx="10" class="d-cp-box"/>
+      <text x="60" y="167" class="d-ttl-s">플랫폼 부품 (add-on)</text>
+      <text x="60" y="189" class="d-sub">Argo CD · Argo Rollouts · Prometheus · Knative Serving · Kourier · 컨트롤 플레인 API</text>
+      <rect x="800" y="142" width="260" height="58" rx="10" class="d-plain-box"/>
+      <text x="815" y="176" class="d-lbl">01 · 02 · 05 · 07장</text>
+
+      <rect x="40" y="214" width="740" height="58" rx="10" class="d-obs-box"/>
+      <text x="60" y="239" class="d-ttl-s">Cilium (CNI)</text>
+      <text x="60" y="261" class="d-sub">eBPF 데이터 경로 · 파드 IP · NetworkPolicy 강제 · Hubble 흐름 기록</text>
+      <rect x="800" y="214" width="260" height="58" rx="10" class="d-plain-box"/>
+      <text x="815" y="248" class="d-lbl">04장</text>
+
+      <rect x="40" y="286" width="740" height="58" rx="10" class="d-card"/>
+      <text x="60" y="311" class="d-ttl-s">쿠버네티스 API (control-plane 노드)</text>
+      <text x="60" y="333" class="d-sub">API 서버 · etcd · 스케줄러 · 컨트롤러 매니저 · RBAC · 어드미션 (Pod Security)</text>
+      <rect x="800" y="286" width="260" height="58" rx="10" class="d-plain-box"/>
+      <text x="815" y="320" class="d-lbl">모든 장의 바탕 · 03장 (RBAC)</text>
+
+      <rect x="40" y="358" width="740" height="58" rx="10" class="d-card"/>
+      <text x="60" y="383" class="d-ttl-s">kubelet (노드마다)</text>
+      <text x="60" y="405" class="d-sub">파드를 실제로 띄우고 지킨다 · kube-node-lease 하트비트 (끊기면 08장의 노드 장애가 시작)</text>
+      <rect x="800" y="358" width="260" height="58" rx="10" class="d-plain-box"/>
+      <text x="815" y="392" class="d-lbl">08장 (노드 장애)</text>
+
+      <rect x="40" y="430" width="360" height="58" rx="10" class="d-plain-box"/>
+      <text x="60" y="455" class="d-ttl-s">containerd + runc</text>
+      <text x="60" y="477" class="d-sub">기본 런타임 · 호스트 커널을 직접 공유</text>
+      <rect x="420" y="430" width="360" height="58" rx="10" class="d-agent"/>
+      <text x="440" y="455" class="d-ttl-s">containerd + runsc (gVisor)</text>
+      <text x="440" y="477" class="d-sub">exec 풀만 · Sentry 가 시스템 콜을 대신 받음</text>
+      <rect x="800" y="430" width="260" height="58" rx="10" class="d-plain-box"/>
+      <text x="815" y="464" class="d-lbl">06장</text>
+
+      <rect x="40" y="502" width="740" height="58" rx="10" class="d-plain-box"/>
+      <text x="60" y="527" class="d-ttl-s">kind 노드 컨테이너 4개 (kindest/node:v1.37.0)</text>
+      <text x="60" y="549" class="d-mono">faas-control-plane · faas-worker · faas-worker2 · faas-worker3</text>
+      <rect x="800" y="502" width="260" height="58" rx="10" class="d-plain-box"/>
+      <text x="815" y="536" class="d-lbl">03장 (노드 풀)</text>
+
+      <rect x="40" y="574" width="740" height="58" rx="10" class="d-plain-box"/>
+      <text x="60" y="599" class="d-ttl-s">Docker Desktop (리눅스 VM)</text>
+      <text x="60" y="621" class="d-sub">docker 네트워크 kind · kind-registry 컨테이너 · 메모리 10GB 이상 권장</text>
+      <rect x="800" y="574" width="260" height="58" rx="10" class="d-plain-box"/>
+      <text x="815" y="608" class="d-lbl">06장 (레지스트리)</text>
+
+      <rect x="40" y="646" width="740" height="58" rx="10" class="d-plain-box"/>
+      <text x="60" y="671" class="d-ttl-s">맥 (macOS)</text>
+      <text x="60" y="693" class="d-sub">포트 8080 · 8081 · 8090 · 5001 · Claude Code · kubectl · helm · kind · cilium CLI</text>
+      <rect x="800" y="646" width="260" height="58" rx="10" class="d-plain-box"/>
+      <text x="815" y="680" class="d-lbl">00장 (포트) · 09장 (EC2 로)</text>
+
+      <text x="40" y="745" class="d-sub">아래층이 깨지면 위층 전체가 증상을 낸다. 사용자 요청은 맥(아래)에서 들어와 함수(위)까지 올라간다.</text>
+    </svg>
+  </div>
+  <figcaption><b>그림 0-4.</b> 같은 아키텍처를 층으로. 런타임 층만 두 칸으로 갈라진다: 같은 containerd 가 RuntimeClass 에 따라 runc 또는 runsc 를 부른다.</figcaption>
+</figure>
+
+<h3>맥에서 클러스터로 들어가는 문</h3>
+
+<p>로컬 PoC 에서 맥과 클러스터를 잇는 문은 다섯 개다. 포트 번호가 겹치면 엉뚱한 곳으로 가므로(05 README 는 컨트롤 플레인을 8080 으로 열어 Argo CD UI 와 겹친다), run-all.sh 는 컨트롤 플레인을 8090 으로 옮겼다.</p>
+
+<figure>
+  <div class="fig scroll">
+    <svg viewBox="0 0 1000 470" role="img" aria-labelledby="f05-t">
+      <title id="f05-t">맥의 포트와 클러스터 안 목적지</title>
+      <defs>
+        <marker id="f05-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        <marker id="f05-m-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+        <marker id="f05-m-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+        <marker id="f05-m-async" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-async"/></marker>
+      </defs>
+      <rect x="20" y="40" width="250" height="410" rx="14" class="d-plain-box"/>
+      <text x="40" y="70" class="d-ttl">맥</text>
+      <rect x="690" y="40" width="290" height="410" rx="14" class="d-cp"/>
+      <text x="710" y="70" class="d-ttl">클러스터 · 레지스트리</text>
+
+      <rect x="40" y="90" width="210" height="50" rx="8" class="d-card"/>
+      <text x="54" y="111" class="d-mono">localhost:8080</text>
+      <text x="54" y="131" class="d-sub">Argo CD UI</text>
+      <path d="M250 115 H708" class="d-e-api" marker-end="url(#f05-m-api)"/>
+      <text x="290" y="106" class="d-mono">port-forward svc/argocd-server 8080:80</text>
+      <rect x="710" y="90" width="250" height="50" rx="8" class="d-card"/>
+      <text x="724" y="111" class="d-mono">argocd-server :80</text>
+      <text x="724" y="131" class="d-sub">argocd · UI 와 API</text>
+
+      <rect x="40" y="165" width="210" height="50" rx="8" class="d-user-box"/>
+      <text x="54" y="186" class="d-mono">localhost:8081</text>
+      <text x="54" y="206" class="d-sub">함수 입구</text>
+      <path d="M250 190 H708" class="d-e-user" marker-end="url(#f05-m-user)"/>
+      <text x="290" y="181" class="d-mono">extraPortMappings → 노드 31080 (NodePort)</text>
+      <rect x="710" y="165" width="250" height="50" rx="8" class="d-card"/>
+      <text x="724" y="186" class="d-mono">kourier :80 → Envoy</text>
+      <text x="724" y="206" class="d-sub">kourier-system → 함수 파드</text>
+
+      <rect x="40" y="240" width="210" height="50" rx="8" class="d-card"/>
+      <text x="54" y="261" class="d-mono">localhost:8090</text>
+      <text x="54" y="281" class="d-sub">컨트롤 플레인 API</text>
+      <path d="M250 265 H708" class="d-e-api" marker-end="url(#f05-m-api)"/>
+      <text x="290" y="256" class="d-mono">port-forward svc/control-plane 8090:80</text>
+      <rect x="710" y="240" width="250" height="50" rx="8" class="d-card"/>
+      <text x="724" y="261" class="d-mono">control-plane :80 → 8080</text>
+      <text x="724" y="281" class="d-sub">faas-system · Spring Boot</text>
+
+      <rect x="40" y="315" width="210" height="50" rx="8" class="d-prov-box"/>
+      <text x="54" y="336" class="d-mono">localhost:5001</text>
+      <text x="54" y="356" class="d-sub">kind-registry</text>
+      <path d="M250 340 H708" class="d-e-prov" marker-end="url(#f05-m-prov)"/>
+      <text x="290" y="331" class="d-mono">docker run -p 127.0.0.1:5001:5000 registry:2</text>
+      <rect x="710" y="315" width="250" height="50" rx="8" class="d-card"/>
+      <text x="724" y="336" class="d-mono">kind-registry:5000</text>
+      <text x="724" y="356" class="d-sub">docker 네트워크 kind 안의 이름</text>
+
+      <rect x="40" y="390" width="210" height="50" rx="8" class="d-agent"/>
+      <text x="54" y="411" class="d-mono">Claude Code</text>
+      <text x="54" y="431" class="d-sub">MCP stdio → ops_mcp</text>
+      <path d="M250 415 H708" class="d-e-async" marker-end="url(#f05-m-async)"/>
+      <text x="290" y="406" class="d-mono">kubeconfig-tenant-a (ops-agent 토큰)</text>
+      <rect x="710" y="390" width="250" height="50" rx="8" class="d-card"/>
+      <text x="724" y="411" class="d-mono">kube-apiserver</text>
+      <text x="724" y="431" class="d-sub">tenant-a 에 묶인 권한만</text>
+    </svg>
+  </div>
+  <figcaption><b>그림 0-5.</b> 맥의 다섯 문. 8080·8090 은 port-forward 라 터미널을 닫으면 끊긴다. 8081 은 kind 클러스터를 만들 때 고정한 포트 매핑이라 클러스터가 살아 있는 동안 늘 열려 있다. API 서버 주소는 kind 가 고른 맥 포트로 kubeconfig 에 적힌다.</figcaption>
+</figure>
+
+<div class="tier" data-tier="3">
+  <h3>이름과 값 한곳에 모으기</h3>
+  <p>장마다 같은 이름을 쓴다. 헷갈리면 이 표로 돌아온다. 값은 전부 레포 파일에서 그대로 옮겼다.</p>
+  <div class="table-wrap"><table>
+  <thead><tr><th>항목</th><th>값</th><th>어디에 적혀 있나</th></tr></thead>
+  <tbody>
+  <tr><td>클러스터 · 컨텍스트</td><td><code>faas</code> · <code>kind-faas</code> (06 대역은 <code>chaos</code> · <code>kind-chaos</code>)</td><td><code>poc/04-faas-runtime/cluster/kind-config.yaml</code></td></tr>
+  <tr><td>노드 이미지</td><td><code>kindest/node:v1.37.0</code> (노드 4개 전부)</td><td>같은 파일</td></tr>
+  <tr><td>CNI</td><td><code>disableDefaultCNI: true</code> → <code>cilium install --version 1.20.3</code> + <code>cilium hubble enable --ui</code></td><td><code>poc/04-faas-runtime/scripts/rebuild-cluster.sh</code></td></tr>
+  <tr><td>노드 풀</td><td><code>pool=system</code> (taint 없음) · <code>pool=build</code> + <code>pool=build:NoSchedule</code> · <code>pool=exec</code> + <code>pool=exec:NoSchedule</code></td><td>kind-config 의 <code>labels</code>, <code>kubeadmConfigPatches</code></td></tr>
+  <tr><td>입구</td><td>맥 <code>8081</code> → 노드 <code>31080</code> → Service <code>kourier</code> (port 80 → targetPort 8080)</td><td>kind-config <code>extraPortMappings</code>, setup.sh 의 kourier patch</td></tr>
+  <tr><td>함수 도메인</td><td><code>&lt;이름&gt;.&lt;namespace&gt;.faas.local</code> (DNS 없음, Host 헤더)</td><td>setup.sh 의 <code>config-domain</code> patch</td></tr>
+  <tr><td>레지스트리</td><td>push <code>kind-registry:5000</code>, pull <code>localhost:5001</code>, 태그 해석 건너뛰기에 둘 다 등록</td><td>setup.sh (<code>hosts.toml</code>, <code>registries-skipping-tag-resolving</code>), <code>application.yml</code></td></tr>
+  <tr><td>Knative 기능 플래그</td><td><code>kubernetes.podspec-nodeselector</code> · <code>-tolerations</code> · <code>-runtimeclassname</code> = enabled</td><td><code>platform/knative/config-features-patch.yaml</code></td></tr>
+  <tr><td>gVisor</td><td>RuntimeClass <code>gvisor</code>, handler <code>runsc</code>, scheduling 으로 exec 풀 고정, overhead 50m / 64Mi</td><td><code>platform/runtimeclass-gvisor.yaml</code></td></tr>
+  <tr><td>Argo CD</td><td>차트 <code>argo/argo-cd 10.10.5</code> (v3.5.5), dex·notifications 끔, <code>server.insecure: true</code>, reconciliation 120 + jitter 60</td><td><code>poc/01-argocd/platform/argocd/values.yaml</code></td></tr>
+  <tr><td>Rollouts · Prometheus</td><td><code>argo/argo-rollouts 2.43.8</code> (v1.10.1, 컨트롤러 1개) · <code>prometheus-community/prometheus 29.37.0</code> (scrape 10s)</td><td><code>poc/02-rollouts/platform/*/values.yaml</code></td></tr>
+  <tr><td>Knative · Kourier</td><td>v1.23.0 (release YAML 을 <code>kubectl apply</code>)</td><td><code>poc/04-faas-runtime/scripts/setup.sh</code></td></tr>
+  <tr><td>kaniko</td><td><code>gcr.io/kaniko-project/executor:v1.23.2</code></td><td><code>build/kaniko-job.yaml</code>, <code>templates/build-job.yaml</code></td></tr>
+  <tr><td>컨트롤 플레인</td><td>이미지 <code>faas-control-plane:0.1</code> (<code>kind load</code>), Service 80 → 8080, 맥 8090</td><td><code>k8s/platform/control-plane/deployment.yaml</code>, <code>run-all.sh</code> 의 <code>CP_PORT</code></td></tr>
+  <tr><td>테넌트 라벨</td><td>namespace 라벨 <code>tenant=&lt;이름&gt;</code>, 컨트롤 플레인이 <code>faas.tenant-label: tenant</code> 로 확인</td><td>tenant 차트 <code>namespace.yaml</code>, <code>application.yml</code></td></tr>
+  <tr><td>Git</td><td><code>https://github.com/Pionia5375/Softbank_Study_1</code>, 브랜치 <code>main</code></td><td>모든 Application 의 <code>repoURL</code></td></tr>
+  </tbody></table></div>
+
+  <div class="code-head"><span>poc/04-faas-runtime/cluster/kind-config.yaml</span><span>발췌 (주석 생략)</span></div>
+  <pre><code><span class="k">name</span>: faas
+<span class="k">networking</span>:
+  <span class="k">disableDefaultCNI</span>: true            <span class="c"># kindnet 대신 Cilium 을 따로 깐다</span>
+<span class="k">nodes</span>:
+  - <span class="k">role</span>: control-plane
+    <span class="k">extraPortMappings</span>:
+      - <span class="k">containerPort</span>: 31080          <span class="c"># Kourier NodePort</span>
+        <span class="k">hostPort</span>: 8081               <span class="c"># 맥에서 보는 함수 입구</span>
+  - <span class="k">role</span>: worker
+    <span class="k">labels</span>: { <span class="k">pool</span>: system }            <span class="c"># taint 없음</span>
+  - <span class="k">role</span>: worker
+    <span class="k">labels</span>: { <span class="k">pool</span>: build }
+    <span class="k">kubeadmConfigPatches</span>:                <span class="c"># JoinConfiguration 으로 taint pool=build:NoSchedule</span>
+  - <span class="k">role</span>: worker
+    <span class="k">labels</span>: { <span class="k">pool</span>: exec }             <span class="c"># 같은 방식으로 pool=exec:NoSchedule</span>
+<span class="k">containerdConfigPatches</span>:                <span class="c"># config_path = /etc/containerd/certs.d (레지스트리 두 이름)</span></code></pre>
+  <p>한 줄씩: <code>disableDefaultCNI</code> 를 켜면 노드가 CNI 없이 뜨고 Cilium 을 깔 때까지 NotReady 다(정상). <code>extraPortMappings</code> 는 control-plane 노드 컨테이너의 31080 을 맥 8081 로 열어 준다. 워커 세 개의 라벨이 풀 이름이고, build·exec 에만 kubeadm 의 JoinConfiguration 으로 taint 를 건다. 마지막 containerd 설정은 노드가 <code>/etc/containerd/certs.d/&lt;레지스트리&gt;/hosts.toml</code> 을 읽게 해서, setup.sh 가 레지스트리 두 이름을 같은 컨테이너로 돌릴 수 있게 한다.</p>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>최종 모양 클러스터의 정의는 <code>poc/04-faas-runtime/cluster/kind-config.yaml</code> 한 파일이다. 01 단계 클러스터(워커 1, kindnet)와 03 단계 클러스터(워커 3, taint 없음)는 역사로만 남아 있고, <code>run-all.sh</code> 는 처음부터 04 설정으로 만든다. 06 대역 클러스터(<code>poc/06-fault-injection/standin/kind-config.yaml</code>)는 exec 노드가 2대이고 taint 와 Cilium 이 없다(kindnet 기본 CNI).</p></aside>
+
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+<ul>
+<li><b>노드가 계속 NotReady</b>: CNI 가 없다. <code>cilium status</code> 로 어떤 파드가 안 떴는지 본다. Docker 메모리 부족이 흔하다 (RUN-ALL.md 4절 1번).</li>
+<li><b>8081 로 curl 이 연결 거부</b>: 다른 프로그램이 8081 을 쓰거나 클러스터가 extraPortMappings 없이 만들어졌다. <code>lsof -i :8081</code>, <code>docker port faas-control-plane</code>.</li>
+<li><b>플랫폼 파드가 Pending, 이벤트에 untolerated taint</b>: system 풀 노드가 없거나 라벨이 틀렸다. <code>kubectl get nodes -L pool</code> 로 POOL 열이 system/build/exec 인지.</li>
+<li><b>함수는 READY 인데 curl 이 타임아웃</b>: 그림 0-3 의 빨간 "정책 벽". <code>kubectl -n tenant-a get networkpolicy allow-from-namespaces</code>, <code>hubble observe --namespace tenant-a --verdict DROPPED</code>.</li>
+</ul></aside>
+
+<aside class="callout why"><p class="callout-title">왜 이 모양인가 (대안)</p>
+<p><b>kind 위 노드 풀</b>: 클라우드에선 풀마다 기계 종류가 다르지만 kind 에선 전부 같은 맥 위 컨테이너다. 그래도 kind 를 고른 이유는 하루 만에 지웠다 다시 세울 수 있고 돈이 들지 않아서다. 대신 kind 에선 "스케줄링 분리" 만 연습되고 "CPU 분리" 는 안 된다(04 README 1.2). 진짜 기계 분리는 09장(EC2)에서 다룬다.</p>
+<p><b>한 클러스터에 전부</b>: 플랫폼용·테넌트용 클러스터를 나누는 대안(클러스터 단위 멀티테넌시)은 격리가 가장 강하지만 컨트롤 플레인 비용이 테넌트 수만큼 늘어난다. 이 PoC 는 namespace 단위 멀티테넌시 + 실행 풀 분리 + gVisor 로 "한 클러스터를 안전하게 나눠 쓰기" 를 보여 주는 쪽을 골랐다.</p></aside>
+
+<aside class="callout fact"><p class="callout-title">공식 문서</p>
+<ul>
+<li><a href="https://kubernetes.io/docs/concepts/overview/components/">Kubernetes Components</a></li>
+<li><a href="https://kind.sigs.k8s.io/docs/user/configuration/">kind Configuration</a> · <a href="https://kind.sigs.k8s.io/docs/user/local-registry/">kind Local Registry</a></li>
+<li><a href="https://argo-cd.readthedocs.io/en/stable/">Argo CD</a> · <a href="https://argoproj.github.io/argo-rollouts/">Argo Rollouts</a> · <a href="https://prometheus.io/docs/introduction/overview/">Prometheus</a></li>
+<li><a href="https://docs.cilium.io/en/stable/">Cilium</a> · <a href="https://docs.cilium.io/en/stable/observability/hubble/">Hubble</a></li>
+<li><a href="https://knative.dev/docs/serving/">Knative Serving</a> · <a href="https://github.com/knative-extensions/net-kourier">net-kourier</a></li>
+<li><a href="https://github.com/GoogleContainerTools/kaniko">kaniko</a> · <a href="https://gvisor.dev/docs/">gVisor</a> · <a href="https://kubernetes.io/docs/concepts/containers/runtime-class/">RuntimeClass</a></li>
+<li><a href="https://modelcontextprotocol.io/docs/concepts/tools">MCP Tools</a> · <a href="https://docs.k3s.io/">k3s</a> · <a href="https://developer.hashicorp.com/terraform/docs">Terraform</a></li>
+</ul></aside>
+
+<h2 id="two-paths">두 갈래: GitOps 와 API</h2>
+
+<div class="tier" data-tier="1">
+  <h3>무엇이 Git 으로 가고 무엇이 API 로 가나</h3>
+  <p>이 PoC 에는 클러스터를 바꾸는 길이 둘 있다. <strong>플랫폼 변경</strong>(Argo CD 설정, Rollouts, 테넌트 울타리, 컨트롤 플레인 자체)은 Git 에 YAML 을 쓰고 push 하면 Argo CD 가 끌어와 맞춘다(pull 방식). <strong>사용자 함수</strong>는 컨트롤 플레인이 받아서 쿠버네티스 API 로 직접 만든다. 둘은 tenant-a namespace 에서 만난다: 울타리는 Git 이, 그 안의 함수는 API 가 만든다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 1000 530" role="img" aria-labelledby="f06-t">
+        <title id="f06-t">플랫폼 변경은 GitOps, 사용자 함수는 API 직접. 두 갈래가 tenant-a 에서 만난다</title>
+        <defs>
+          <marker id="f06-m-git" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-git"/></marker>
+          <marker id="f06-m-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+        </defs>
+        <text x="40" y="44" class="d-ttl d-tag-cp">갈래 1 · 플랫폼 변경 = GitOps (pull)</text>
+        <rect x="40" y="60" width="160" height="90" rx="10" class="d-card"/>
+        <text x="54" y="88" class="d-ttl-s">플랫폼 운영자</text>
+        <text x="54" y="112" class="d-sub">YAML 수정</text>
+        <text x="54" y="134" class="d-sub">values · 차트</text>
+        <path d="M200 105 H228" class="d-e-git" marker-end="url(#f06-m-git)"/>
+        <rect x="230" y="60" width="160" height="90" rx="10" class="d-cp-box"/>
+        <text x="244" y="88" class="d-ttl-s">git push</text>
+        <text x="244" y="112" class="d-sub">GitHub main</text>
+        <text x="244" y="134" class="d-sub">리뷰 · 기록</text>
+        <path d="M390 105 H418" class="d-e-git" marker-end="url(#f06-m-git)"/>
+        <rect x="420" y="60" width="160" height="90" rx="10" class="d-card"/>
+        <text x="434" y="88" class="d-ttl-s">Argo CD</text>
+        <text x="434" y="112" class="d-sub">120s + jitter 60s</text>
+        <text x="434" y="134" class="d-sub">원하는 상태 계산</text>
+        <path d="M580 105 H608" class="d-e-prov" marker-end="url(#f06-m-prov)"/>
+        <rect x="610" y="60" width="160" height="90" rx="10" class="d-card"/>
+        <text x="624" y="88" class="d-ttl-s">sync (apply)</text>
+        <text x="624" y="112" class="d-sub">selfHeal · prune</text>
+        <text x="624" y="134" class="d-sub">드리프트 되돌림</text>
+        <path d="M770 105 H798" class="d-e-prov" marker-end="url(#f06-m-prov)"/>
+        <rect x="800" y="60" width="160" height="90" rx="10" class="d-card"/>
+        <text x="814" y="88" class="d-ttl-s">클러스터</text>
+        <text x="814" y="112" class="d-sub">울타리 · Rollouts</text>
+        <text x="814" y="134" class="d-sub">컨트롤 플레인 자체</text>
+        <text x="40" y="180" class="d-sub">이력 = git log · 롤백 = git revert · 사람에게 클러스터 쓰기 권한이 없어도 된다</text>
+
+        <text x="40" y="234" class="d-ttl d-tag-prov">갈래 2 · 사용자 함수 = API 직접 (push)</text>
+        <rect x="40" y="250" width="160" height="90" rx="10" class="d-user-box"/>
+        <text x="54" y="278" class="d-ttl-s">함수 개발자</text>
+        <text x="54" y="302" class="d-sub">handler.py 하나</text>
+        <text x="54" y="324" class="d-sub">YAML 모름</text>
+        <path d="M200 295 H228" class="d-e-prov" marker-end="url(#f06-m-prov)"/>
+        <rect x="230" y="250" width="160" height="90" rx="10" class="d-card"/>
+        <text x="244" y="278" class="d-ttl-s">POST 함수</text>
+        <text x="244" y="302" class="d-sub">컨트롤 플레인</text>
+        <text x="244" y="324" class="d-sub">202 + Location</text>
+        <path d="M390 295 H418" class="d-e-prov" marker-end="url(#f06-m-prov)"/>
+        <rect x="420" y="250" width="160" height="90" rx="10" class="d-card"/>
+        <text x="434" y="278" class="d-ttl-s">kaniko Job</text>
+        <text x="434" y="302" class="d-sub">faas-build ns</text>
+        <text x="434" y="324" class="d-sub">build 풀</text>
+        <path d="M580 295 H608" class="d-e-prov" marker-end="url(#f06-m-prov)"/>
+        <rect x="610" y="250" width="160" height="90" rx="10" class="d-card"/>
+        <text x="624" y="278" class="d-ttl-s">digest 고정</text>
+        <text x="624" y="302" class="d-mono">@sha256:…</text>
+        <text x="624" y="324" class="d-sub">태그가 아니라 지문</text>
+        <path d="M770 295 H798" class="d-e-prov" marker-end="url(#f06-m-prov)"/>
+        <rect x="800" y="250" width="160" height="90" rx="10" class="d-card"/>
+        <text x="814" y="278" class="d-ttl-s">SSA ksvc</text>
+        <text x="814" y="302" class="d-sub">tenant-a/hello</text>
+        <text x="814" y="324" class="d-sub">새 Revision</text>
+        <text x="40" y="370" class="d-sub">이력 = Knative Revision + 감사 로그 · 롤백 = traffic 을 옛 Revision 으로 · 재생성 때 함수는 다시 배포</text>
+
+        <path d="M960 105 H985 V440 H962" class="d-e-git" marker-end="url(#f06-m-git)"/>
+        <path d="M880 340 V393" class="d-e-prov" marker-end="url(#f06-m-prov)"/>
+        <rect x="40" y="395" width="920" height="110" rx="12" class="d-warn-box"/>
+        <text x="60" y="425" class="d-ttl-s">만나는 곳: namespace tenant-a</text>
+        <text x="60" y="451" class="d-sub">울타리(Quota · LimitRange · NetworkPolicy · Role)는 Argo CD 가 Git 에서, 함수(ksvc hello)는 컨트롤 플레인이 API 로</text>
+        <text x="60" y="475" class="d-sub">10/20 이음새: 울타리의 default deny 가 함수로 가는 activator · Kourier 트래픽을 막았다</text>
+        <text x="60" y="497" class="d-mono">→ tenants/tenant-a.yaml 의 network.allowFromNamespaces: [knative-serving, kourier-system]</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 0-6.</b> 두 갈래. 위는 Git 이 정답이고 클러스터가 따라오는 길, 아래는 컨트롤 플레인이 바로 쓰는 길. 두 길이 같은 namespace 에서 만나는 곳이 이음새이고, PoC 에서 실제로 문제가 난 곳도 여기였다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>왜 함수는 Git 을 거치지 않나</h3>
+  <p>05 README 결정 1 의 요지다. 함수도 GitOps 로 보내는 대안(컨트롤 플레인이 매니페스트를 Git 에 커밋 → Argo CD 가 반영)은 이력과 롤백이 Git 으로 공짜라는 장점이 있다. 그래도 버린 이유는 네 가지다.</p>
+  <ol>
+    <li><b>속도</b>: 배포마다 커밋 → push → Argo CD 감지(폴링 최대 120 + 60초, 또는 refresh) → sync 가 더해진다. "Instantly" 와 멀어진다.</li>
+    <li><b>권한</b>: 컨트롤 플레인에 Git 쓰기 토큰이 들어가야 한다. 플랫폼 레포에 쓸 수 있는 토큰은 플랫폼 전체를 바꿀 수 있다.</li>
+    <li><b>레포 오염</b>: 사용자 함수(런타임 데이터)가 플랫폼 설정 레포를 커밋으로 채운다.</li>
+    <li><b>selfHeal 충돌</b>: 에이전트가 <code>min-scale</code> 을 patch 하면 Argo CD 가 드리프트로 보고 되돌린다.</li>
+  </ol>
+  <p>대가도 분명하다. 함수 이력이 Git 에 없으니 클러스터를 통째로 다시 만들면 함수는 다시 배포해야 한다(05 알려진 한계 3). 컨트롤 플레인 자체는 여전히 GitOps(<code>platform-05</code> Application)로 깔린다는 점이 중요하다: "누가 함수를 만들 수 있나" 를 정하는 RBAC 는 Git 에 있다.</p>
+  <pre class="pseudo"><code><span class="k">변경 하나가 들어오면</span>:
+  <span class="k">만약</span> 플랫폼의 모양을 바꾸는 것이면 (울타리, 부품 설정, 권한, 컨트롤 플레인 이미지 태그):
+      Git 에 YAML 로 적고 push   <span class="c">// 리뷰 · 이력 · 되돌리기를 Git 이 준다</span>
+      Argo CD 가 폴링으로 알아채 sync, selfHeal 이 손 변경을 되돌림
+  <span class="k">아니면</span> 사용자가 올린 런타임 데이터면 (함수 코드, 함수 스케일):
+      컨트롤 플레인이 검사 → 빌드 → digest → server-side apply   <span class="c">// 빠름, 사람 말 → 쿠버네티스 말</span>
+      이력은 Revision + 감사 로그, 롤백은 traffic 전환</code></pre>
+</div>
+
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>(가) 전부 GitOps: 함수 배포가 느리고 Git 토큰이 컨트롤 플레인에 들어간다. (나) 전부 API(kubectl apply 스크립트): 드리프트를 못 잡고 클러스터 재생성 때 무엇을 다시 깔아야 하는지 사람 기억에 의존한다. (다) 두 갈래(선택): 바뀌는 속도와 주인이 다른 것을 다른 길로 보낸다. 본선에서 "왜 GitOps 를 쓰면서 함수는 API 로?" 라는 질문에 이 네 가지 이유로 답한다.</p></aside>
+
+<h2 id="usecase">유즈케이스</h2>
+
+<div class="tier" data-tier="1">
+  <h3>누가 이 플랫폼으로 무엇을 하나</h3>
+  <p>유즈케이스 다이어그램(use case diagram)은 시스템 경계(사각형) 밖의 행위자(actor)와 경계 안에서 시스템이 해 주는 일(타원)을 잇는다. 사람 행위자 다섯(함수 개발자, 테넌트 관리자, 플랫폼 운영자, AI 운영 에이전트, 최종 사용자)과 시스템 행위자 둘(Argo CD·Rollouts, Kubernetes)이 있다. 점선 화살표의 «include» 는 "항상 같이 일어난다", «extend» 는 "조건이 맞을 때만 끼어든다" 는 뜻이다.</p>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1300 900" role="img" aria-labelledby="f07-t">
+        <title id="f07-t">UML 유즈케이스 다이어그램: 행위자 일곱과 유즈케이스 열여덟</title>
+        <defs>
+          <marker id="f07-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" class="d-e-api"/></marker>
+        </defs>
+        <rect x="220" y="40" width="860" height="835" rx="14" class="d-card"/>
+        <text x="240" y="72" class="d-ttl">«system» 멀티테넌트 FaaS 플랫폼 (kind faas)</text>
+
+        <!-- 왼쪽 행위자 -->
+        <circle cx="120" cy="130" r="11" class="d-stick"/><path d="M120 141 V175 M102 152 H138 M120 175 L105 202 M120 175 L135 202" class="d-stick"/>
+        <text x="120" y="224" class="d-subd d-mid">함수 개발자</text>
+        <circle cx="120" cy="320" r="11" class="d-stick"/><path d="M120 331 V365 M102 342 H138 M120 365 L105 392 M120 365 L135 392" class="d-stick"/>
+        <text x="120" y="414" class="d-subd d-mid">테넌트 관리자</text>
+        <circle cx="120" cy="490" r="11" class="d-stick"/><path d="M120 501 V535 M102 512 H138 M120 535 L105 562 M120 535 L135 562" class="d-stick"/>
+        <text x="120" y="584" class="d-subd d-mid">최종 사용자</text>
+        <circle cx="120" cy="700" r="11" class="d-stick"/><path d="M120 711 V745 M102 722 H138 M120 745 L105 772 M120 745 L135 772" class="d-stick"/>
+        <text x="120" y="794" class="d-subd d-mid">AI 운영 에이전트</text>
+        <text x="120" y="814" class="d-lbl d-mid">Claude Code + MCP</text>
+
+        <!-- 오른쪽 행위자 -->
+        <circle cx="1180" cy="140" r="11" class="d-stick-sys"/><path d="M1180 151 V185 M1162 162 H1198 M1180 185 L1165 212 M1180 185 L1195 212" class="d-stick-sys"/>
+        <text x="1180" y="234" class="d-subd d-mid">«system» Argo CD</text>
+        <text x="1180" y="254" class="d-lbl d-mid">+ Argo Rollouts</text>
+        <circle cx="1180" cy="400" r="11" class="d-stick"/><path d="M1180 411 V445 M1162 422 H1198 M1180 445 L1165 472 M1180 445 L1195 472" class="d-stick"/>
+        <text x="1180" y="494" class="d-subd d-mid">플랫폼 운영자</text>
+        <circle cx="1180" cy="660" r="11" class="d-stick-sys"/><path d="M1180 671 V705 M1162 682 H1198 M1180 705 L1165 732 M1180 705 L1195 732" class="d-stick-sys"/>
+        <text x="1180" y="754" class="d-subd d-mid">«system» Kubernetes</text>
+
+        <!-- 열 A -->
+        <ellipse cx="380" cy="130" rx="120" ry="28" class="d-user-box"/><text x="380" y="135" class="d-subd d-mid">함수 배포</text>
+        <ellipse cx="380" cy="210" rx="120" ry="28" class="d-user-box"/><text x="380" y="215" class="d-subd d-mid">함수 상태 조회</text>
+        <ellipse cx="380" cy="360" rx="120" ry="28" class="d-user-box"/><text x="380" y="365" class="d-subd d-mid">테넌트 추가</text>
+        <ellipse cx="380" cy="530" rx="120" ry="28" class="d-user-box"/><text x="380" y="535" class="d-subd d-mid">함수 호출</text>
+        <ellipse cx="380" cy="660" rx="120" ry="28" class="d-agent"/><text x="380" y="665" class="d-subd d-mid">메트릭 조회</text>
+        <ellipse cx="380" cy="740" rx="120" ry="28" class="d-agent"/><text x="380" y="745" class="d-subd d-mid">스케일 조정 (min-scale)</text>
+        <ellipse cx="380" cy="830" rx="120" ry="28" class="d-agent"/><text x="380" y="835" class="d-subd d-mid">롤백 요청</text>
+
+        <!-- 열 B -->
+        <ellipse cx="680" cy="130" rx="110" ry="28" class="d-prov-box"/><text x="680" y="135" class="d-subd d-mid">이미지 빌드 (kaniko)</text>
+        <ellipse cx="680" cy="360" rx="110" ry="28" class="d-prov-box"/><text x="680" y="365" class="d-subd d-mid">테넌트 울타리 생성</text>
+        <ellipse cx="680" cy="530" rx="110" ry="28" class="d-prov-box"/><text x="680" y="535" class="d-subd d-mid">콜드 스타트 (0→1)</text>
+        <ellipse cx="680" cy="790" rx="110" ry="28" class="d-warn-box"/><text x="680" y="795" class="d-subd d-mid">가드레일 검사</text>
+
+        <!-- 열 C -->
+        <ellipse cx="940" cy="130" rx="120" ry="28" class="d-cp-box"/><text x="940" y="135" class="d-subd d-mid">카나리 배포·자동 롤백</text>
+        <ellipse cx="940" cy="230" rx="120" ry="28" class="d-cp-box"/><text x="940" y="235" class="d-subd d-mid">Git 동기화·드리프트 복구</text>
+        <ellipse cx="940" cy="360" rx="120" ry="28" class="d-cp-box"/><text x="940" y="365" class="d-subd d-mid">플랫폼 변경 배포 (git push)</text>
+        <ellipse cx="940" cy="450" rx="120" ry="28" class="d-fail-box"/><text x="940" y="455" class="d-subd d-mid">장애 대응 (런북)</text>
+        <ellipse cx="940" cy="640" rx="120" ry="28" class="d-plain-box"/><text x="940" y="645" class="d-subd d-mid">파드 스케줄·축출·재생성</text>
+        <ellipse cx="940" cy="740" rx="120" ry="28" class="d-plain-box"/><text x="940" y="745" class="d-subd d-mid">0↔N 오토스케일</text>
+        <ellipse cx="940" cy="835" rx="120" ry="28" class="d-warn-box"/><text x="940" y="840" class="d-subd d-mid">사람 승인 (롤백)</text>
+
+        <!-- 연관 (행위자 — 유즈케이스) -->
+        <path d="M142 160 L262 133" class="d-e"/>
+        <path d="M142 170 L262 208" class="d-e"/>
+        <path d="M142 355 L260 360" class="d-e"/>
+        <path d="M142 525 L260 530" class="d-e"/>
+        <path d="M142 735 L264 666" class="d-e"/>
+        <path d="M142 742 L260 740" class="d-e"/>
+        <path d="M142 750 L266 822" class="d-e"/>
+        <path d="M1158 175 L1058 136" class="d-e"/>
+        <path d="M1158 185 L1058 226" class="d-e"/>
+        <path d="M1158 430 L1056 366" class="d-e"/>
+        <path d="M1158 440 L1060 450" class="d-e"/>
+        <path d="M1198 422 H1270 V835 H1062" class="d-e"/>
+        <path d="M1158 690 L1056 646" class="d-e"/>
+        <path d="M1158 700 L1058 736" class="d-e"/>
+
+        <!-- include / extend -->
+        <path d="M500 130 H566" class="d-e-api d-dash" marker-end="url(#f07-m)"/>
+        <text x="505" y="121" class="d-lbl">«include»</text>
+        <path d="M500 360 H566" class="d-e-api d-dash" marker-end="url(#f07-m)"/>
+        <text x="505" y="351" class="d-lbl">«include»</text>
+        <path d="M570 530 H504" class="d-e-api d-dash" marker-end="url(#f07-m)"/>
+        <text x="507" y="521" class="d-lbl">«extend»</text>
+        <path d="M495 752 L573 780" class="d-e-api d-dash" marker-end="url(#f07-m)"/>
+        <path d="M497 822 L573 800" class="d-e-api d-dash" marker-end="url(#f07-m)"/>
+        <text x="425" y="787" class="d-lbl">«include»</text>
+        <path d="M500 832 H816" class="d-e-api d-dash" marker-end="url(#f07-m)"/>
+        <text x="590" y="852" class="d-lbl">«include»</text>
+        <path d="M940 158 V199" class="d-e-api d-dash" marker-end="url(#f07-m)"/>
+        <text x="950" y="185" class="d-lbl">«extend»</text>
+        <path d="M940 332 V261" class="d-e-api d-dash" marker-end="url(#f07-m)"/>
+        <text x="950" y="302" class="d-lbl">«include»</text>
+        <path d="M745 338 L848 254" class="d-e-api d-dash" marker-end="url(#f07-m)"/>
+        <text x="650" y="322" class="d-lbl">«include»</text>
+        <path d="M760 552 L821 737" class="d-e-api d-dash" marker-end="url(#f07-m)"/>
+        <text x="700" y="662" class="d-lbl">«include»</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 0-7.</b> 유즈케이스. 파랑 타원은 사용자 쪽 일, 보라는 에이전트 도구, 주황은 플랫폼이 뒤에서 하는 일, 초록은 GitOps, 노랑은 사람의 고삐(승인·가드레일), 회색은 쿠버네티스가 스스로 하는 일이다. 점선 행위자는 시스템 행위자.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>유즈케이스 하나씩</h3>
+  <p>표의 "주 흐름" 은 정상 경로만 적었다. 깨지는 경로는 각 장의 "깨지면" 상자에 있다.</p>
+  <div class="table-wrap"><table>
+  <thead><tr><th>유즈케이스</th><th>행위자</th><th>계기</th><th>주 흐름</th><th>관여 부품</th><th>장</th></tr></thead>
+  <tbody>
+  <tr><td>함수 배포</td><td>함수 개발자</td><td><code>deploy-fn.sh tenant-a hello samples/hello-v1.py</code></td><td>POST {name, code} → 테넌트 라벨 확인 → buildId = 코드 해시 → ConfigMap + kaniko Job → 202. 백그라운드에서 digest 읽고 ksvc SSA → BUILDING → DEPLOYING → READY</td><td>컨트롤 플레인, faas-build, kind-registry, Knative</td><td><a href="ch07-control-plane.html">07</a>, <a href="ch06-build-runtime.html">06</a></td></tr>
+  <tr><td>이미지 빌드 «include»</td><td>(시스템)</td><td>함수 배포 안에서 항상</td><td>initContainer 가 ConfigMap 을 <code>cp -L</code> 로 복사 → kaniko 가 <code>python:3.12-slim</code> 위에 handler.py + server.py → push → digest 를 termination-log 에</td><td>kaniko, build 풀, kind-registry</td><td><a href="ch06-build-runtime.html">06</a></td></tr>
+  <tr><td>함수 상태 조회</td><td>함수 개발자</td><td><code>GET …/functions/hello</code></td><td>가장 최근 빌드 Job 과 ksvc 를 함께 보고 phase 를 계산: NOT_FOUND / BUILDING / BUILD_FAILED / DEPLOYING / READY / FAILED</td><td>컨트롤 플레인 (읽기만)</td><td><a href="ch07-control-plane.html">07</a></td></tr>
+  <tr><td>테넌트 추가</td><td>테넌트 관리자 (플랫폼 팀)</td><td><code>tenants/tenant-c.yaml</code> 추가 + push</td><td>ApplicationSet 의 Git files generator 가 파일을 발견 → Application tenant-c → tenant 차트 helm template → 울타리 6겹</td><td>ApplicationSet, tenant 차트, Argo CD</td><td><a href="ch03-tenancy.html">03</a></td></tr>
+  <tr><td>테넌트 울타리 생성 «include»</td><td>(Argo CD)</td><td>테넌트 추가 안에서</td><td>Namespace(PSA 라벨) → ResourceQuota → LimitRange → NetworkPolicy 3~4장 → Role/RoleBinding/SA deployer → AppProject</td><td>API 서버, Cilium</td><td><a href="ch03-tenancy.html">03</a>, <a href="ch04-network.html">04</a></td></tr>
+  <tr><td>함수 호출</td><td>최종 사용자</td><td><code>curl -H "Host: hello.tenant-a.faas.local" localhost:8081</code></td><td>맥 8081 → 노드 31080 → Kourier → (파드 있으면) queue-proxy → 사용자 컨테이너 → 응답</td><td>Kourier, Knative, Cilium</td><td><a href="ch05-knative.html">05</a></td></tr>
+  <tr><td>콜드 스타트 «extend»</td><td>(Knative)</td><td>호출 시 파드가 0개일 때만</td><td>activator 가 요청 보관 → autoscaler 0→1 → 스케줄(exec 풀) → 이미지 받기 → 시작 → 준비 → 넘김</td><td>activator, autoscaler, kubelet, containerd</td><td><a href="ch05-knative.html">05</a>, <a href="ch06-build-runtime.html">06</a></td></tr>
+  <tr><td>플랫폼 변경 배포</td><td>플랫폼 운영자</td><td>git push (main)</td><td>Argo CD 가 폴링(120s + jitter)으로 새 커밋 발견 → 렌더 → 비교 → sync</td><td>GitHub, Argo CD</td><td><a href="ch01-gitops.html">01</a></td></tr>
+  <tr><td>Git 동기화·드리프트 복구</td><td>Argo CD</td><td>폴링 주기, 클러스터 변화 이벤트</td><td>원하는 상태 ≠ 실제 → apply. 누가 kubectl 로 바꾸면 selfHeal 이 되돌리고, Git 에서 지운 것은 prune 이 지운다</td><td>argocd-repo-server, application-controller</td><td><a href="ch01-gitops.html">01</a></td></tr>
+  <tr><td>카나리 배포·자동 롤백 «extend»</td><td>Argo Rollouts</td><td>Rollout 의 template 이 바뀌었을 때만</td><td>새 ReplicaSet 20% → pause → AnalysisRun 이 Prometheus 질의 → 통과면 60% → 100%, 실패면 abort</td><td>Rollouts, Prometheus</td><td><a href="ch02-rollouts.html">02</a></td></tr>
+  <tr><td>메트릭 조회</td><td>AI 운영 에이전트</td><td>"hello 가 이상해" 같은 사람 지시</td><td><code>get_metrics</code>: ksvc 상태, traffic, min/max-scale, PodAutoscaler desired/actual, 파드 재시작, (선택) 함수에 실제 요청 5번</td><td>ops_mcp, API 서버, Kourier</td><td><a href="ch07-control-plane.html">07</a></td></tr>
+  <tr><td>스케일 조정</td><td>AI 운영 에이전트</td><td>콜드 스타트를 줄이고 싶을 때</td><td><code>scale(delta)</code>: 가드레일(±2, 0~5, 트래픽 고정 아님) 통과 → min-scale annotation merge patch (dry_run 가능)</td><td>ops_mcp, Knative</td><td><a href="ch07-control-plane.html">07</a></td></tr>
+  <tr><td>롤백 요청 · 사람 승인</td><td>AI 에이전트 → 플랫폼 운영자</td><td>새 Revision 이 500 을 낼 때</td><td>rollback 첫 호출 = 승인 요청만 생성 → 사람이 터미널(TTY)에서 <code>approve &lt;id&gt;</code> → 같은 대상으로 재호출 → traffic 100% 를 옛 Revision 으로</td><td>ops_mcp, approvals/, Knative</td><td><a href="ch07-control-plane.html">07</a></td></tr>
+  <tr><td>가드레일 검사 «include»</td><td>(MCP 서버 + API 서버)</td><td>모든 변경 도구 호출</td><td>이름 정규식 → 한도·승인 확인(파이썬) → RBAC(API 서버, 진짜 벽) → 감사 로그 한 줄</td><td>guardrails.py, ops-agent Role</td><td><a href="ch07-control-plane.html">07</a></td></tr>
+  <tr><td>파드 스케줄·축출·재생성</td><td>Kubernetes</td><td>새 파드, 노드 장애</td><td>스케줄러가 taint/toleration·nodeSelector·자원으로 노드 고름. 노드 NotReady 면 taint 붙이고 tolerationSeconds 뒤 축출 → ReplicaSet 이 재생성</td><td>스케줄러, node lifecycle 컨트롤러</td><td><a href="ch03-tenancy.html">03</a>, <a href="ch08-resilience.html">08</a></td></tr>
+  <tr><td>0↔N 오토스케일</td><td>Kubernetes (Knative autoscaler)</td><td>동시 요청 수 변화</td><td>queue-proxy 숫자 집계 → 파드당 target 기준 desired 계산 → 요청이 끊기면 window + grace 뒤 0</td><td>autoscaler, activator, queue-proxy</td><td><a href="ch05-knative.html">05</a></td></tr>
+  <tr><td>장애 대응 (런북)</td><td>플랫폼 운영자</td><td>Prometheus 알림 (FnNodeNotReady 등)</td><td>알림의 runbook 주석 → <code>runbooks/RB-0N-*.md</code> 순서대로 확인 → 조치 → 기록</td><td>Prometheus 알림 규칙 5개, 런북 4개</td><td><a href="ch08-resilience.html">08</a></td></tr>
+  </tbody></table></div>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>테넌트 관리자는 실제로는 플랫폼 팀이다: <code>tenants/*.yaml</code> 은 플랫폼 레포에 있고, 테넌트 자신은 자기 AppProject(tenant-a) 안에서만 Argo CD 로 배포할 수 있다(<code>tenant-a-hello</code>). 함수 개발자 인증은 아직 없고(05 알려진 한계 2), 본선이면 테넌트별 API 키나 OIDC 게이트웨이를 앞에 둔다.</p></aside>
+
+<h2 id="catalog">컴포넌트 카탈로그</h2>
+
+<div class="tier" data-tier="1">
+  <h3>namespace 와 부품 전부</h3>
+  <p>"이 파드는 왜 여기 있나" 에 답하는 표다. 설치 방법 열이 중요하다: Helm 으로 깐 것은 <code>helm list</code> 에 보이고, release YAML 을 <code>kubectl apply</code> 한 것은 Helm 이 모르며, Argo CD 가 깐 것은 Git 을 고쳐야 바뀐다(손으로 고치면 selfHeal 이 되돌린다).</p>
+  <div class="table-wrap"><table>
+  <thead><tr><th>namespace</th><th>무엇이 도나</th><th>단계</th><th>노드 풀</th><th>설치 방법</th></tr></thead>
+  <tbody>
+  <tr><td><code>kube-system</code></td><td>Cilium agent(DaemonSet, 모든 노드), cilium-operator, hubble-relay, hubble-ui, CoreDNS, kube-proxy 등 kind 기본</td><td>03·04</td><td>agent 는 전부, 나머지는 스케줄러가 고름</td><td><code>kind create</code> + <code>cilium install</code> CLI</td></tr>
+  <tr><td><code>argocd</code></td><td>argocd-server, repo-server, application-controller(StatefulSet), redis, applicationset-controller. Application·AppProject 오브젝트도 여기</td><td>01</td><td>system</td><td>Helm <code>argo/argo-cd 10.10.5</code></td></tr>
+  <tr><td><code>argo-rollouts</code></td><td>Rollouts 컨트롤러 1개 (대시보드 끔)</td><td>02</td><td>system</td><td>Helm <code>argo/argo-rollouts 2.43.8</code></td></tr>
+  <tr><td><code>monitoring</code></td><td>prometheus-server (Service <code>prometheus-server:80</code>)</td><td>02</td><td>system</td><td>Helm <code>prometheus-community/prometheus 29.37.0</code></td></tr>
+  <tr><td><code>knative-serving</code></td><td>controller, autoscaler, activator, webhook, net-kourier-controller</td><td>04</td><td>system</td><td><code>kubectl apply</code> (serving-crds, serving-core v1.23.0) + ConfigMap patch</td></tr>
+  <tr><td><code>kourier-system</code></td><td>Kourier 게이트웨이(Envoy), Service <code>kourier</code> NodePort 31080</td><td>04</td><td>system</td><td><code>kubectl apply</code> kourier.yaml + Service patch</td></tr>
+  <tr><td><code>faas-system</code></td><td>컨트롤 플레인 Deployment 1 + Service (80 → 8080), SA control-plane. PSA restricted</td><td>05</td><td>system</td><td>Argo CD <code>platform-05</code> (이미지는 <code>kind load</code>)</td></tr>
+  <tr><td><code>faas-build</code></td><td>함수 빌드 Job <code>build-&lt;이름&gt;-&lt;해시&gt;</code> + ConfigMap <code>src-&lt;id&gt;</code>. PSA baseline. 1시간 뒤 자동 삭제</td><td>05</td><td>build</td><td>namespace 는 Argo CD <code>platform-05</code>, Job 은 컨트롤 플레인</td></tr>
+  <tr><td><code>fn-build</code></td><td>04 단계 실험 빌드 Job <code>build-hello</code> (Go 함수, 레지스트리 캐시)</td><td>04</td><td>build</td><td>setup.sh 가 namespace, <code>scripts/build.sh</code> 가 Job</td></tr>
+  <tr><td><code>fn-runtime</code></td><td>ksvc hello-runc, hello-gvisor, hello-gvisor-warm (min-scale 1)</td><td>04</td><td>exec</td><td>Argo CD <code>faas-functions</code></td></tr>
+  <tr><td><code>fn-demo</code></td><td>hello-fn, bye-fn (http-echo, replicas 2)</td><td>01</td><td>system</td><td>Argo CD <code>root</code> → App of Apps</td></tr>
+  <tr><td><code>fn-canary</code></td><td>podinfo Rollout (5), Service, AnalysisTemplate success-rate</td><td>02</td><td>system</td><td>Argo CD <code>podinfo</code></td></tr>
+  <tr><td><code>tenant-a</code></td><td>울타리(Quota, LimitRange, NetworkPolicy 4장, Role, SA deployer) + Deployment tenant-a-hello + ksvc hello (05) + SA ops-agent</td><td>03·05</td><td>hello-fn 은 system, ksvc hello 는 exec</td><td>Argo CD <code>tenant-a</code>, <code>tenant-a-hello</code>, <code>platform-05</code> + 컨트롤 플레인 SSA</td></tr>
+  <tr><td><code>tenant-b</code></td><td>울타리(NetworkPolicy 3장, 한도 더 작게) + Deployment tenant-b-hello</td><td>03</td><td>system</td><td>Argo CD <code>tenant-b</code>, <code>tenant-b-hello</code></td></tr>
+  <tr><td>(클러스터 밖) kind-registry</td><td>registry:2 컨테이너, 맥 127.0.0.1:5001, docker 네트워크 kind 에 연결</td><td>04</td><td>—</td><td><code>docker run</code> (setup.sh)</td></tr>
+  <tr><td>(맥 프로세스) ops_mcp</td><td>MCP 서버. Claude Code 가 자식 프로세스로 띄워 stdio 로 대화</td><td>05</td><td>—</td><td><code>claude mcp add faas-ops …</code></td></tr>
+  </tbody></table></div>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>Argo CD Application 나무</h3>
+  <p>Application 은 10개(root, hello-fn, bye-fn, podinfo, tenant-a, tenant-b, tenant-a-hello, tenant-b-hello, faas-functions, platform-05), ApplicationSet 은 1개(tenants)다. 사람이나 스크립트가 <code>kubectl apply</code> 로 직접 붙인 것은 7개이고, 나머지 4개는 Argo CD 자신이 Git 을 읽고 만든다(App of Apps 가 2개, ApplicationSet 이 2개).</p>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1300 480" role="img" aria-labelledby="f08-t">
+        <title id="f08-t">Argo CD Application 과 ApplicationSet 이 어느 namespace 를 관리하나</title>
+        <defs>
+          <marker id="f08-m-git" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-git"/></marker>
+          <marker id="f08-m-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+        </defs>
+        <text x="20" y="34" class="d-lbl">초록 칸 = kubectl apply 로 붙인 것 (7) · 흰 칸 = Argo CD 가 만든 Application (4) · 회색 칸 = namespace</text>
+
+        <rect x="45" y="60" width="150" height="80" rx="10" class="d-cp-box"/>
+        <text x="60" y="86" class="d-ttl-s">root</text>
+        <text x="60" y="108" class="d-sub">01 · App of Apps</text>
+        <text x="60" y="128" class="d-mono">project default</text>
+        <rect x="225" y="60" width="150" height="80" rx="10" class="d-cp-box"/>
+        <text x="240" y="86" class="d-ttl-s">podinfo</text>
+        <text x="240" y="108" class="d-sub">02 · Rollout</text>
+        <text x="240" y="128" class="d-mono">project default</text>
+        <rect x="405" y="60" width="150" height="80" rx="10" class="d-cp-box"/>
+        <text x="420" y="86" class="d-ttl-s">tenant-a-hello</text>
+        <text x="420" y="108" class="d-sub">03 · hello-fn 차트</text>
+        <text x="420" y="128" class="d-mono">project tenant-a</text>
+        <rect x="585" y="60" width="150" height="80" rx="10" class="d-cp-box"/>
+        <text x="600" y="86" class="d-ttl-s">tenants</text>
+        <text x="600" y="108" class="d-sub">03 · AppSet</text>
+        <text x="600" y="128" class="d-mono">tenants/*.yaml</text>
+        <rect x="765" y="60" width="150" height="80" rx="10" class="d-cp-box"/>
+        <text x="780" y="86" class="d-ttl-s">tenant-b-hello</text>
+        <text x="780" y="108" class="d-sub">03 · hello-fn 차트</text>
+        <text x="780" y="128" class="d-mono">project tenant-b</text>
+        <rect x="940" y="60" width="150" height="80" rx="10" class="d-cp-box"/>
+        <text x="955" y="86" class="d-ttl-s">faas-functions</text>
+        <text x="955" y="108" class="d-sub">04 · ksvc 3개</text>
+        <text x="955" y="128" class="d-mono">project default</text>
+        <rect x="1110" y="60" width="150" height="80" rx="10" class="d-cp-box"/>
+        <text x="1125" y="86" class="d-ttl-s">platform-05</text>
+        <text x="1125" y="108" class="d-sub">05 · 폴더 통째로</text>
+        <text x="1125" y="128" class="d-mono">project default</text>
+
+        <rect x="25" y="200" width="100" height="62" rx="10" class="d-card"/>
+        <text x="38" y="226" class="d-ttl-s">hello-fn</text>
+        <text x="38" y="248" class="d-sub">Application</text>
+        <rect x="135" y="200" width="100" height="62" rx="10" class="d-card"/>
+        <text x="148" y="226" class="d-ttl-s">bye-fn</text>
+        <text x="148" y="248" class="d-sub">valuesObject</text>
+        <rect x="505" y="200" width="150" height="62" rx="10" class="d-card"/>
+        <text x="518" y="226" class="d-ttl-s">tenant-a</text>
+        <text x="518" y="248" class="d-sub">+ AppProject</text>
+        <rect x="665" y="200" width="150" height="62" rx="10" class="d-card"/>
+        <text x="678" y="226" class="d-ttl-s">tenant-b</text>
+        <text x="678" y="248" class="d-sub">+ AppProject</text>
+
+        <rect x="70" y="320" width="120" height="50" rx="8" class="d-plain-box"/>
+        <text x="84" y="350" class="d-mono">fn-demo</text>
+        <rect x="245" y="320" width="110" height="50" rx="8" class="d-plain-box"/>
+        <text x="259" y="350" class="d-mono">fn-canary</text>
+        <rect x="460" y="320" width="120" height="50" rx="8" class="d-plain-box"/>
+        <text x="474" y="350" class="d-mono">tenant-a</text>
+        <rect x="700" y="320" width="120" height="50" rx="8" class="d-plain-box"/>
+        <text x="714" y="350" class="d-mono">tenant-b</text>
+        <rect x="960" y="320" width="105" height="50" rx="8" class="d-plain-box"/>
+        <text x="972" y="350" class="d-mono">fn-runtime</text>
+        <rect x="1075" y="320" width="105" height="50" rx="8" class="d-plain-box"/>
+        <text x="1085" y="350" class="d-mono">faas-system</text>
+        <rect x="1190" y="320" width="88" height="50" rx="8" class="d-plain-box"/>
+        <text x="1198" y="350" class="d-mono">faas-build</text>
+
+        <path d="M100 140 L80 198" class="d-e-git" marker-end="url(#f08-m-git)"/>
+        <path d="M140 140 L180 198" class="d-e-git" marker-end="url(#f08-m-git)"/>
+        <path d="M640 140 L590 198" class="d-e-git" marker-end="url(#f08-m-git)"/>
+        <path d="M680 140 L730 198" class="d-e-git" marker-end="url(#f08-m-git)"/>
+        <path d="M75 262 L118 318" class="d-e-prov" marker-end="url(#f08-m-prov)"/>
+        <path d="M185 262 L145 318" class="d-e-prov" marker-end="url(#f08-m-prov)"/>
+        <path d="M300 140 V318" class="d-e-prov" marker-end="url(#f08-m-prov)"/>
+        <path d="M480 140 V290 H500 V318" class="d-e-prov" marker-end="url(#f08-m-prov)"/>
+        <path d="M560 262 L530 318" class="d-e-prov" marker-end="url(#f08-m-prov)"/>
+        <path d="M740 262 L755 318" class="d-e-prov" marker-end="url(#f08-m-prov)"/>
+        <path d="M840 140 V290 H790 V318" class="d-e-prov" marker-end="url(#f08-m-prov)"/>
+        <path d="M1015 140 V318" class="d-e-prov" marker-end="url(#f08-m-prov)"/>
+        <path d="M1160 140 L1128 318" class="d-e-prov" marker-end="url(#f08-m-prov)"/>
+        <path d="M1210 140 L1234 318" class="d-e-prov" marker-end="url(#f08-m-prov)"/>
+        <path d="M1260 100 H1290 V400 H520 V372" class="d-e-prov d-dash" marker-end="url(#f08-m-prov)"/>
+        <text x="560" y="418" class="d-lbl">platform-05 → tenant-a: RoleBinding faas-control-plane-functions · SA/Role/RoleBinding ops-agent</text>
+
+        <path d="M20 452 L60 452" class="d-e-git"/><text x="68" y="457" class="d-sub">Argo CD 가 Git 을 읽고 Application 을 만든다</text>
+        <path d="M440 452 L480 452" class="d-e-prov"/><text x="488" y="457" class="d-sub">Application 이 namespace 에 리소스를 sync</text>
+        <path d="M860 452 L900 452" class="d-e-prov d-dash"/><text x="908" y="457" class="d-sub">다른 namespace 에 일부만 얹음</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 0-8.</b> Application 나무. root 와 tenants 만 "다른 Application 을 만드는" Application 이다. tenant-a namespace 는 세 Application(tenant-a, tenant-a-hello, platform-05)과 컨트롤 플레인이 함께 쓰는 곳이라 이음새가 가장 많다. 06 의 <code>fault-defenses</code> Application 은 레포에 있지만 run-all.sh 는 붙이지 않는다.</figcaption>
+  </figure>
+  <p>프로젝트(AppProject)도 같이 기억한다. 울타리를 까는 tenant-a·tenant-b Application 은 <code>default</code> 프로젝트(어디든 무엇이든)로, 테넌트의 함수 Application(tenant-a-hello)은 <code>tenant-a</code> 프로젝트로 돈다. tenant-a 프로젝트는 목적지를 tenant-a namespace 하나로 묶고 ResourceQuota·LimitRange·NetworkPolicy·CiliumNetworkPolicy·Role·RoleBinding 을 금지 목록에 넣었다. 그래서 테넌트가 Git 으로 자기 울타리를 지우려 해도 Argo CD 가 거절한다.</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>함수 하나는 쿠버네티스 오브젝트 몇 개인가</h3>
+  <p>컨트롤 플레인이 만드는 것은 Knative Service(ksvc) 한 장이다. 나머지는 Knative 컨트롤러가 펼친다. 상태 조회, 롤백, 스케일 조정이 각각 어느 오브젝트를 건드리는지 알려면 이 나무를 알아야 한다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 1000 570" role="img" aria-labelledby="f09-t">
+        <title id="f09-t">Knative Service 한 장이 펼쳐지는 오브젝트 나무</title>
+        <defs>
+          <marker id="f09-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f09-m-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+        </defs>
+        <rect x="290" y="20" width="320" height="64" rx="10" class="d-cp-box"/>
+        <text x="306" y="46" class="d-ttl-s">Service hello (ksvc)</text>
+        <text x="306" y="70" class="d-mono">serving.knative.dev/v1 · tenant-a</text>
+
+        <rect x="40" y="130" width="240" height="60" rx="10" class="d-card"/>
+        <text x="56" y="155" class="d-ttl-s">Configuration hello</text>
+        <text x="56" y="178" class="d-sub">template 의 현재 값</text>
+        <rect x="620" y="130" width="240" height="60" rx="10" class="d-card"/>
+        <text x="636" y="155" class="d-ttl-s">Route hello</text>
+        <text x="636" y="178" class="d-sub">traffic: latestRevision 100%</text>
+
+        <rect x="40" y="240" width="200" height="60" rx="10" class="d-plain-box"/>
+        <text x="56" y="265" class="d-ttl-s">Revision hello-00001</text>
+        <text x="56" y="288" class="d-sub">옛 이미지 · 불변</text>
+        <rect x="260" y="240" width="220" height="60" rx="10" class="d-card"/>
+        <text x="276" y="265" class="d-ttl-s">Revision hello-00002</text>
+        <text x="276" y="288" class="d-sub">새 이미지 digest · 불변</text>
+        <rect x="620" y="240" width="240" height="60" rx="10" class="d-card"/>
+        <text x="636" y="265" class="d-ttl-s">Ingress (KIngress)</text>
+        <text x="636" y="288" class="d-sub">Kourier 가 읽어 Envoy 설정</text>
+
+        <rect x="40" y="350" width="200" height="60" rx="10" class="d-card"/>
+        <text x="56" y="375" class="d-ttl-s">PodAutoscaler</text>
+        <text x="56" y="398" class="d-sub">desired · actual 파드 수</text>
+        <rect x="260" y="350" width="220" height="60" rx="10" class="d-card"/>
+        <text x="276" y="375" class="d-ttl-s">Deployment</text>
+        <text x="276" y="398" class="d-mono">hello-00002-deployment</text>
+        <rect x="620" y="350" width="240" height="60" rx="10" class="d-user-box"/>
+        <text x="636" y="375" class="d-ttl-s">Kourier Envoy</text>
+        <text x="636" y="398" class="d-mono">hello.tenant-a.faas.local</text>
+
+        <rect x="260" y="450" width="600" height="96" rx="12" class="d-card"/>
+        <text x="276" y="474" class="d-ttl-s">Pod (exec 풀)</text>
+        <rect x="280" y="486" width="250" height="46" rx="8" class="d-plain-box"/>
+        <text x="294" y="514" class="d-subd">user-container :8080</text>
+        <rect x="560" y="486" width="280" height="46" rx="8" class="d-plain-box"/>
+        <text x="574" y="514" class="d-subd">queue-proxy :8012 (Knative 주입)</text>
+
+        <path d="M380 84 L190 128" class="d-e-api" marker-end="url(#f09-m-api)"/>
+        <path d="M520 84 L720 128" class="d-e-api" marker-end="url(#f09-m-api)"/>
+        <path d="M130 190 V238" class="d-e-api" marker-end="url(#f09-m-api)"/>
+        <path d="M220 190 L320 238" class="d-e-api" marker-end="url(#f09-m-api)"/>
+        <path d="M740 190 V238" class="d-e-api" marker-end="url(#f09-m-api)"/>
+        <path d="M650 190 L470 238" class="d-e-user d-dash" marker-end="url(#f09-m-user)"/>
+        <text x="548" y="206" class="d-lbl">100%</text>
+        <path d="M370 300 V348" class="d-e-api" marker-end="url(#f09-m-api)"/>
+        <path d="M300 300 L190 348" class="d-e-api" marker-end="url(#f09-m-api)"/>
+        <path d="M240 380 H258" class="d-e-api" marker-end="url(#f09-m-api)"/>
+        <path d="M740 300 V348" class="d-e-api" marker-end="url(#f09-m-api)"/>
+        <path d="M740 410 V484" class="d-e-user" marker-end="url(#f09-m-user)"/>
+        <path d="M370 410 V448" class="d-e-api" marker-end="url(#f09-m-api)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 0-9.</b> ksvc 한 장 → Configuration(현재 template) + Route(트래픽 배분). template 이 바뀔 때마다 불변 Revision 이 하나씩 쌓이고, 각 Revision 이 Deployment·PodAutoscaler 를 갖는다. 롤백(MCP rollback)은 Route 의 traffic 만 옛 Revision 으로 바꾸고, 스케일 조정(MCP scale)은 template 의 min-scale annotation 을 바꿔 같은 이미지로 새 Revision 을 만든다.</figcaption>
+  </figure>
+  <p>컨트롤 플레인이 함수에 붙이는 표지: ksvc 라벨 <code>faas.poc/tenant</code>, <code>faas.poc/function</code>, <code>app.kubernetes.io/managed-by: faas-control-plane</code>, template annotation <code>faas.poc/build-id</code>. 상태 조회는 이 build-id 와 가장 최근 빌드 Job 의 build-id 를 비교해 "아직 DEPLOYING 인가" 를 판단한다.</p>
+</div>
+
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><ul>
+<li><b>Application 이 Synced 인데 Degraded</b>: Git 대로 깔았지만 파드가 안 뜬다(이미지 이름, Pending). <code>kubectl -n argocd describe application &lt;이름&gt;</code> 의 마지막 20줄.</li>
+<li><b>tenant-a 가 오래 안 생김</b>: ApplicationSet 이 Git 을 읽는 데 약 3분 걸릴 수 있다(폴링). 급하면 <code>kubectl -n argocd annotate applicationset tenants argocd.argoproj.io/refresh=true</code> (RUN-ALL.md 4절 4번).</li>
+<li><b>tenant-a-hello 가 sync 거절</b>: tenant-a AppProject 의 금지 목록에 걸리는 종류를 넣었거나, 목적지가 tenant-a 가 아니다.</li>
+<li><b>faas-functions 만 Degraded</b>: 대개 hello-gvisor 가 안 뜬다. Docker Desktop 에서 gVisor 가 안 도는 경우 (04 README "9절 보충").</li>
+</ul></aside>
+
+<h2 id="tree">디렉토리 지도</h2>
+
+<div class="tier" data-tier="1">
+  <h3>poc/ 폴더가 무엇이 되나</h3>
+  <p>레포의 <code>poc/</code> 아래 단계 폴더 7개와 전체 실행 파일 3개가 있다. 각 단계 폴더에는 원래 자리 파일(지금은 완성본)과 비교용 <code>solution/</code> 이 있다. 10/20 에 <code>solution/</code> 의 정답본을 원래 자리로 덮어써서, Argo CD 가 읽는 원래 자리 파일이 곧 완성본이다. 빈칸 버전은 커밋 <code>bee91f2</code> 에 남아 있다. 아래 나무는 <code>solution/</code> 하위와 빌드 산출물(<code>target/</code>, <code>.pytest_cache/</code>, <code>*.egg-info</code>, git 에 없는 것)을 뺐다.</p>
+  <pre class="tree"><code><span class="k">poc/</span>
+├── ANALYSIS.md                     <span class="c"># 분석 안내: 요청 4가지가 흐르는 길, 단계별 깨뜨리기 B1~B14</span>
+├── RUN-ALL.md                      <span class="c"># 전체 실행 안내: 단계별 기대 출력, 막히면 볼 곳, 이음새 표</span>
+├── run-all.sh                      <span class="c"># preflight → platform → rollouts → tenants → control-plane → check (+ chaos)</span>
+├── <span class="k">01-argocd/</span>                      <span class="c"># GitOps 의 뿌리</span>
+│   ├── cluster/kind-config.yaml    <span class="c"># 1단계 클러스터 (워커 1, kindnet). 지금은 역사</span>
+│   ├── platform/argocd/values.yaml <span class="c"># Argo CD Helm values (dex·notifications 끔, 폴링 120 + 60)</span>
+│   ├── functions/hello-fn/         <span class="c"># http-echo Helm 차트 (Chart.yaml, values.yaml, templates/)</span>
+│   ├── gitops/root.yaml            <span class="c"># App of Apps 뿌리: gitops/apps/ 폴더를 본다</span>
+│   ├── gitops/apps/                <span class="c"># hello-fn.yaml, bye-fn.yaml (valuesObject 로 메시지만 다르게)</span>
+│   ├── scripts/measure-sync.sh     <span class="c"># push → Synced/Healthy 시간 재기</span>
+│   └── results/ · solution/
+├── <span class="k">02-rollouts/</span>                    <span class="c"># 카나리 + 자동 롤백</span>
+│   ├── platform/rollouts/values.yaml    <span class="c"># 컨트롤러 1개, CRD 설치</span>
+│   ├── platform/prometheus/values.yaml  <span class="c"># scrape_interval 10s</span>
+│   ├── app/rollout.yaml            <span class="c"># podinfo Rollout: 20 → pause 60s → 60 → pause 60s</span>
+│   ├── app/analysis-template.yaml  <span class="c"># success-rate: 2xx 비율 ≥ 0.95, 15초 간격</span>
+│   ├── app/service.yaml
+│   ├── gitops/podinfo.yaml         <span class="c"># Application (kubectl apply 로 붙임)</span>
+│   ├── scripts/load.sh · measure-rollback.sh
+│   └── results/ · solution/
+├── <span class="k">03-tenant-isolation/</span>            <span class="c"># 테넌트 울타리</span>
+│   ├── cluster/kind-config.yaml    <span class="c"># 3단계 클러스터 (Cilium, 워커 3, taint 없음)</span>
+│   ├── charts/tenant/              <span class="c"># 울타리 차트: namespace, resourcequota, limitrange, networkpolicy, rbac, appproject</span>
+│   ├── tenants/tenant-a.yaml       <span class="c"># 테넌트 정의 = AppSet 입력 = 차트 values (network.allowFromNamespaces 포함)</span>
+│   ├── tenants/tenant-b.yaml
+│   ├── gitops/tenants-appset.yaml  <span class="c"># ApplicationSet: tenants/*.yaml 하나 = Application 하나</span>
+│   ├── gitops/tenant-a-hello.yaml  <span class="c"># 테넌트 함수 (project tenant-a)</span>
+│   ├── gitops/tenant-b-hello.yaml
+│   ├── scripts/rebuild-cluster.sh · test-isolation.sh · measure.sh · fixtures/
+│   └── results/ · solution/
+├── <span class="k">04-faas-runtime/</span>                <span class="c"># FaaS 본체: 노드 풀, 빌드, Knative, gVisor</span>
+│   ├── cluster/kind-config.yaml    <span class="c"># ★ 최종 모양 클러스터 정의 (taint + 8081 + containerd certs.d)</span>
+│   ├── scripts/rebuild-cluster.sh  <span class="c"># 클러스터 → Cilium → Argo CD + root → setup.sh → 빌드 v1 → faas-functions</span>
+│   ├── scripts/setup.sh            <span class="c"># kind-registry, Knative Serving, Kourier, 도메인, gVisor</span>
+│   ├── scripts/install-gvisor.sh   <span class="c"># exec 노드에 runsc + shim 설치, containerd 설정</span>
+│   ├── scripts/build.sh · coldstart.sh · latency.sh · build-noise.sh · lib.sh
+│   ├── platform/knative/config-features-patch.yaml <span class="c"># nodeselector · tolerations · runtimeclassname</span>
+│   ├── platform/runtimeclass-gvisor.yaml           <span class="c"># handler runsc, exec 풀 고정</span>
+│   ├── build/kaniko-job.yaml       <span class="c"># 빌드 Job (fn-build, tar.gz 컨텍스트, 레지스트리 캐시)</span>
+│   ├── functions/hello-src/        <span class="c"># Go 함수 소스 (main.go, Dockerfile: golang → scratch)</span>
+│   ├── functions/ksvc/             <span class="c"># hello-runc, hello-gvisor, hello-gvisor-warm</span>
+│   ├── gitops/faas-functions.yaml  <span class="c"># Application → fn-runtime</span>
+│   └── results/ · solution/
+├── <span class="k">05-control-plane-mcp/</span>           <span class="c"># 함수 배포 API + 운영 에이전트</span>
+│   ├── control-plane/              <span class="c"># Spring Boot + fabric8 (Maven). Dockerfile → faas-control-plane:0.1</span>
+│   │   └── src/main/…/deploy/FunctionDeployer.java  <span class="c"># startDeploy → finishDeploy (꼭 읽을 파일)</span>
+│   │   └── src/main/resources/templates/            <span class="c"># build-job.yaml, ksvc.yaml (${KEY} 치환)</span>
+│   │   └── src/main/resources/runtime/python/       <span class="c"># server.py + Dockerfile (python:3.12-slim)</span>
+│   ├── k8s/platform/control-plane/ <span class="c"># namespaces, rbac, tenant-a RoleBinding, deployment</span>
+│   ├── k8s/platform/ops-agent/rbac.yaml  <span class="c"># tenant-a 의 좁은 에이전트 계정</span>
+│   ├── k8s/argocd/platform-05.yaml <span class="c"># Application: k8s/platform 을 recurse</span>
+│   ├── mcp-server/ops_mcp/         <span class="c"># server, tools, guardrails, knative, config, approve</span>
+│   ├── mcp-server/tests/           <span class="c"># pytest (가드레일 단위 시험)</span>
+│   ├── scripts/deploy-fn.sh · measure-deploy.sh · make-agent-kubeconfig.sh · check-solution.sh
+│   ├── samples/hello-v1.py · hello-v2-broken.py
+│   └── results/ · solution/
+├── <span class="k">06-fault-injection/</span>             <span class="c"># 장애 주입 (대역 클러스터)</span>
+│   ├── scripts/s1-node-down.sh · s2-noisy-neighbor.sh · s3-bad-deploy.sh · s4-tenant-breach.sh
+│   ├── scripts/probe.sh · analyze.py · env.sh · lib.sh
+│   ├── defenses/fn-resilience-patch.yaml · pdb.yaml · prometheus-alerts-values.yaml
+│   ├── gitops/fault-defenses.yaml  <span class="c"># (run-all 은 안 붙임)</span>
+│   ├── standin/                    <span class="c"># kind-chaos: kind-config, targets, monitoring, load-rules.sh</span>
+│   ├── runbooks/RB-01 ~ RB-04
+│   └── results/*.csv · solution/
+└── <span class="k">07-ec2-k3s/</span>                     <span class="c"># EC2 + 스팟 + k3s (코드만, apply 안 함)</span>
+    ├── README.md · RUNBOOK.md
+    ├── terraform/budget/           <span class="c"># 월 예산 알람</span>
+    ├── terraform/cluster/          <span class="c"># network, security, iam, k3s, server, pools, fis</span>
+    ├── terraform/modules/node-pool/<span class="c"># Launch Template + ASG + 23:00 예약</span>
+    ├── k3s/*.tftpl                 <span class="c"># install.sh, server-config, agent-config (라벨·taint)</span>
+    ├── gitops/bootstrap/ · apps/ · workloads/placement-check/
+    ├── scripts/tunnel.sh · get-kubeconfig.sh · bootstrap-argocd.sh · measure.sh · check-leftovers.sh …
+    └── results/ · solution/</code></pre>
+  <p><code>solution/</code> 은 단계마다 있다(01~07). 원래 자리와 같은 구조이고 지금은 내용도 같다. 다른 점을 보고 싶으면 <code>git show bee91f2:poc/02-rollouts/app/rollout.yaml</code> 처럼 빈칸 커밋과 비교한다.</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>폴더 → 실행 중인 부품</h3>
+  <p>파일과 실행 중인 것 사이에는 세 가지 다리가 있다. Argo CD 가 Git 에서 읽어 가는 것(초록), 스크립트·Helm 이 클러스터에 직접 미는 것(주황), 맥에서 프로세스로 뜨는 것(회색). 초록 다리로 이어진 파일은 고치고 push 하면 바로 반영되고, 주황 다리는 스크립트를 다시 돌려야 반영된다.</p>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1160 790" role="img" aria-labelledby="f10-t">
+        <title id="f10-t">poc 폴더가 클러스터의 어느 부품이 되는지 잇는 그림</title>
+        <defs>
+          <marker id="f10-m-git" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-git"/></marker>
+          <marker id="f10-m-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+          <marker id="f10-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <text x="20" y="32" class="d-ttl-s">poc/ 폴더 (레포)</text>
+        <text x="760" y="32" class="d-ttl-s">실행 중인 것</text>
+
+        <rect x="20" y="50" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="71" class="d-mono">01-argocd/platform/argocd/values.yaml</text>
+        <rect x="20" y="90" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="111" class="d-mono">01-argocd/gitops/ (root.yaml, apps/)</text>
+        <rect x="20" y="130" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="151" class="d-mono">01-argocd/functions/hello-fn/</text>
+        <rect x="20" y="170" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="191" class="d-mono">02-rollouts/platform/ (Helm values)</text>
+        <rect x="20" y="210" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="231" class="d-mono">02-rollouts/app/</text>
+        <rect x="20" y="250" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="271" class="d-mono">03-tenant-isolation/charts/tenant/</text>
+        <rect x="20" y="290" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="311" class="d-mono">03-tenant-isolation/tenants/*.yaml</text>
+        <rect x="20" y="330" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="351" class="d-mono">03-tenant-isolation/gitops/</text>
+        <rect x="20" y="370" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="391" class="d-mono">04-faas-runtime/cluster/kind-config.yaml</text>
+        <rect x="20" y="410" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="431" class="d-mono">04-faas-runtime/scripts/ (rebuild, setup)</text>
+        <rect x="20" y="450" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="471" class="d-mono">04-faas-runtime/platform/</text>
+        <rect x="20" y="490" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="511" class="d-mono">04-faas-runtime/functions/ksvc/</text>
+        <rect x="20" y="530" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="551" class="d-mono">05-control-plane-mcp/control-plane/</text>
+        <rect x="20" y="570" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="591" class="d-mono">05-control-plane-mcp/k8s/platform/</text>
+        <rect x="20" y="610" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="631" class="d-mono">05-control-plane-mcp/mcp-server/</text>
+        <rect x="20" y="650" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="671" class="d-mono">06-fault-injection/standin/ · scripts/</text>
+        <rect x="20" y="690" width="400" height="32" rx="6" class="d-plain-box"/><text x="32" y="711" class="d-mono">07-ec2-k3s/terraform/ · k3s/ · gitops/</text>
+
+        <rect x="760" y="44" width="380" height="44" rx="10" class="d-card"/><text x="776" y="71" class="d-subd">hello-fn 파드 (fn-demo · tenant-a/b)</text>
+        <rect x="760" y="108" width="380" height="44" rx="10" class="d-cp-box"/><text x="776" y="135" class="d-subd">Argo CD + Application 10 · AppSet 1</text>
+        <rect x="760" y="172" width="380" height="44" rx="10" class="d-card"/><text x="776" y="199" class="d-subd">Rollouts · Prometheus · podinfo</text>
+        <rect x="760" y="236" width="380" height="44" rx="10" class="d-warn-box"/><text x="776" y="263" class="d-subd">tenant-a · tenant-b 울타리</text>
+        <rect x="760" y="300" width="380" height="44" rx="10" class="d-plain-box"/><text x="776" y="327" class="d-subd">kind 클러스터 faas (노드 4 · Cilium)</text>
+        <rect x="760" y="364" width="380" height="44" rx="10" class="d-card"/><text x="776" y="391" class="d-subd">registry · Knative · Kourier · gVisor</text>
+        <rect x="760" y="428" width="380" height="44" rx="10" class="d-user-box"/><text x="776" y="455" class="d-subd">fn-runtime 함수 3개 (ksvc)</text>
+        <rect x="760" y="492" width="380" height="44" rx="10" class="d-card"/><text x="776" y="519" class="d-subd">faas-system 컨트롤 플레인 · faas-build</text>
+        <rect x="760" y="556" width="380" height="44" rx="10" class="d-agent"/><text x="776" y="583" class="d-subd">맥의 MCP 프로세스 (ops_mcp)</text>
+        <rect x="760" y="620" width="380" height="44" rx="10" class="d-fail-box"/><text x="776" y="647" class="d-subd">대역 클러스터 chaos (06)</text>
+        <rect x="760" y="684" width="380" height="44" rx="10" class="d-prov-box"/><text x="776" y="711" class="d-subd">EC2 + k3s (07, 코드만)</text>
+
+        <path d="M420 66 C590 66 590 130 757 130" class="d-e-prov" marker-end="url(#f10-m-prov)"/>
+        <path d="M420 106 C590 106 590 130 757 130" class="d-e-git" marker-end="url(#f10-m-git)"/>
+        <path d="M420 146 C590 146 590 66 757 66" class="d-e-git" marker-end="url(#f10-m-git)"/>
+        <path d="M420 186 C590 186 590 194 757 194" class="d-e-prov" marker-end="url(#f10-m-prov)"/>
+        <path d="M420 226 C590 226 590 194 757 194" class="d-e-git" marker-end="url(#f10-m-git)"/>
+        <path d="M420 266 C590 266 590 258 757 258" class="d-e-git" marker-end="url(#f10-m-git)"/>
+        <path d="M420 306 C590 306 590 258 757 258" class="d-e-git" marker-end="url(#f10-m-git)"/>
+        <path d="M420 346 C590 346 590 130 757 130" class="d-e-prov" marker-end="url(#f10-m-prov)"/>
+        <path d="M420 386 C590 386 590 322 757 322" class="d-e-prov" marker-end="url(#f10-m-prov)"/>
+        <path d="M420 426 C590 426 590 322 757 322" class="d-e-prov" marker-end="url(#f10-m-prov)"/>
+        <path d="M420 426 C590 426 590 386 757 386" class="d-e-prov" marker-end="url(#f10-m-prov)"/>
+        <path d="M420 466 C590 466 590 386 757 386" class="d-e-prov" marker-end="url(#f10-m-prov)"/>
+        <path d="M420 506 C590 506 590 450 757 450" class="d-e-git" marker-end="url(#f10-m-git)"/>
+        <path d="M420 546 C590 546 590 514 757 514" class="d-e-prov" marker-end="url(#f10-m-prov)"/>
+        <path d="M420 586 C590 586 590 514 757 514" class="d-e-git" marker-end="url(#f10-m-git)"/>
+        <path d="M420 626 C590 626 590 578 757 578" class="d-e-api" marker-end="url(#f10-m-api)"/>
+        <path d="M420 666 C590 666 590 642 757 642" class="d-e-prov" marker-end="url(#f10-m-prov)"/>
+        <path d="M420 706 C590 706 590 706 757 706" class="d-e-api d-dash" marker-end="url(#f10-m-api)"/>
+
+        <path d="M20 762 L60 762" class="d-e-git"/><text x="68" y="767" class="d-sub">Argo CD 가 Git 에서 읽는다 (push 하면 반영)</text>
+        <path d="M400 762 L440 762" class="d-e-prov"/><text x="448" y="767" class="d-sub">스크립트 · Helm · kubectl apply · docker build</text>
+        <path d="M800 762 L840 762" class="d-e-api"/><text x="848" y="767" class="d-sub">맥 프로세스 · 코드만</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 0-10.</b> 폴더와 실행 중인 부품. 03 의 gitops/ 폴더는 Argo CD 가 읽는 게 아니라 사람이 <code>kubectl apply</code> 로 한 번 붙이는 Application 정의라 주황이다. 04 의 kind-config 는 클러스터를 만들 때 한 번만 읽힌다(바꾸려면 재생성).</figcaption>
+  </figure>
+</div>
+
+<aside class="callout warn"><p class="callout-title">주의: 같은 이름의 파일이 여러 단계에</p><p><code>cluster/kind-config.yaml</code> 과 <code>scripts/rebuild-cluster.sh</code> 는 01·03·04 에 각각 있다. 지금 클러스터를 만드는 것은 <strong>04 것만</strong>이다(run-all.sh 의 platform 단계). 03 것을 돌리면 taint 없는 클러스터가 생겨 함수와 빌드가 아무 노드에나 간다.</p></aside>
+
+<h2 id="flows">핵심 흐름 다섯</h2>
+
+<p>이 플랫폼을 설명할 때 반드시 나오는 요청 다섯 가지를 시퀀스 다이어그램으로 따라간다. 화살표 하나하나가 "여기가 끊기면 어떤 증상이 나나" 의 후보다. ANALYSIS.md 2절의 네 가지에 노드 장애(06)를 더했다.</p>
+
+<h3 id="flow-deploy">흐름 1. 함수 배포 (poc/05 · 7장)</h3>
+
+<div class="tier" data-tier="1">
+  <p>개발자가 코드를 보내면 1초 안에 202 를 받고, 그 뒤 상태를 몇 번 물어보다 READY 와 URL 을 받는다. 그 사이 클러스터 안에서 빌드 Job, digest, Knative Service 가 차례로 생긴다.</p>
+  <pre class="mermaid">
+sequenceDiagram
+  participant D as 함수 개발자
+  participant CP as 컨트롤 플레인
+  participant API as kube-apiserver
+  participant J as kaniko Job (build 풀)
+  participant R as kind-registry
+  participant KN as Knative controller
+  D->>CP: POST /api/v1/tenants/tenant-a/functions (name, code)
+  CP->>API: namespace tenant-a 라벨 tenant=tenant-a 확인
+  Note over CP: buildId = hello + 코드 해시 앞 10자
+  CP->>API: create Job build-hello-해시 (faas-build)
+  CP->>API: create ConfigMap src-hello-해시 (주인 = Job)
+  CP-->>D: 202 Accepted + Location, phase BUILDING
+  API->>J: 스케줄 (nodeSelector pool=build + toleration)
+  J->>J: initContainer 가 cp -L 로 소스 복사
+  J->>R: kaniko 빌드 후 push kind-registry:5000/tenant-a/hello
+  J->>API: 종료 메시지에 sha256 digest
+  CP->>API: watch 로 Job 완료 확인 (가상 스레드)
+  CP->>API: 빌드 파드 상태에서 digest 읽기
+  CP->>API: ksvc hello server-side apply (localhost:5001 @sha256)
+  API->>KN: ksvc 변경
+  KN->>API: Revision hello-0000N, Deployment (exec 풀)
+  loop 0.5초마다
+    D->>CP: GET .../functions/hello
+    CP-->>D: BUILDING, DEPLOYING, READY + URL
+  end
+  </pre>
+</div>
+
+<div class="tier" data-tier="2">
+  <ol>
+    <li><b>검사</b>: 이름(정규식)·코드 크기(<code>max-code-bytes</code> 262144) 확인 후, namespace 에 <code>tenant=tenant-a</code> 라벨이 있는지 본다. 없으면 404. kube-system 같은 곳에 함수를 못 넣게 하는 첫 문이고, 두 번째 문은 RBAC(tenant-a 에만 RoleBinding).</li>
+    <li><b>멱등 빌드 ID</b>: <code>BuildIds.of(tenant, name, code)</code> = 이름 + SHA-256 앞 10자. 같은 코드면 같은 Job 이름 → 이미 있으면 빌드를 건너뛴다(재사용). <code>inFlight</code> 집합이 같은 빌드를 기다리는 스레드를 하나로 묶는다.</li>
+    <li><b>Job + ConfigMap</b>: Job 을 먼저 만들고, 소스 ConfigMap(handler.py, server.py, Dockerfile)의 ownerReference 를 그 Job 으로 건다. Job 이 TTL(3600초)로 지워지면 ConfigMap 도 같이 지워진다. Job 파드는 ConfigMap 이 생길 때까지 ContainerCreating 에서 기다린다.</li>
+    <li><b>202 와 Location</b>: 빌드는 수십 초라 요청을 붙잡지 않는다. 클라이언트(deploy-fn.sh)는 Location 의 상태 주소를 0.5초마다 묻는다.</li>
+    <li><b>빌드</b>: initContainer(busybox)가 ConfigMap 의 심볼릭 링크를 <code>cp -L</code> 로 실제 파일로 복사하고, kaniko 가 <code>--digest-file=/dev/termination-log</code> 로 digest 를 컨테이너 종료 메시지에 남긴다.</li>
+    <li><b>digest 로 고정</b>: 컨트롤 플레인이 빌드 파드의 <code>status.containerStatuses[kaniko].state.terminated.message</code> 에서 <code>sha256:</code> 을 읽고, 이미지 주소를 pull 이름 <code>localhost:5001/tenant-a/hello@sha256:…</code> 로 만든다.</li>
+    <li><b>server-side apply</b>: field manager <code>faas-control-plane</code>, <code>forceConflicts</code>. 컨트롤 플레인이 적은 필드(이미지, 라벨, max-scale, traffic)만 주인이 되고, 에이전트가 바꾼 min-scale 은 건드리지 않는다.</li>
+    <li><b>Knative 반영</b>: template 이 바뀌었으니 새 Revision → Deployment → 파드(exec 풀). traffic 은 <code>latestRevision: true, percent: 100</code>.</li>
+  </ol>
+  <div class="code-head"><span>poc/05-control-plane-mcp/control-plane/src/main/java/com/example/controlplane/deploy/FunctionDeployer.java</span><span>발췌</span></div>
+  <pre><code><span class="c">// startDeploy: 요청 스레드, 1초 안에 끝남</span>
+String buildId = BuildIds.of(tenant, name, req.code());       <span class="c">// 이름 + 코드 해시 앞 10자</span>
+Job job = k8s.batch().v1().jobs().inNamespace(buildNs).withName(jobName).get();
+boolean reused = job != null;                                   <span class="c">// 같은 코드 = 같은 Job = 빌드 재사용</span>
+<span class="k">if</span> (!reused) { <span class="c">/* Job 생성 → ConfigMap(owner=Job) 생성 */</span> }
+<span class="k">if</span> (inFlight.add(buildId)) {                                   <span class="c">// 기다리는 스레드는 하나만</span>
+    executor.submit(() -&gt; finishDeploy(tenant, name, buildId, actor));
+}
+
+<span class="c">// finishDeploy: 가상 스레드에서</span>
+Job done = ...waitUntilCondition(j -&gt; j == null || isFinished(j), props.buildTimeout().toSeconds(), SECONDS);
+String digest = readDigest(jobName);                            <span class="c">// termination message 의 sha256:...</span>
+String image = props.registryPull() + "/" + tenant + "/" + name + "@" + digest;
+knativeServices(tenant).resource(ksvc).fieldManager(FIELD_MANAGER).forceConflicts().serverSideApply();</code></pre>
+</div>
+
+<h3 id="flow-invoke">흐름 2. 함수 호출과 콜드 스타트 (poc/04·05 · 5장)</h3>
+
+<div class="tier" data-tier="1">
+  <p>사용자는 Host 헤더 하나로 함수를 고른다. 파드가 떠 있으면 바로 응답하고, 0개면 activator 가 요청을 붙잡은 채 파드를 띄운다. 어느 경우든 tenant-a 로 들어가는 순간 Cilium 이 NetworkPolicy 를 검사한다.</p>
+  <pre class="mermaid">
+sequenceDiagram
+  participant U as 최종 사용자
+  participant K as Kourier (Envoy)
+  participant A as activator
+  participant AS as autoscaler
+  participant KL as kubelet (exec 노드)
+  participant C as Cilium eBPF
+  participant P as 함수 파드
+  U->>K: GET Host hello.tenant-a.faas.local (맥 8081, 노드 31080)
+  alt 파드가 1개 이상
+    K->>C: 파드 IP 로 전달
+    C->>P: NetworkPolicy 통과 (kourier-system 출발 허용)
+    P-->>U: 응답
+  else 파드가 0개 (콜드 스타트)
+    K->>A: 엔드포인트가 activator 를 가리킴
+    A->>AS: 수요 있음 (동시 요청 수 보고)
+    AS->>KL: 0에서 1로 (PodAutoscaler, Deployment, 스케줄러 거쳐)
+    KL->>KL: 이미지 pull localhost:5001 이 kind-registry:5000 으로
+    KL->>P: 컨테이너 시작 (runc 또는 runsc)
+    P-->>A: queue-proxy 준비 완료
+    A->>C: 붙잡아 둔 요청 전달
+    C->>P: NetworkPolicy 통과 (knative-serving 출발 허용)
+    P-->>U: 응답 (첫 요청은 느리다)
+  end
+  Note over AS,P: 요청이 끊기면 stable window 와 grace period 뒤 다시 0개
+  </pre>
+</div>
+
+<div class="tier" data-tier="2">
+  <ol>
+    <li><b>입구</b>: 맥 8081 은 kind 가 control-plane 노드 컨테이너의 31080 에 묶어 둔 포트다. Service <code>kourier</code> 가 NodePort 31080 으로 열려 있어 그 노드의 kube-proxy/Cilium 이 Kourier 파드로 보낸다.</li>
+    <li><b>라우팅</b>: Knative 가 ksvc 마다 KIngress 를 만들고 net-kourier-controller 가 Envoy 설정으로 바꾼다. Host 가 <code>hello.tenant-a.faas.local</code> 이면 tenant-a 의 hello Revision 으로.</li>
+    <li><b>파드 0개</b>: 그 Revision 의 엔드포인트가 activator 를 가리킨다(서빙 모드 proxy). activator 는 요청을 버퍼에 두고 autoscaler 에 수요를 알린다. 그래서 0개여도 요청이 실패하지 않고 느려질 뿐이다.</li>
+    <li><b>스케일 업</b>: autoscaler 가 PodAutoscaler 의 desired 를 1 로 → Deployment replicas 1 → 스케줄러가 exec 풀 노드를 고름(nodeSelector + toleration) → kubelet 이 이미지를 받고(노드 containerd 의 hosts.toml 이 localhost:5001 을 kind-registry:5000 으로) 컨테이너 시작.</li>
+    <li><b>정책 검사</b>: tenant-a 의 default-deny 가 모든 들어오는 연결을 막고, <code>allow-from-namespaces</code> 가 knative-serving(activator)과 kourier-system(Kourier)만 연다. 10/20 에 이 정책이 없어서 "READY 인데 타임아웃" 이 될 뻔했다.</li>
+    <li><b>스케일 다운</b>: queue-proxy 가 동시 요청 수를 보고, autoscaler 가 stable window(Knative 기본 60초. 04 함수는 annotation 으로 6초) 동안 요청이 없으면 0 으로 결정, scale-to-zero grace period(기본 30초) 뒤 파드 종료.</li>
+  </ol>
+</div>
+
+<h3 id="flow-gitops">흐름 3. git push → 클러스터 반영 (poc/01 · 1장)</h3>
+
+<div class="tier" data-tier="1">
+  <p>플랫폼 운영자는 클러스터를 직접 만지지 않는다. Git 을 고치면 Argo CD 가 폴링으로 알아채서 맞춘다. 반대로 누가 클러스터를 손으로 고치면 Argo CD 가 Git 쪽으로 되돌린다.</p>
+  <pre class="mermaid">
+sequenceDiagram
+  participant O as 플랫폼 운영자
+  participant G as GitHub main
+  participant RS as argocd-repo-server
+  participant AC as application-controller
+  participant K as kube-apiserver
+  O->>G: git push (예: hello-fn values 수정)
+  loop 120초 + jitter 0에서 60초마다
+    AC->>RS: 이 Application 의 원하는 상태는?
+    RS->>G: 새 커밋 있나 (git fetch)
+    RS->>RS: Chart.yaml 있으면 helm template
+    RS-->>AC: 렌더된 매니페스트
+  end
+  AC->>K: 실제 상태 (watch 캐시)
+  AC->>AC: 비교, 다르면 OutOfSync
+  AC->>K: apply (자동 sync)
+  K-->>AC: 리소스 상태, Health 계산
+  Note over AC,K: selfHeal 은 손 변경을 되돌리고, prune 은 Git 에서 지운 것을 지운다
+  </pre>
+</div>
+
+<div class="tier" data-tier="2">
+  <ol>
+    <li><b>폴링</b>: <code>timeout.reconciliation: 120</code> + <code>timeout.reconciliation.jitter: 60</code> (01 values). 그래서 push 후 반영까지 최대 약 3분. 강제 새로고침(UI 의 Refresh 또는 <code>argocd.argoproj.io/refresh</code> annotation)이나 webhook 이면 몇 초.</li>
+    <li><b>렌더</b>: repo-server 가 폴더에 <code>Chart.yaml</code> 이 있으면 <code>helm template</code> 으로 펼친다. <code>helm install</code> 이 아니라서 <code>helm list</code> 에는 안 보인다.</li>
+    <li><b>두 상태</b>: Sync(Git 과 같은가: Synced/OutOfSync)와 Health(잘 도나: Healthy/Progressing/Degraded/Missing)는 따로다. Git 대로 깔았는데 파드가 안 뜨면 Synced + Degraded.</li>
+    <li><b>클러스터 쪽 변화</b>는 폴링이 아니라 watch 이벤트로 바로 안다. 그래서 selfHeal 은 몇 초 안에 일어난다.</li>
+    <li><b>App of Apps</b>: root 가 <code>gitops/apps/</code> 를 보므로 그 폴더에 Application YAML 을 하나 추가하고 push 하면 새 Application 이 생긴다(bye-fn 이 그렇게 생겼다).</li>
+  </ol>
+</div>
+
+<h3 id="flow-canary">흐름 4. 나쁜 버전 배포와 자동 롤백 (poc/02 · 2장)</h3>
+
+<div class="tier" data-tier="1">
+  <p>나쁜 버전이 Git 에 들어가도 사용자 전체가 맞지 않는다. Rollouts 가 파드 5개 중 1개만 새 버전으로 바꾸고, Prometheus 숫자가 나쁘면 사람 없이 멈춘다. 클러스터는 안전해지지만 Git 은 여전히 나쁜 상태라서, 마지막 정리는 git revert 다.</p>
+  <pre class="mermaid">
+sequenceDiagram
+  participant O as 플랫폼 운영자
+  participant AC as Argo CD
+  participant RO as Rollouts 컨트롤러
+  participant RS as ReplicaSet stable과 canary
+  participant AR as AnalysisRun
+  participant PR as Prometheus
+  O->>AC: git push (나쁜 이미지 또는 설정)
+  AC->>RO: Rollout spec 변경 sync
+  RO->>RS: canary ReplicaSet 1개 (setWeight 20, 5개 중 1개)
+  RO->>AR: AnalysisRun 시작 (startingStep 1, canary-hash 인자)
+  loop initialDelay 30초 뒤부터 15초마다
+    AR->>PR: 카나리 파드만의 2xx 비율 (최근 1분 rate)
+    PR-->>AR: 결과 값 또는 결과 없음
+  end
+  alt 0.95 이상이 계속
+    RO->>RS: setWeight 60, 그다음 100, stable 교체
+  else 0.95 미만이 failureLimit 1 을 넘음, 또는 질의 실패가 연속
+    AR-->>RO: Failed 또는 Error
+    RO->>RS: abort, canary 0개, stable 100%
+    AC-->>O: Synced 그러나 Degraded
+    O->>AC: git revert 로 Git 을 안전한 버전으로
+  end
+  </pre>
+</div>
+
+<div class="tier" data-tier="2">
+  <ol>
+    <li><b>비율 = 파드 수</b>: 트래픽 라우터 없이 Rollouts 는 파드 수로 비율을 흉내 낸다. replicas 5, setWeight 20 → canary 1 + stable 4. Service 가 두 종류 파드를 고르게 부르니 약 20% 가 카나리로 간다.</li>
+    <li><b>카나리만 재기</b>: 파드 라벨 <code>rollouts-pod-template-hash</code> 를 Prometheus 가 지표 라벨 <code>rollouts_pod_template_hash</code> 로 복사한다. AnalysisTemplate 은 이 값(<code>podTemplateHashValue: Latest</code>)으로 카나리 파드만 고른다. <code>path="root"</code> 로 헬스체크를 뺀다.</li>
+    <li><b>판정 네 가지</b>: Successful(계속), Failed(failureLimit 초과 → abort), Error(질의 실패가 consecutiveErrorLimit 4 초과 → abort), Inconclusive(pause). 질의 주소가 틀려도 abort 되는 것이 fail-closed.</li>
+    <li><b>부하가 필요한 이유</b>: 요청이 0 이면 rate 가 0/0 = NaN → 판정 불가. 그래서 <code>scripts/load.sh</code> 로 클러스터 안에서 계속 부른다.</li>
+    <li><b>GitOps 와의 엇갈림</b>: abort 뒤 클러스터는 stable 100% 지만 Rollout spec 은 Git 의 나쁜 버전 그대로다. Argo CD 는 Synced + Degraded 로 보인다. <code>kubectl argo rollouts undo</code> 로 고치면 selfHeal 이 Git 상태로 다시 바꾼다. 그래서 Git 을 고친다.</li>
+  </ol>
+</div>
+
+<h3 id="flow-node">흐름 5. 노드 장애와 복구 (poc/06 · 8장)</h3>
+
+<div class="tier" data-tier="1">
+  <p>대역 클러스터 chaos 의 exec 노드 하나를 <code>docker pause</code> 로 얼린다. 쿠버네티스는 하트비트가 끊긴 지 일정 시간이 지나야 노드를 NotReady 로 보고, 그때부터 그 노드 파드를 Service 에서 빼고, 다시 일정 시간 뒤 다른 노드로 옮긴다. 방어 설정(tolerationSeconds 20, 흩어 놓기, PDB)은 이 두 번째 시간을 줄이고 첫 번째 시간의 피해를 나눈다.</p>
+  <pre class="mermaid">
+sequenceDiagram
+  participant S as s1-node-down.sh
+  participant N as exec 노드
+  participant NL as 노드 수명 컨트롤러
+  participant EP as EndpointSlice
+  participant RS as ReplicaSet과 스케줄러
+  participant PM as Prometheus 알림
+  participant PB as 합성 프로브
+  S->>N: docker pause (t0)
+  PB->>N: 그 노드 파드로 간 요청은 응답 없음
+  N--xNL: kubelet Lease 하트비트 끊김
+  Note over NL: node-monitor-grace-period 기본 50초
+  NL->>N: Ready Unknown, taint unreachable NoExecute
+  NL->>EP: 그 노드 파드 Ready False, 엔드포인트에서 빠짐
+  PB->>EP: 남은 파드로 요청 성공
+  PM-->>S: FnNodeNotReady firing
+  Note over NL,RS: tolerationSeconds 20 (방어 후, 기본 300)
+  NL->>RS: 파드 축출
+  RS->>RS: 다른 exec 노드에 새 파드 (DoNotSchedule, nodeTaintsPolicy Honor)
+  S->>N: docker unpause, uncordon, CSV 한 줄
+  </pre>
+</div>
+
+<div class="tier" data-tier="2">
+  <ol>
+    <li><b>감지까지</b>: kubelet 은 약 10초마다 <code>kube-node-lease</code> 의 Lease 를 갱신한다. kube-controller-manager 의 <code>--node-monitor-grace-period</code>(기본 50초) 동안 갱신이 없으면 노드 Ready=Unknown. 이 50초 동안 그 노드 파드로 간 요청은 응답이 없다.</li>
+    <li><b>Service 에서 빠짐</b>: NotReady 가 되면 그 노드 파드들이 Ready=False 로 표시되고 EndpointSlice 에서 빠진다. 프로브 에러가 이 순간 멈춘다. "NotReady 가 Service 를 고친다" 는 이 뜻이다.</li>
+    <li><b>옮기기</b>: 노드에 <code>node.kubernetes.io/unreachable:NoExecute</code> taint. 파드는 이 taint 를 기본 300초 견딘다(DefaultTolerationSeconds). 06 방어는 이를 20초로 줄였다.</li>
+    <li><b>어디로</b>: topologySpreadConstraints(maxSkew 1, DoNotSchedule, nodeTaintsPolicy Honor, matchLabelKeys pod-template-hash)가 평소엔 파드를 노드마다 흩고, 노드가 죽으면 죽은 노드를 계산에서 빼서 새 파드가 산 노드에 뜰 수 있게 한다.</li>
+    <li><b>스팟 모드</b>: <code>spot</code> 은 2분 예고를 흉내 내 cordon + drain 뒤 멈춘다. drain 은 PDB(minAvailable 1)를 지킨다. PDB 를 2 로 너무 세게 하면 drain 이 안 끝나 예고 없는 장애와 같아진다(06 README 4.4).</li>
+  </ol>
+</div>
+
+<h3 id="lifecycle">함수의 일생</h3>
+
+<div class="tier" data-tier="2">
+  <p>컨트롤 플레인의 상태 조회가 돌려주는 phase 는 여섯 가지다. 바깥 상태는 "빌드와 배포" 를, READY 안쪽 상태는 Knative 가 하는 "0개와 N개 사이" 를 나타낸다. 상태 조회는 상태를 저장하지 않고 매번 Job 과 ksvc 를 읽어 계산한다는 점이 중요하다(그래서 컨트롤 플레인이 재시작해도 조회는 맞다).</p>
+  <pre class="mermaid">
+stateDiagram-v2
+  [*] --> NOT_FOUND
+  NOT_FOUND --> BUILDING: POST 새 코드
+  BUILDING --> BUILD_FAILED: Job 실패 또는 activeDeadline 600초
+  BUILDING --> DEPLOYING: Job 성공, ksvc 가 아직 옛 buildId
+  DEPLOYING --> READY: Ready 조건 True
+  DEPLOYING --> FAILED: Ready 조건 False
+  READY --> BUILDING: POST 다른 코드
+  BUILD_FAILED --> BUILDING: 코드 고쳐 POST
+  FAILED --> BUILDING: 코드 고쳐 POST
+  state READY {
+    [*] --> Zero
+    Zero: 파드 0개
+    Cold: 콜드 스타트 중
+    Warm: 파드 1개 이상
+    Zero --> Cold: 첫 요청이 activator 에
+    Cold --> Warm: 파드 준비 완료
+    Warm --> Warm: 동시 요청 따라 1에서 max-scale 5
+    Warm --> Zero: 요청 끊김, window 와 grace 뒤
+  }
+  </pre>
+  <p>같은 코드를 다시 POST 하면 같은 buildId → Job 재사용 → ksvc 의 buildId 와 같으므로 바로 READY 로 보인다. 에이전트가 min-scale 을 1 이상으로 올리면 READY 안쪽에서 Zero 로 내려가지 않는다(대신 그만큼 메모리를 늘 쓴다).</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>상태 계산 의사코드와 엣지 케이스</h3>
+  <pre class="pseudo"><code><span class="k">함수 상태</span>(tenant, name):
+  job  = faas-build 에서 라벨 tenant·function 이 맞는 Job 중 가장 최근
+  ksvc = tenant namespace 의 Knative Service name
+  <span class="k">만약</span> job 없음 <span class="k">그리고</span> ksvc 없음: <span class="k">반환</span> NOT_FOUND (HTTP 404)
+  <span class="k">만약</span> job 있음 <span class="k">그리고</span> 끝나지 않음: <span class="k">반환</span> BUILDING
+  <span class="k">만약</span> job 있음 <span class="k">그리고</span> 실패: <span class="k">반환</span> BUILD_FAILED (+ kubectl logs 힌트)
+  <span class="k">만약</span> ksvc 없음 <span class="k">또는</span> ksvc.template.annotation[build-id] ≠ job.build-id:
+      <span class="k">반환</span> DEPLOYING          <span class="c">// 백그라운드가 apply 하기 직전 (또는 영영 못 한 경우)</span>
+  ready = ksvc.status.conditions[Ready]
+  <span class="k">반환</span> True → READY, False → FAILED, 그 밖 → DEPLOYING</code></pre>
+  <ul>
+    <li><b>컨트롤 플레인이 빌드 중에 죽으면</b>: Job 은 끝나지만 기다리던 가상 스레드가 사라져 ksvc 가 안 생긴다. 상태는 영원히 DEPLOYING (05 알려진 한계 1, ANALYSIS B10). 고치는 설계: 시작할 때 "끝났는데 반영 안 된 Job" 을 찾아 이어 하기, 또는 오퍼레이터로 바꿔 reconcile 루프에 맡기기.</li>
+    <li><b>빌드가 오래 걸리면</b>: 처음엔 <code>application.yml</code> 의 <code>build-timeout: 5m</code> 이 Job 의 <code>activeDeadlineSeconds: 600</code> 보다 짧아서, 5~10분 사이에 끝나는 빌드는 기다림이 먼저 끝나 DEPLOYING 에 고착될 수 있었다. 지금은 <code>11m</code> 으로 고쳐서 쿠버네티스가 먼저 Job 을 끝내고 컨트롤 플레인이 그 결과를 읽는다 (06장).</li>
+    <li><b>tenant-b 로 배포하면</b>: tenant-b 도 <code>tenant=tenant-b</code> 라벨이 있어 404 를 통과하고, faas-build 의 Job 생성도 된다. 그러나 컨트롤 플레인의 ksvc 권한 RoleBinding 이 tenant-a 에만 있어 apply 에서 403 이 날 것이다 【확인 필요: 실제 클러스터 미검증】. 테넌트 추가 때 <code>k8s/platform/control-plane/tenant-*.yaml</code> 도 같이 늘려야 한다.</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>다섯 흐름의 스크립트: 흐름 1 <code>poc/05-control-plane-mcp/scripts/deploy-fn.sh</code>(시간이 <code>results/deploy-times.csv</code> 에 쌓임), 흐름 2 <code>poc/04-faas-runtime/scripts/coldstart.sh</code>, 흐름 3 <code>poc/01-argocd/scripts/measure-sync.sh</code>, 흐름 4 <code>poc/02-rollouts/scripts/measure-rollback.sh</code>, 흐름 5 <code>poc/06-fault-injection/scripts/s1-node-down.sh</code>. 모두 "시작 시각 → 관찰 → CSV 한 줄" 같은 모양이다.</p></aside>
+
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><ul>
+<li><b>흐름 1 이 BUILDING 에서 안 넘어감</b>: <code>kubectl -n faas-build get pods</code>. Pending 이면 build 노드 라벨·taint, ImagePullBackOff 면 kaniko 이미지, <code>429 Too Many Requests</code> 면 Docker Hub 한도(RUN-ALL.md 4절 3·5번).</li>
+<li><b>흐름 1 이 403</b>: 컨트롤 플레인 RBAC. 감사 로그(AUDIT 줄)에서 어느 단계(deploy.accepted / deploy.build / deploy.apply)인지 본다 (ANALYSIS B9).</li>
+<li><b>흐름 2 가 READY 인데 타임아웃</b>: tenant-a 의 <code>allow-from-namespaces</code> 확인, <code>hubble observe --namespace tenant-a --verdict DROPPED</code> 에 kourier·activator 출발 패킷이 보이는지 (ANALYSIS B4).</li>
+<li><b>흐름 3 이 몇 분째 OutOfSync 아님</b>: 폴링 대기 중일 수 있다. UI 의 Refresh. 그래도 안 되면 repo-server 로그(렌더 실패).</li>
+<li><b>흐름 4 에서 좋은 배포도 abort</b>: 질의 주소 오타(fail-closed, ANALYSIS B1) 또는 부하 없음(NaN, B2).</li>
+<li><b>흐름 5 에서 새 파드가 Pending</b>: whenUnsatisfiable DoNotSchedule 인데 nodeTaintsPolicy 가 Ignore 면 죽은 노드도 자리로 센다 (06 README 8절).</li>
+</ul></aside>
+
+<h2 id="install">설치 순서</h2>
+
+<div class="tier" data-tier="1">
+  <h3>run-all.sh 한 번이 하는 일</h3>
+  <p>레포 루트에서 <code>poc/run-all.sh</code> 를 돌리면 여섯 단계가 순서대로 돈다. 단계 이름을 인자로 주면 그 단계만 돈다(<code>poc/run-all.sh tenants check</code>). 단계마다 걸린 시간을 찍고 끝에 표로 보여 준다. 06 의 대역 클러스터는 기본 순서에 없고 <code>chaos</code> 를 따로 줘야 한다.</p>
+  <pre class="mermaid">
+flowchart TD
+  PF["preflight<br/>도구 7개 · Docker 메모리 · 빈칸 검사"]
+  subgraph PL["platform · 04 rebuild-cluster.sh"]
+    P1["옛 faas 삭제 후 생성<br/>04 kind-config"]
+    P2["Cilium + Hubble"]
+    P3["Argo CD Helm + root"]
+    P4["setup.sh<br/>registry · Knative · Kourier · 도메인 · gVisor"]
+    P5["기능 플래그 · RuntimeClass<br/>build.sh v1 · faas-functions"]
+  end
+  subgraph RO["rollouts · 02"]
+    R1["Helm Rollouts · Prometheus"]
+    R2["podinfo Application"]
+  end
+  subgraph TE["tenants · 03"]
+    T1["tenants ApplicationSet"]
+    T2["tenant-a-hello · tenant-b-hello"]
+  end
+  subgraph CP["control-plane · 05"]
+    C1["docker build · kind load"]
+    C2["platform-05 Application"]
+    C3["port-forward 8090<br/>deploy-fn hello-v1"]
+  end
+  CK["check<br/>노드 · Application · ksvc · curl 2번 · 격리 net"]
+  CH["chaos · 06<br/>kind-chaos 따로"]
+  PF --> P1 --> P2 --> P3 --> P4 --> P5
+  P5 --> R1 --> R2
+  R2 --> T1 --> T2
+  T2 --> C1 --> C2 --> C3
+  C3 --> CK
+  CK -.->|인자로 따로| CH
+  </pre>
+  <p>각 단계 끝의 <code>wait_app</code> 은 Argo CD Application 이 <code>Synced</code> + <code>Healthy</code> 가 될 때까지 기다린다. 그래서 앞 단계가 다 뜬 뒤에야 다음 단계가 시작된다.</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>클러스터가 자라는 모양</h3>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1260 560" role="img" aria-labelledby="f11-t">
+        <title id="f11-t">run-all.sh 단계마다 클러스터에 더해지는 부품</title>
+        <defs>
+          <marker id="f11-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <rect x="20" y="30" width="220" height="56" rx="10" class="d-cp-box"/><text x="36" y="55" class="d-ttl-s">1 · platform</text><text x="36" y="76" class="d-sub">04 rebuild-cluster.sh</text>
+        <rect x="270" y="30" width="220" height="56" rx="10" class="d-cp-box"/><text x="286" y="55" class="d-ttl-s">2 · rollouts</text><text x="286" y="76" class="d-sub">02 · Helm 2개</text>
+        <rect x="520" y="30" width="220" height="56" rx="10" class="d-cp-box"/><text x="536" y="55" class="d-ttl-s">3 · tenants</text><text x="536" y="76" class="d-sub">03 · AppSet</text>
+        <rect x="770" y="30" width="220" height="56" rx="10" class="d-cp-box"/><text x="786" y="55" class="d-ttl-s">4 · control-plane</text><text x="786" y="76" class="d-sub">05 · 이미지 + Argo CD</text>
+        <rect x="1020" y="30" width="220" height="56" rx="10" class="d-cp-box"/><text x="1036" y="55" class="d-ttl-s">5 · check</text><text x="1036" y="76" class="d-sub">읽기만</text>
+        <path d="M240 58 L266 58" class="d-e-api" marker-end="url(#f11-m)"/>
+        <path d="M490 58 L516 58" class="d-e-api" marker-end="url(#f11-m)"/>
+        <path d="M740 58 L766 58" class="d-e-api" marker-end="url(#f11-m)"/>
+        <path d="M990 58 L1016 58" class="d-e-api" marker-end="url(#f11-m)"/>
+
+        <rect x="20" y="110" width="220" height="42" rx="8" class="d-plain-box"/><text x="32" y="136" class="d-subd">kind faas · 노드 4 · taint</text>
+        <rect x="20" y="160" width="220" height="42" rx="8" class="d-card"/><text x="32" y="186" class="d-subd">Cilium + Hubble</text>
+        <rect x="20" y="210" width="220" height="42" rx="8" class="d-card"/><text x="32" y="236" class="d-subd">Argo CD + root (01)</text>
+        <rect x="20" y="260" width="220" height="42" rx="8" class="d-card"/><text x="32" y="286" class="d-subd">hello-fn · bye-fn (01)</text>
+        <rect x="20" y="310" width="220" height="42" rx="8" class="d-card"/><text x="32" y="336" class="d-subd">kind-registry (맥 5001)</text>
+        <rect x="20" y="360" width="220" height="42" rx="8" class="d-card"/><text x="32" y="386" class="d-subd">Knative + Kourier</text>
+        <rect x="20" y="410" width="220" height="42" rx="8" class="d-card"/><text x="32" y="436" class="d-subd">gVisor · RuntimeClass</text>
+        <rect x="20" y="460" width="220" height="42" rx="8" class="d-user-box"/><text x="32" y="486" class="d-subd">빌드 v1 · fn-runtime</text>
+
+        <rect x="270" y="110" width="220" height="42" rx="8" class="d-plain-box d-dash"/><text x="282" y="136" class="d-sub">앞 단계 전부</text>
+        <rect x="270" y="160" width="220" height="42" rx="8" class="d-card"/><text x="282" y="186" class="d-subd">Argo Rollouts 컨트롤러</text>
+        <rect x="270" y="210" width="220" height="42" rx="8" class="d-obs-box"/><text x="282" y="236" class="d-subd">Prometheus (monitoring)</text>
+        <rect x="270" y="260" width="220" height="42" rx="8" class="d-user-box"/><text x="282" y="286" class="d-subd">podinfo · fn-canary</text>
+
+        <rect x="520" y="110" width="220" height="42" rx="8" class="d-plain-box d-dash"/><text x="532" y="136" class="d-sub">앞 단계 전부</text>
+        <rect x="520" y="160" width="220" height="42" rx="8" class="d-card"/><text x="532" y="186" class="d-subd">ApplicationSet tenants</text>
+        <rect x="520" y="210" width="220" height="42" rx="8" class="d-warn-box"/><text x="532" y="236" class="d-subd">tenant-a · b 울타리</text>
+        <rect x="520" y="260" width="220" height="42" rx="8" class="d-user-box"/><text x="532" y="286" class="d-subd">tenant-a/b-hello</text>
+
+        <rect x="770" y="110" width="220" height="42" rx="8" class="d-plain-box d-dash"/><text x="782" y="136" class="d-sub">앞 단계 전부</text>
+        <rect x="770" y="160" width="220" height="42" rx="8" class="d-card"/><text x="782" y="186" class="d-subd">faas-system · faas-build</text>
+        <rect x="770" y="210" width="220" height="42" rx="8" class="d-agent"/><text x="782" y="236" class="d-subd">ops-agent 계정 (tenant-a)</text>
+        <rect x="770" y="260" width="220" height="42" rx="8" class="d-user-box"/><text x="782" y="286" class="d-subd">ksvc tenant-a/hello</text>
+
+        <rect x="1020" y="110" width="220" height="42" rx="8" class="d-plain-box d-dash"/><text x="1032" y="136" class="d-sub">새로 만드는 것 없음</text>
+        <rect x="1020" y="160" width="220" height="42" rx="8" class="d-plain-box"/><text x="1032" y="186" class="d-subd">get nodes · apps · ksvc</text>
+        <rect x="1020" y="210" width="220" height="42" rx="8" class="d-plain-box"/><text x="1032" y="236" class="d-subd">curl 함수 2개 (8081)</text>
+        <rect x="1020" y="260" width="220" height="42" rx="8" class="d-plain-box"/><text x="1032" y="286" class="d-subd">test-isolation.sh net</text>
+
+        <rect x="270" y="340" width="970" height="162" rx="12" class="d-plain-box"/>
+        <text x="290" y="370" class="d-ttl-s">왜 단계 README 순서(01 → 02 → 03 → 04 → 05)가 아닌가</text>
+        <text x="290" y="398" class="d-sub">03 과 04 의 rebuild-cluster.sh 는 클러스터를 지우고 다시 만든다. 그 순서면 02 가 사라진다.</text>
+        <text x="290" y="424" class="d-sub">그래서 처음부터 최종 모양(04 kind-config)으로 한 번 만들고 01 → 04 → 02 → 03 → 05 를 얹는다.</text>
+        <text x="290" y="450" class="d-sub">초록 상자 = 사용자가 부를 수 있는 함수. 노랑 = 테넌트 울타리. 보라 = 에이전트 계정.</text>
+        <text x="290" y="476" class="d-sub">06 은 노드를 얼리는 실험이라 같은 클러스터에 얹지 않고 kind-chaos 를 따로 만든다.</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 0-11.</b> 단계마다 더해지는 부품. 점선 상자는 앞 단계 결과가 그대로 있다는 뜻이다. platform 이 가장 크고 오래 걸린다(클러스터, CNI, 이미지 받기).</figcaption>
+  </figure>
+
+  <h3>왜 최종 모양 클러스터 하나인가</h3>
+  <p>각 단계는 만들 때 자기에게 필요한 만큼의 클러스터를 썼다. 01 은 워커 1대 + kindnet, 03 은 Cilium + 워커 3대, 04 는 여기에 노드 풀 taint, 8081 포트, containerd 레지스트리 설정을 더했다. 03·04 로 넘어갈 때마다 클러스터를 다시 만들었으니 순서대로 따라 하면 앞에서 깐 것이 사라진다. run-all.sh 는 이 문제를 "가장 나중 모양을 먼저 만든다" 로 푼다. 앞 단계 부품은 새 모양에서도 돈다(예: podinfo 는 taint 없는 system 풀 노드로 간다).</p>
+  <pre class="pseudo"><code><span class="k">단계 README 순서</span>:  01(클러스터 A) → 02(A 위에) → 03(A 삭제, B 생성) → 04(B 삭제, C 생성) → 05(C 위에)
+                    <span class="c">// 02 의 Rollouts·Prometheus 는 03 에서 사라짐</span>
+<span class="k">run-all 순서</span>:      C 생성 → 01 → 04 → 02 → 03 → 05   <span class="c">// 클러스터는 한 번만</span>
+<span class="k">조건</span>:              뒤 단계 부품이 앞 단계 부품에 기대지 않는다 (Argo CD 만 예외: 제일 먼저)</code></pre>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>run-all.sh 세부</h3>
+  <div class="code-head"><span>poc/run-all.sh</span><span>발췌</span></div>
+  <pre><code>CP_PORT="${CP_PORT:-8090}"   <span class="c"># 컨트롤 플레인 port-forward 맥 포트. 8080 은 Argo CD UI 가 쓰니까 피한다</span>
+
+control_plane() {
+  docker build -t faas-control-plane:0.1 "$P/05-control-plane-mcp/control-plane"
+  kind load docker-image faas-control-plane:0.1 --name faas
+  <span class="c"># README 5단계는 이 파일을 01 의 apps/ 폴더에 복사해 push 한다(App of Apps). 여기선 push 없이 직접 붙인다</span>
+  kubectl apply -f "$P/05-control-plane-mcp/k8s/argocd/platform-05.yaml"
+  wait_app platform-05
+  kubectl -n faas-system port-forward svc/control-plane "$CP_PORT:80" &gt;/dev/null 2&gt;&amp;1 &amp;
+  (cd "$P/05-control-plane-mcp" &amp;&amp; CP="http://localhost:$CP_PORT" GW=http://localhost:8081 \
+    scripts/deploy-fn.sh tenant-a hello samples/hello-v1.py) || rc=$?
+}</code></pre>
+  <ul>
+    <li><b>preflight 의 빈칸 검사</b>: <code>poc/0[2-6]-*</code> 의 YAML 에서 주석 아닌 줄에 <code>___</code> 가 있으면 멈춘다(<code>solution/</code>, <code>standin/</code> 제외). 빈칸이 남은 채로 Argo CD 가 sync 하면 YAML 오류로 멈추기 때문이다.</li>
+    <li><b>Helm 두 개는 Argo CD 밖</b>: Rollouts 와 Prometheus 는 <code>helm upgrade --install</code> 로 직접 깐다. 두 번 돌려도 안전하다. Argo CD 가 관리하는 것은 그 위의 podinfo Application 뿐이다.</li>
+    <li><b>Application 을 apply 로 붙이는 것들</b>: podinfo, tenants AppSet, tenant-*-hello, platform-05 는 root 의 <code>apps/</code> 폴더 밖에 있다. 그래서 run-all 이 <code>kubectl apply</code> 로 한 번 붙인다. 붙인 다음부터는 Git 이 진실이다.</li>
+    <li><b>이미지는 Git 으로 못 옮긴다</b>: 컨트롤 플레인 이미지는 맥에서 빌드해 <code>kind load</code> 로 노드에 싣는다. Deployment 는 <code>imagePullPolicy: IfNotPresent</code> 여야 한다(없으면 레지스트리에서 받으려다 실패).</li>
+    <li><b>chaos 는 컨텍스트를 바꾼다</b>: <code>kubectl config use-context kind-chaos</code> 를 하고 끝난다. 그 뒤 터미널의 kubectl 은 faas 가 아니라 chaos 를 본다.</li>
+  </ul>
+</div>
+
+<aside class="callout warn"><p class="callout-title">주의: chaos 다음의 kubectl</p><p><code>poc/run-all.sh chaos</code> 뒤에는 현재 컨텍스트가 <code>kind-chaos</code> 다. faas 를 볼 생각으로 <code>kubectl get ksvc -A</code> 를 치면 "Knative CRD 없음" 이 나온다. <code>kubectl config use-context kind-faas</code> 로 돌아온다. 메모리도 약 3GB 더 든다.</p></aside>
+
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><ul>
+<li><b>platform 에서 faas-functions 가 420초 넘게 안 뜸</b>: 대개 hello-gvisor. exec 노드에 runsc 가 깔렸나(<code>install-gvisor.sh</code>), RuntimeClass 의 handler 가 containerd 설정과 같은가. run-all 은 경고만 찍고 계속 간다.</li>
+<li><b>rollouts 에서 podinfo Degraded</b>: 부하가 없으면 분석이 NaN → Inconclusive. 첫 배포 자체는 분석 없이 끝나니 Degraded 면 이미지 pull 이나 자원 부족을 먼저 본다.</li>
+<li><b>tenants 에서 tenant-a 가 안 생김</b>: ApplicationSet 컨트롤러 로그. Git files generator 가 <code>poc/03-tenant-isolation/tenants/*.yaml</code> 을 못 읽으면 Application 0개.</li>
+<li><b>control-plane 에서 ErrImageNeverPull 또는 ImagePullBackOff</b>: <code>kind load</code> 가 빠졌거나 태그(0.1)가 deployment.yaml 과 다르다.</li>
+</ul></aside>
+
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>대안 1은 "단계마다 클러스터를 따로" 다. 깔끔하지만 맥 메모리가 버티지 못하고, 02 의 카나리와 05 의 함수 배포를 한 화면에서 볼 수 없다. 대안 2는 "전부 Argo CD 로" 다. Helm 두 개와 Application 4개까지 root 아래에 넣으면 run-all 이 더 짧아지지만, 단계 README 가 가르치는 "손으로 붙여 보기" 가 사라진다. 지금 모양은 학습 순서와 실행 순서를 분리한 타협이다.</p></aside>
+
+<h2 id="trust">신뢰 경계</h2>
+
+<div class="tier" data-tier="1">
+  <h3>누가 어디까지 손댈 수 있나</h3>
+  <p>멀티테넌트 플랫폼의 핵심 질문은 "이 손이 어디까지 닿나" 다. 이 PoC 에는 손이 다섯 개 있다. 관리자, 컨트롤 플레인, Argo CD, 운영 에이전트, 테넌트 함수 자신. 각자 다른 계정(kubeconfig 또는 ServiceAccount)을 쓰고, 쿠버네티스 API 서버가 RBAC 로 문을 지킨다. 함수끼리의 패킷은 Cilium 이 NetworkPolicy 로 막는다.</p>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1300 800" role="img" aria-labelledby="f12-t2">
+        <title id="f12-t2">맥 쪽 손과 클러스터 namespace 사이의 신뢰 경계</title>
+        <defs>
+          <marker id="f12b-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f12b-m-fail" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+          <marker id="f12b-m-git" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-git"/></marker>
+          <marker id="f12b-m-agent" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-async"/></marker>
+        </defs>
+        <rect x="20" y="40" width="350" height="550" rx="14" class="d-plain-box d-dash"/>
+        <text x="40" y="70" class="d-ttl-s">맥 (사람 손)</text>
+        <rect x="400" y="40" width="880" height="700" rx="14" class="d-plain-box d-dash"/>
+        <text x="420" y="70" class="d-ttl-s">kind 클러스터 faas (API 서버가 RBAC 로 검사)</text>
+
+        <rect x="40" y="90" width="310" height="66" rx="10" class="d-card"/><text x="56" y="116" class="d-subd">관리자 kubeconfig</text><text x="56" y="140" class="d-sub">kind-faas · cluster-admin</text>
+        <rect x="40" y="190" width="310" height="66" rx="10" class="d-agent"/><text x="56" y="216" class="d-subd">Claude + ops_mcp</text><text x="56" y="240" class="d-sub">ops-agent 토큰 8h · tenant-a</text>
+        <rect x="40" y="290" width="310" height="66" rx="10" class="d-card"/><text x="56" y="316" class="d-subd">승인 CLI (approve)</text><text x="56" y="340" class="d-sub">TTY 필요 · 1회용 · 900초</text>
+        <rect x="40" y="390" width="310" height="66" rx="10" class="d-warn-box"/><text x="56" y="416" class="d-subd">deploy-fn.sh · curl</text><text x="56" y="440" class="d-sub">인증 없음 · X-Actor 자기 신고</text>
+        <rect x="40" y="490" width="310" height="66" rx="10" class="d-card"/><text x="56" y="516" class="d-subd">git push 권한</text><text x="56" y="540" class="d-sub">main 에 쓰면 클러스터가 바뀐다</text>
+        <rect x="40" y="620" width="310" height="60" rx="10" class="d-cp-box"/><text x="56" y="646" class="d-subd">GitHub main (외부)</text><text x="56" y="668" class="d-sub">Argo CD 가 읽기만 한다</text>
+
+        <rect x="430" y="90" width="380" height="110" rx="10" class="d-fail-box"/><text x="446" y="118" class="d-subd">kube-system · 플랫폼 namespace</text><text x="446" y="142" class="d-sub">컨트롤 플레인 · 에이전트에게</text><text x="446" y="164" class="d-sub">RoleBinding 없음 = 403</text>
+        <rect x="430" y="240" width="380" height="110" rx="10" class="d-card"/><text x="446" y="268" class="d-subd">faas-build (PSA baseline)</text><text x="446" y="292" class="d-sub">kaniko Job · 소스 ConfigMap</text><text x="446" y="314" class="d-sub">Role control-plane-builder</text>
+        <rect x="430" y="380" width="380" height="110" rx="10" class="d-cp-box"/><text x="446" y="408" class="d-subd">faas-system (PSA restricted)</text><text x="446" y="432" class="d-sub">SA control-plane · API 8090</text><text x="446" y="454" class="d-sub">namespace get 만 (list 없음)</text>
+        <rect x="430" y="610" width="380" height="110" rx="10" class="d-cp-box"/><text x="446" y="638" class="d-subd">argocd</text><text x="446" y="662" class="d-sub">컨트롤러는 거의 모든 것을 apply</text><text x="446" y="684" class="d-sub">AppProject 로 테넌트 앱을 묶는다</text>
+
+        <rect x="860" y="90" width="390" height="230" rx="10" class="d-user-box"/><text x="876" y="118" class="d-subd">tenant-a (PSA baseline)</text><text x="876" y="144" class="d-sub">default-deny + 같은 ns · DNS 허용</text><text x="876" y="168" class="d-sub">+ knative-serving · kourier-system 허용</text><text x="876" y="192" class="d-sub">ksvc hello · SA ops-agent · deployer</text><text x="876" y="216" class="d-sub">Quota · LimitRange</text><text x="876" y="240" class="d-sub">컨트롤 플레인 RoleBinding 있음</text>
+        <rect x="860" y="380" width="390" height="140" rx="10" class="d-user-box"/><text x="876" y="408" class="d-subd">tenant-b (PSA baseline)</text><text x="876" y="432" class="d-sub">컨트롤 플레인 RoleBinding 없음</text><text x="876" y="456" class="d-sub">ops-agent 계정 없음</text><text x="876" y="480" class="d-sub">ops-agent 토큰으로 오면 403</text>
+
+        <path d="M350 123 L397 123" class="d-e-api" marker-end="url(#f12b-m-api)"/>
+        <path d="M350 220 L857 220" class="d-e-async" marker-end="url(#f12b-m-agent)"/>
+        <text x="590" y="214" class="d-lbl">get · patch (ksvc)</text>
+        <path d="M195 290 L195 259" class="d-e-async" marker-end="url(#f12b-m-agent)"/>
+        <text x="206" y="279" class="d-lbl">승인 파일</text>
+        <path d="M350 430 L427 430" class="d-e-api" marker-end="url(#f12b-m-api)"/>
+        <path d="M195 556 L195 617" class="d-e-git" marker-end="url(#f12b-m-git)"/>
+        <path d="M350 650 L427 650" class="d-e-git" marker-end="url(#f12b-m-git)"/>
+        <path d="M620 380 L620 353" class="d-e-api" marker-end="url(#f12b-m-api)"/>
+        <path d="M810 405 H835 V290 H857" class="d-e-api" marker-end="url(#f12b-m-api)"/>
+        <path d="M810 460 L857 460" class="d-e-fail" marker-end="url(#f12b-m-fail)"/>
+        <path d="M1050 320 L1050 377" class="d-e-fail" marker-end="url(#f12b-m-fail)"/>
+        <text x="1062" y="354" class="d-lbl">테넌트 사이 패킷 DROP</text>
+        <path d="M620 610 L620 493" class="d-e-git d-dash" marker-end="url(#f12b-m-git)"/>
+        <text x="632" y="560" class="d-lbl">sync (모든 ns)</text>
+
+        <path d="M420 770 L460 770" class="d-e-api"/><text x="468" y="775" class="d-sub">허용된 API 호출</text>
+        <path d="M640 770 L680 770" class="d-e-async"/><text x="688" y="775" class="d-sub">에이전트 경로</text>
+        <path d="M840 770 L880 770" class="d-e-git"/><text x="888" y="775" class="d-sub">GitOps</text>
+        <path d="M1000 770 L1040 770" class="d-e-fail"/><text x="1048" y="775" class="d-sub">403 · DROP</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 0-12.</b> 신뢰 경계. 진짜 벽은 두 개다: API 서버의 RBAC(누가 무엇을 바꾸나)와 Cilium 의 NetworkPolicy(누가 누구에게 패킷을 보내나). 노란 상자(deploy-fn)가 가장 약한 고리다. 컨트롤 플레인 API 에 인증이 없어서 port-forward 를 열 수 있는 사람은 tenant-a 에 무엇이든 배포할 수 있다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>손마다 권한 표</h3>
+  <div class="table-wrap"><table>
+    <thead><tr><th>손</th><th>계정</th><th>닿는 곳</th><th>못 하는 것</th><th>자세히</th></tr></thead>
+    <tbody>
+      <tr><td>관리자(사람)</td><td>kind-faas kubeconfig</td><td>전부</td><td>없음. 그래서 에이전트에게 주지 않는다</td><td><a href="ch01-gitops.html">1장</a></td></tr>
+      <tr><td>Argo CD</td><td>argocd-application-controller SA</td><td>Git 에 있는 모든 리소스</td><td>테넌트 project 앱은 자기 ns 밖 · Quota·NetworkPolicy·RBAC 생성 불가</td><td><a href="ch03-tenancy.html">3장</a></td></tr>
+      <tr><td>컨트롤 플레인</td><td>faas-system/control-plane</td><td>faas-build 의 Job·ConfigMap·Pod 읽기, tenant-a 의 ksvc</td><td>namespace 목록, 다른 테넌트 ksvc, 삭제 전부</td><td><a href="ch07-control-plane.html">7장</a></td></tr>
+      <tr><td>운영 에이전트</td><td>tenant-a/ops-agent (토큰 8h)</td><td>tenant-a 의 ksvc get·patch, revision·PA·pod 읽기</td><td>create·delete, pods/exec, pods/log, Secret, 다른 ns</td><td><a href="ch07-control-plane.html">7장</a></td></tr>
+      <tr><td>tenant-a 개발자</td><td>그룹 tenant-a-developers · SA deployer</td><td>tenant-a 의 워크로드</td><td>Quota·LimitRange·NetworkPolicy·RBAC 수정</td><td><a href="ch03-tenancy.html">3장</a></td></tr>
+      <tr><td>함수 파드</td><td>tenant ns 의 default SA</td><td>같은 ns 파드, DNS</td><td>다른 테넌트로 패킷, 특권 컨테이너(PSA baseline)</td><td><a href="ch04-network.html">4장</a></td></tr>
+      <tr><td>빌드 Job</td><td>faas-build 의 default SA</td><td>kind-registry 에 push</td><td>함수 노드에 뜨기(build 풀 taint)</td><td><a href="ch06-build-runtime.html">6장</a></td></tr>
+    </tbody>
+  </table></div>
+
+  <p>에이전트가 rollback 을 부르면 다섯 겹을 차례로 지난다. 1~3겹은 MCP 서버 코드(파이썬) 안의 검사이고, 4겹이 API 서버의 RBAC 다. 코드 검사가 다 뚫려도 4겹이 남는다. 그래서 4겹을 "진짜 벽" 이라 부른다.</p>
+  <pre class="mermaid">
+flowchart LR
+  A["Claude 가 rollback 호출<br/>function 이름만, tenant 인자 없음"]
+  S["1 범위 고정<br/>OPS_MCP_TENANT 로 정해짐"]
+  L["2 한도와 dry-run<br/>이름 검사 · 되돌아갈 Revision"]
+  P["3 사람 승인<br/>approval_id 없으면 요청만 만듦"]
+  R["4 RBAC<br/>API 서버가 ops-agent 권한 검사"]
+  OK["patch 적용<br/>traffic 100 퍼센트 고정"]
+  AU["5 감사 로그<br/>audit.jsonl 한 줄"]
+  X["거절<br/>denied · error"]
+  A --> S --> L --> P --> R --> OK
+  L -->|되돌아갈 곳 없음| X
+  P -->|승인 없음 · 만료 · 재사용| X
+  R -->|403| X
+  OK --> AU
+  X --> AU
+  </pre>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>RoleBinding 이 ClusterRole 을 가리키는 무늬</h3>
+  <div class="code-head"><span>poc/05-control-plane-mcp/k8s/platform/control-plane/tenant-a.yaml</span><span>발췌</span></div>
+  <pre><code><span class="k">kind</span>: RoleBinding
+<span class="k">metadata</span>:
+  name: faas-control-plane-functions
+  namespace: tenant-a                 <span class="c"># 권한이 적용되는 곳 = 테넌트 namespace</span>
+<span class="k">subjects</span>:
+  - kind: ServiceAccount
+    name: control-plane
+    namespace: faas-system
+<span class="k">roleRef</span>:
+  kind: ClusterRole                   <span class="c"># "그 ClusterRole 의 권한을, 이 RoleBinding 의 namespace 안에서만"</span>
+  name: faas-control-plane-functions</code></pre>
+  <p>권한의 "모양"(ksvc get·list·create·patch)은 ClusterRole 로 한 번 정의하고, 쓸 수 있는 곳은 테넌트마다 RoleBinding 한 장씩 연다. kube-system 에는 RoleBinding 이 없으니 컨트롤 플레인 코드에 버그가 있어도(예: tenant 라벨 검사를 건너뜀) 거기에 ksvc 를 못 만든다. 파일 주석이 스스로 말하듯, 이 RoleBinding 을 03 의 tenant 차트로 옮기면 테넌트가 늘 때 손댈 곳이 없어진다(지금은 tenant-a 하나뿐).</p>
+  <ul>
+    <li><b>namespace 는 get 만</b>: <code>tenantExists</code> 는 이름으로 하나만 읽는다. list 를 주면 모든 테넌트 이름이 보이므로 주지 않는다.</li>
+    <li><b>ConfigMap delete 없음</b>: 지우는 일은 Job 의 ownerReference 를 보고 쓰레기 수집기(garbage collector)가 한다.</li>
+    <li><b>에이전트 토큰은 짧게</b>: <code>make-agent-kubeconfig.sh</code> 가 <code>kubectl create token ops-agent --duration=8h</code>(TokenRequest API)로 만든다. 시간이 지나면 저절로 무효다.</li>
+    <li><b>X-Actor 는 신뢰하지 않는다</b>: 컨트롤 플레인 API 의 <code>X-Actor</code> 헤더(기본 anonymous)는 감사 로그에 쓰일 뿐 인증이 아니다. 본선 설계에서는 API 게이트웨이의 OIDC 토큰에서 테넌트와 사용자를 꺼내야 한다.</li>
+    <li><b>Argo CD 컨트롤러의 권한</b>: Helm 차트 기본값은 클러스터 전체에 넓은 권한을 준다. 그래서 테넌트 경계는 AppProject(대상 ns·리소스 종류 제한)가 지킨다. 컨트롤러 ClusterRole 자체를 줄이는 설정은 이 PoC 에 없다 【확인 필요: 차트 10.10.5 의 기본 ClusterRole 범위】.</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>격리 실험은 <code>poc/03-tenant-isolation/scripts/test-isolation.sh</code> 다. <code>net</code>(테넌트 사이 패킷), <code>cpu</code>(한도 넘기기), <code>rbac</code>(남의 namespace 만지기), <code>argocd</code>(AppProject 밖으로 배포) 를 돌려 "막혔다" 를 확인한다. 에이전트 쪽은 <code>poc/05-control-plane-mcp/mcp-server/tests/</code> 의 pytest 가 가드레일 1~3, 5겹을 검사하고, 4겹(RBAC)은 <code>kubectl auth can-i --as=system:serviceaccount:tenant-a:ops-agent</code> 로 본다.</p></aside>
+
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><ul>
+<li><b>에이전트가 다른 테넌트를 건드림</b>: 있어서는 안 된다. 일어났다면 MCP 서버가 관리자 kubeconfig 를 쓰고 있다(<code>OPS_MCP_KUBECONFIG</code> 미설정). 가드레일 2겹이 사라진 것이다.</li>
+<li><b>승인이 자꾸 거절됨</b>: 승인 ID 가 다른 함수·Revision 에 묶였거나, 900초가 지났거나, 이미 한 번 썼다(1회용).</li>
+<li><b>tenant-a → tenant-b curl 이 성공함</b>: NetworkPolicy 가 적용 안 된 것이다. CNI 가 Cilium 인지(<code>cilium status</code>), 03 의 kindnet 클러스터를 쓰고 있지 않은지 본다.</li>
+</ul></aside>
+
+<h2 id="local-vs-ec2">로컬 kind 와 EC2 k3s</h2>
+
+<div class="tier" data-tier="1">
+  <p>PoC 는 맥 한 대의 kind 위에서 돈다. 07 은 같은 설계를 AWS EC2 + k3s 로 옮긴 코드다. Terraform 과 k3s 설정, Argo CD 부트스트랩까지 썼지만 <strong>apply 하지 않았다</strong>(비용과 계정 문제). 그래서 07 의 동작 설명은 코드 읽기다.</p>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1200 660" role="img" aria-labelledby="f13-t">
+        <title id="f13-t">로컬 kind 클러스터와 EC2 k3s 클러스터의 노드 풀 비교</title>
+        <defs>
+          <marker id="f13-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-git"/></marker>
+        </defs>
+        <rect x="20" y="20" width="560" height="520" rx="14" class="d-plain-box"/>
+        <text x="40" y="52" class="d-ttl">로컬 kind (맥 한 대 · Docker)</text>
+        <rect x="620" y="20" width="560" height="520" rx="14" class="d-plain-box"/>
+        <text x="640" y="52" class="d-ttl">EC2 + k3s (서울 · 코드만)</text>
+
+        <rect x="40" y="72" width="520" height="70" rx="10" class="d-cp-box"/><text x="56" y="100" class="d-subd">faas-control-plane · API 서버 · etcd</text><text x="56" y="124" class="d-sub">Kourier NodePort 31080 ← 맥 8081</text>
+        <rect x="40" y="152" width="520" height="70" rx="10" class="d-card"/><text x="56" y="180" class="d-subd">faas-worker · pool=system (taint 없음)</text><text x="56" y="204" class="d-sub">Argo CD · Rollouts · Prometheus · 컨트롤 플레인</text>
+        <rect x="40" y="232" width="520" height="70" rx="10" class="d-prov-box"/><text x="56" y="260" class="d-subd">faas-worker2 · pool=build:NoSchedule</text><text x="56" y="284" class="d-sub">kaniko 빌드 Job 만</text>
+        <rect x="40" y="312" width="520" height="70" rx="10" class="d-user-box"/><text x="56" y="340" class="d-subd">faas-worker3 · pool=exec:NoSchedule</text><text x="56" y="364" class="d-sub">함수 파드 (runc · gVisor) · toleration 필요</text>
+        <rect x="40" y="400" width="520" height="120" rx="10" class="d-card"/><text x="56" y="428" class="d-subd">네트워크와 이미지</text><text x="56" y="452" class="d-sub">CNI Cilium (eBPF) + Hubble · NetworkPolicy 집행</text><text x="56" y="476" class="d-sub">kind-registry (맥 5001) · push 와 pull 이름이 다름</text><text x="56" y="500" class="d-sub">kubectl 은 맥에서 바로 (kind-faas)</text>
+
+        <rect x="640" y="72" width="520" height="70" rx="10" class="d-cp-box"/><text x="656" y="100" class="d-subd">server · t3.medium 온디맨드 · pool=system</text><text x="656" y="124" class="d-sub">taint CriticalAddonsOnly=true:NoExecute</text>
+        <rect x="640" y="152" width="520" height="70" rx="10" class="d-card"/><text x="656" y="180" class="d-subd">Argo CD 도 server 에 (toleration 추가)</text><text x="656" y="204" class="d-sub">k3s 기본 부품 · NTH 도 여기</text>
+        <rect x="640" y="232" width="520" height="70" rx="10" class="d-prov-box"/><text x="656" y="260" class="d-subd">build ASG · 온디맨드 ×1 · pool=build:NoSchedule</text><text x="656" y="284" class="d-sub">빌드는 중간에 끊기면 처음부터라 스팟을 안 씀</text>
+        <rect x="640" y="312" width="520" height="70" rx="10" class="d-user-box"/><text x="656" y="340" class="d-subd">exec ASG · 스팟 ×2 · taint 없음</text><text x="656" y="364" class="d-sub">t3.medium | t3a.medium · 기본 착지점</text>
+        <rect x="640" y="400" width="520" height="120" rx="10" class="d-card"/><text x="656" y="428" class="d-subd">네트워크와 운영</text><text x="656" y="452" class="d-sub">flannel + Traefik (k3s 기본) · NAT 없음</text><text x="656" y="476" class="d-sub">kubectl 은 SSM 포트 포워딩 6443 으로</text><text x="656" y="500" class="d-sub">ASG 매일 23:00 에 0 · 예산 알람 · FIS 스팟 실험</text>
+
+        <rect x="400" y="580" width="400" height="60" rx="10" class="d-cp-box"/><text x="420" y="606" class="d-subd">같은 GitHub 레포 (main)</text><text x="420" y="628" class="d-sub">root 와 root-ec2 가 각자 다른 폴더를 본다</text>
+        <path d="M400 610 H300 V543" class="d-e-git" marker-end="url(#f13-m)"/>
+        <path d="M800 610 H900 V543" class="d-e-git" marker-end="url(#f13-m)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 0-13.</b> 같은 세 풀(system · build · exec), 다른 taint 전략. kind 는 build 와 exec 에 taint 를 걸어 "골라서 오는" 풀로 만들었고, EC2 는 exec 를 기본 착지점으로 두고 system 과 build 에 taint 를 걸었다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <div class="table-wrap"><table>
+    <thead><tr><th>항목</th><th>로컬 kind (poc/04 모양)</th><th>EC2 k3s (poc/07)</th><th>왜 다른가</th></tr></thead>
+    <tbody>
+      <tr><td>노드</td><td>Docker 컨테이너 4개</td><td>EC2 인스턴스 (server 1 + ASG 2개)</td><td>실제 장애(스팟 회수)와 비용을 겪어 보려고</td></tr>
+      <tr><td>쿠버네티스 배포판</td><td>kind (kindest/node v1.37.0)</td><td>k3s (바이너리 하나)</td><td>작은 인스턴스에서 메모리를 덜 쓴다</td></tr>
+      <tr><td>CNI</td><td>Cilium (kindnet 끔)</td><td>flannel (k3s 기본)</td><td>07 은 배치·스팟이 주제. Cilium 교체는 셀프 연습</td></tr>
+      <tr><td>NetworkPolicy</td><td>Cilium eBPF 가 집행</td><td>k3s 내장 컨트롤러 【확인 필요: 07 에서 미실행】</td><td>&nbsp;</td></tr>
+      <tr><td>taint 전략</td><td>build·exec 에 taint</td><td>system·build 에 taint, exec 는 없음</td><td>EC2 에선 아무 설정 없는 파드가 비싼 server 에 가지 않게</td></tr>
+      <tr><td>입구</td><td>맥 8081 → NodePort 31080 → Kourier</td><td>Traefik (Knative 는 07 범위 밖)</td><td>07 은 함수 플랫폼 전체가 아니라 바닥만 옮김</td></tr>
+      <tr><td>kubectl 접근</td><td>맥에서 바로</td><td>SSM 터널 (<code>scripts/tunnel.sh</code>)</td><td>6443 을 인터넷에 열지 않으려고</td></tr>
+      <tr><td>Argo CD root</td><td><code>poc/01-argocd/gitops/root.yaml</code></td><td><code>root-ec2</code> → <code>poc/07-ec2-k3s/gitops/apps</code></td><td>같은 레포, 다른 폴더</td></tr>
+      <tr><td>장애 실험</td><td>06 대역 클러스터, docker pause</td><td>FIS 스팟 중단 실험 + NTH</td><td>진짜 2분 예고를 받아 보려고</td></tr>
+      <tr><td>끄기</td><td><code>kind delete cluster</code></td><td>23:00 ASG 0 · <code>terraform destroy</code> · <code>check-leftovers.sh</code></td><td>잊으면 돈이 나간다</td></tr>
+    </tbody>
+  </table></div>
+  <p>07 의 <code>local-stage-apps</code> Application 은 <code>poc/01-argocd/gitops/apps</code> 만 가리킨다. 그래서 EC2 에 올라가는 앞 단계 앱은 hello-fn 과 bye-fn 뿐이다(07 README 의 "앞 단계 앱 전부" 라는 표현과 다르다). Knative·Rollouts·테넌트를 EC2 에 올리는 것은 07 범위 밖이다. 자세한 것은 <a href="ch09-ec2-k3s.html">9장</a>.</p>
+</div>
+
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>EKS 는 관리형 컨트롤 플레인 비용(시간당 과금)이 PoC 예산($5 알람)을 바로 넘는다. kubeadm 은 설치 단계가 많다. k3s 는 바이너리 하나와 설정 YAML 로 서버·에이전트가 붙고, Terraform 의 user_data 한 장으로 끝난다. 본선에서 "왜 EKS 가 아니냐" 는 질문에는 "비용과 학습 범위. 노드 풀·스팟·taint 설계는 EKS managed node group 으로 그대로 옮겨진다" 가 답이다.</p></aside>
+
+<h2 id="glossary">용어집</h2>
+
+<p>이 가이드 전체에 나오는 말을 한곳에 모았다. 각 항목 끝의 링크가 그 말을 가장 자세히 다루는 장이다. 대략 "GitOps → 배포 → 테넌트 → 네트워크 → 서버리스 → 빌드·런타임 → 컨트롤 플레인 → 장애 → 클라우드" 순서다.</p>
+
+<div class="tier" data-tier="1">
+<h3>GitOps 와 배포</h3>
+<dl class="terms">
+  <dt>GitOps</dt><dd>클러스터의 원하는 상태를 Git 에 두고, 클러스터 안의 에이전트가 Git 을 읽어 맞추는 방식. 사람은 클러스터 대신 Git 을 고친다. <a href="ch01-gitops.html">1장</a></dd>
+  <dt>Argo CD</dt><dd>GitOps 에이전트. Git 을 폴링해 렌더하고, 클러스터와 비교해 apply 한다. 이 PoC 는 Helm 차트 10.10.5(v3.5.5). <a href="ch01-gitops.html">1장</a></dd>
+  <dt>Application</dt><dd>Argo CD 의 기본 단위. "이 레포의 이 폴더를 이 클러스터의 이 namespace 에" 라는 한 장짜리 약속. 최종 클러스터에 10개. <a href="ch01-gitops.html">1장</a></dd>
+  <dt>App of Apps</dt><dd>Application 들을 담은 폴더를 가리키는 Application(root). 폴더에 YAML 을 더하고 push 하면 새 Application 이 생긴다. <a href="ch01-gitops.html">1장</a></dd>
+  <dt>ApplicationSet</dt><dd>생성기(generator)로 Application 을 찍어 내는 틀. 03 은 Git files generator 로 <code>tenants/*.yaml</code> 하나마다 Application 하나. <a href="ch03-tenancy.html">3장</a></dd>
+  <dt>AppProject</dt><dd>Application 묶음의 울타리. 갈 수 있는 namespace, 만들 수 없는 리소스 종류를 정한다. 테넌트 project 는 자기 ns 만, Quota·NetworkPolicy·RBAC 금지. <a href="ch03-tenancy.html">3장</a></dd>
+  <dt>Sync 상태 (Synced / OutOfSync)</dt><dd>Git 과 클러스터가 같은가. Health 와 따로 본다. <a href="ch01-gitops.html">1장</a></dd>
+  <dt>Health 상태 (Healthy / Progressing / Degraded)</dt><dd>리소스가 잘 도는가. 카나리 abort 뒤에는 Synced + Degraded 가 된다. <a href="ch02-rollouts.html">2장</a></dd>
+  <dt>자동 치유 (selfHeal)</dt><dd>누가 클러스터를 손으로 바꾸면 Argo CD 가 Git 상태로 되돌리는 옵션. <a href="ch01-gitops.html">1장</a></dd>
+  <dt>정리 (prune)</dt><dd>Git 에서 지운 리소스를 클러스터에서도 지우는 옵션. <a href="ch01-gitops.html">1장</a></dd>
+  <dt>폴링 주기 (timeout.reconciliation)</dt><dd>Argo CD 가 Git 을 다시 보는 간격. 이 PoC 는 120초 + jitter 60초. <a href="ch01-gitops.html">1장</a></dd>
+  <dt>Helm</dt><dd>템플릿 + values 로 매니페스트를 만드는 패키지 도구. Argo CD 는 <code>helm template</code> 으로만 쓴다. <a href="ch01-gitops.html">1장</a></dd>
+  <dt>valuesObject</dt><dd>Application 안에 Helm values 를 직접 적는 필드. bye-fn 이 hello-fn 차트를 메시지만 바꿔 재사용한다. <a href="ch01-gitops.html">1장</a></dd>
+  <dt>Argo Rollouts</dt><dd>Deployment 대신 Rollout 리소스로 카나리·블루그린을 하는 컨트롤러. v1.10.1. <a href="ch02-rollouts.html">2장</a></dd>
+  <dt>카나리 (canary)</dt><dd>새 버전을 일부에만 먼저 보내 보고 넓히는 배포. podinfo 는 20% → 60% → 100%. <a href="ch02-rollouts.html">2장</a></dd>
+  <dt>setWeight / pause</dt><dd>Rollout 단계. 트래픽 라우터가 없으면 비율을 파드 수로 흉내 낸다. <a href="ch02-rollouts.html">2장</a></dd>
+  <dt>AnalysisTemplate / AnalysisRun</dt><dd>"무엇을 재서 어떻게 판정하나" 의 틀과 그 실행. 성공률 0.95 미만이면 Failed. <a href="ch02-rollouts.html">2장</a></dd>
+  <dt>abort</dt><dd>분석이 실패하면 카나리를 0 으로 줄이고 stable 로 돌아가는 것. Git 은 그대로라 revert 가 따로 필요하다. <a href="ch02-rollouts.html">2장</a></dd>
+  <dt>fail-closed</dt><dd>판단이 불가능하면(질의 오류) 안전한 쪽(멈춤)을 고르는 설계. <a href="ch02-rollouts.html">2장</a></dd>
+  <dt>Prometheus</dt><dd>지표를 긁어 모으고(scrape) PromQL 로 묻는 시계열 DB. 10초마다 긁는다. <a href="ch02-rollouts.html">2장</a></dd>
+  <dt>pod-template-hash</dt><dd>ReplicaSet 마다 다른 파드 라벨. 카나리 파드만 골라 재는 열쇠이자 흩어 놓기 기준. <a href="ch02-rollouts.html">2장</a></dd>
+</dl>
+</div>
+
+<div class="tier" data-tier="1">
+<h3>테넌트와 네트워크</h3>
+<dl class="terms">
+  <dt>멀티테넌시 (multi-tenancy)</dt><dd>한 클러스터를 여러 고객(테넌트)이 서로 모른 채 나눠 쓰는 것. 이 PoC 는 namespace 하나 = 테넌트 하나. <a href="ch03-tenancy.html">3장</a></dd>
+  <dt>namespace</dt><dd>이름과 권한을 나누는 칸. 패킷과 CPU 는 나누지 않는다. 그래서 울타리 리소스가 더 필요하다. <a href="ch03-tenancy.html">3장</a></dd>
+  <dt>tenant 차트</dt><dd>03 의 Helm 차트. namespace, ResourceQuota, LimitRange, NetworkPolicy, RBAC, AppProject 를 한 번에 만든다. <a href="ch03-tenancy.html">3장</a></dd>
+  <dt>ResourceQuota</dt><dd>namespace 전체의 CPU·메모리·파드 수 한도. tenant-a 는 파드 10, tenant-b 는 5. <a href="ch03-tenancy.html">3장</a></dd>
+  <dt>LimitRange</dt><dd>컨테이너 하나의 기본값과 상한. requests 를 안 적은 파드도 Quota 계산에 들어가게 해 준다. <a href="ch03-tenancy.html">3장</a></dd>
+  <dt>PSA (Pod Security Admission)</dt><dd>namespace 라벨로 파드 보안 수준(privileged·baseline·restricted)을 강제하는 기본 기능. 테넌트는 baseline 강제 + restricted 경고. <a href="ch03-tenancy.html">3장</a></dd>
+  <dt>RBAC</dt><dd>Role·ClusterRole(권한 목록)과 RoleBinding·ClusterRoleBinding(누구에게, 어디서). 이 PoC 의 "진짜 벽". <a href="ch03-tenancy.html">3장</a></dd>
+  <dt>ServiceAccount</dt><dd>파드나 프로그램이 API 서버에 쓰는 계정. control-plane, ops-agent, deployer. <a href="ch07-control-plane.html">7장</a></dd>
+  <dt>NetworkPolicy</dt><dd>파드 사이 연결을 라벨로 허용하는 규칙. 아무것도 없으면 전부 허용, 하나라도 고르면 그 파드는 허용 목록만. <a href="ch04-network.html">4장</a></dd>
+  <dt>default-deny</dt><dd>모든 파드를 고르고 허용 규칙은 비운 정책. 그 위에 같은 ns · DNS · 플랫폼 ns 허용을 쌓는다. <a href="ch04-network.html">4장</a></dd>
+  <dt>allow-from-namespaces</dt><dd>tenant-a 에서 knative-serving·kourier-system 출발 연결을 여는 정책. 없으면 "READY 인데 타임아웃". <a href="ch04-network.html">4장</a></dd>
+  <dt>CNI</dt><dd>파드 네트워크를 만드는 플러그인. NetworkPolicy 집행은 CNI 의 일이다. kindnet 은 하지 않는다 【확인 필요: kindnet 최신판의 정책 지원 범위】. <a href="ch04-network.html">4장</a></dd>
+  <dt>Cilium</dt><dd>eBPF 기반 CNI. 정책을 커널에서 집행한다. 1.20.3. <a href="ch04-network.html">4장</a></dd>
+  <dt>eBPF</dt><dd>커널 안에서 안전하게 도는 작은 프로그램. Cilium 이 패킷 경로에 붙인다. <a href="ch04-network.html">4장</a></dd>
+  <dt>Hubble</dt><dd>Cilium 의 흐름 관찰 도구. <code>hubble observe --verdict DROPPED</code> 로 막힌 패킷을 본다. <a href="ch04-network.html">4장</a></dd>
+  <dt>Kourier</dt><dd>Knative 용 가벼운 인그레스(Envoy). Host 헤더로 함수를 고른다. <a href="ch04-network.html">4장</a></dd>
+  <dt>Host 헤더 라우팅</dt><dd>같은 IP·포트로 들어와도 Host 값(<code>hello.tenant-a.faas.local</code>)으로 대상을 고르는 것. <a href="ch04-network.html">4장</a></dd>
+  <dt>NodePort</dt><dd>모든 노드의 같은 포트로 Service 를 여는 방식. Kourier 는 31080. <a href="ch04-network.html">4장</a></dd>
+  <dt>extraPortMappings</dt><dd>kind 노드 컨테이너의 포트를 맥 포트에 묶는 설정. 맥 8081 → 31080. <a href="ch04-network.html">4장</a></dd>
+</dl>
+</div>
+
+<div class="tier" data-tier="1">
+<h3>서버리스, 빌드, 런타임</h3>
+<dl class="terms">
+  <dt>FaaS (Function as a Service)</dt><dd>코드 조각만 올리면 플랫폼이 빌드·배포·확장·축소를 맡는 서비스 모양. <a href="ch05-knative.html">5장</a></dd>
+  <dt>Knative Serving</dt><dd>쿠버네티스 위의 서버리스 계층. 요청 수로 파드를 0 까지 줄이고 늘린다. v1.23.0. <a href="ch05-knative.html">5장</a></dd>
+  <dt>Knative Service (ksvc)</dt><dd>함수 하나. Configuration·Revision·Route 를 만들어 낸다. <a href="ch05-knative.html">5장</a></dd>
+  <dt>Revision</dt><dd>template 이 바뀔 때마다 생기는 바꿀 수 없는 스냅샷. 롤백은 "traffic 을 옛 Revision 으로". <a href="ch05-knative.html">5장</a></dd>
+  <dt>traffic</dt><dd>Revision 별 비율. 기본은 <code>latestRevision: true, percent: 100</code>. 에이전트 rollback 은 특정 Revision 에 고정한다. <a href="ch05-knative.html">5장</a></dd>
+  <dt>scale-to-zero</dt><dd>요청이 없으면 파드를 0개로. 자원은 아끼고 첫 요청은 느려진다. <a href="ch05-knative.html">5장</a></dd>
+  <dt>콜드 스타트 (cold start)</dt><dd>파드 0개 상태에서 첫 요청이 파드가 뜰 때까지 기다리는 것. <a href="ch05-knative.html">5장</a></dd>
+  <dt>activator</dt><dd>파드가 0개일 때 요청을 대신 받아 붙잡고, 파드가 뜨면 넘기는 Knative 부품. <a href="ch05-knative.html">5장</a></dd>
+  <dt>autoscaler (KPA)</dt><dd>동시 요청 수를 보고 파드 수를 정하는 Knative 부품. PodAutoscaler 리소스를 쓴다. <a href="ch05-knative.html">5장</a></dd>
+  <dt>queue-proxy</dt><dd>함수 컨테이너 옆에 붙는 사이드카. 동시 요청 수를 재서 autoscaler 에 알리고 containerConcurrency 를 지킨다. <a href="ch05-knative.html">5장</a></dd>
+  <dt>min-scale / max-scale</dt><dd>파드 수 하한·상한 annotation. 컨트롤 플레인은 max 5 만 적고, min 은 에이전트 몫으로 비워 둔다. <a href="ch05-knative.html">5장</a></dd>
+  <dt>containerConcurrency</dt><dd>파드 하나가 동시에 받는 요청 수 상한. 05 함수는 10. <a href="ch05-knative.html">5장</a></dd>
+  <dt>stable window</dt><dd>autoscaler 가 평균을 내는 시간. 짧으면 빨리 줄어든다. 04 함수는 6초. <a href="ch05-knative.html">5장</a></dd>
+  <dt>노드 풀 (node pool)</dt><dd>같은 역할의 노드 묶음. 라벨 <code>pool=system|build|exec</code>. <a href="ch06-build-runtime.html">6장</a></dd>
+  <dt>taint / toleration</dt><dd>노드가 "이것을 견디는 파드만 와라" 고 거는 표시와, 파드가 "견딘다" 고 다는 표시. <a href="ch06-build-runtime.html">6장</a></dd>
+  <dt>nodeSelector</dt><dd>파드가 "이 라벨 노드로만" 가겠다는 조건. toleration 과 짝을 이뤄야 풀에 고정된다. <a href="ch06-build-runtime.html">6장</a></dd>
+  <dt>kaniko</dt><dd>Docker 데몬 없이 컨테이너 안에서 이미지를 빌드·push 하는 도구. v1.23.2. <a href="ch06-build-runtime.html">6장</a></dd>
+  <dt>digest (sha256)</dt><dd>이미지 내용의 해시. 태그와 달리 바뀌지 않는다. 05 는 digest 로 배포해 "무엇이 도는지" 를 고정한다. <a href="ch06-build-runtime.html">6장</a></dd>
+  <dt>termination message</dt><dd>컨테이너가 끝날 때 <code>/dev/termination-log</code> 에 쓴 글. kaniko 가 digest 를 여기 남긴다. <a href="ch07-control-plane.html">7장</a></dd>
+  <dt>kind-registry</dt><dd>맥의 Docker 에서 도는 <code>registry:2</code>. 노드에선 <code>kind-registry:5000</code>(push), kubelet 은 <code>localhost:5001</code>(pull, hosts.toml 로 연결). <a href="ch06-build-runtime.html">6장</a></dd>
+  <dt>RuntimeClass</dt><dd>파드가 어떤 컨테이너 런타임 핸들러로 돌지 고르는 리소스. <code>gvisor</code> → <code>runsc</code>. <a href="ch06-build-runtime.html">6장</a></dd>
+  <dt>gVisor (runsc)</dt><dd>사용자 공간 커널로 시스템 콜을 가로채는 샌드박스 런타임. 남의 코드를 돌릴 때 커널 공격면을 줄인다. <a href="ch06-build-runtime.html">6장</a></dd>
+  <dt>runc</dt><dd>기본 컨테이너 런타임. 호스트 커널을 그대로 쓴다. <a href="ch06-build-runtime.html">6장</a></dd>
+</dl>
+</div>
+
+<div class="tier" data-tier="1">
+<h3>컨트롤 플레인과 에이전트</h3>
+<dl class="terms">
+  <dt>컨트롤 플레인 (이 PoC 의 뜻)</dt><dd>함수 배포 API 를 가진 Spring Boot 서비스. 쿠버네티스 컨트롤 플레인(API 서버 등)과 다른 말이다. <a href="ch07-control-plane.html">7장</a></dd>
+  <dt>fabric8</dt><dd>자바용 쿠버네티스 클라이언트. Job 생성, watch, server-side apply 를 한다. <a href="ch07-control-plane.html">7장</a></dd>
+  <dt>가상 스레드 (virtual thread)</dt><dd>JVM 이 가볍게 만드는 스레드. 빌드 대기처럼 오래 막히는 일을 요청 스레드에서 떼어 낸다. <a href="ch07-control-plane.html">7장</a></dd>
+  <dt>202 Accepted + Location</dt><dd>"받았다, 결과는 저 주소로 물어봐라" 응답. 오래 걸리는 작업의 표준 모양. <a href="ch07-control-plane.html">7장</a></dd>
+  <dt>멱등 (idempotent)</dt><dd>같은 요청을 몇 번 보내도 결과가 같은 성질. 같은 코드 = 같은 buildId = 빌드 재사용. <a href="ch07-control-plane.html">7장</a></dd>
+  <dt>server-side apply (SSA)</dt><dd>"내가 적은 필드는 이 값" 을 API 서버가 필드 주인(field manager)별로 관리하는 apply. <a href="ch07-control-plane.html">7장</a></dd>
+  <dt>field manager</dt><dd>SSA 에서 필드의 주인 이름. 컨트롤 플레인은 <code>faas-control-plane</code>. <a href="ch07-control-plane.html">7장</a></dd>
+  <dt>ownerReference</dt><dd>"이 리소스의 주인은 저것" 표시. 주인이 지워지면 쓰레기 수집기가 같이 지운다. 소스 ConfigMap → 빌드 Job. <a href="ch07-control-plane.html">7장</a></dd>
+  <dt>ttlSecondsAfterFinished</dt><dd>끝난 Job 을 몇 초 뒤 지울지. 빌드 Job 은 3600. <a href="ch07-control-plane.html">7장</a></dd>
+  <dt>MCP (Model Context Protocol)</dt><dd>AI 모델이 외부 도구를 부르는 규약. ops_mcp 가 get_metrics·scale·rollback 을 낸다. <a href="ch07-control-plane.html">7장</a></dd>
+  <dt>가드레일 (guardrail)</dt><dd>에이전트가 할 수 있는 일을 좁히는 겹겹의 장치. 범위 고정 · RBAC · 승인 · 한도/dry-run · 감사. <a href="ch07-control-plane.html">7장</a></dd>
+  <dt>사람 승인 (human-in-the-loop)</dt><dd>되돌리기 어려운 동작은 사람이 터미널에서 승인해야 실행. 1회용, 900초, 인자에 묶임. <a href="ch07-control-plane.html">7장</a></dd>
+  <dt>감사 로그 (audit log)</dt><dd>누가 언제 무엇을 시도했고 결과가 무엇인지 남긴 줄. 거절도 남긴다. <a href="ch07-control-plane.html">7장</a></dd>
+  <dt>TokenRequest</dt><dd>ServiceAccount 의 짧게 사는 토큰을 발급하는 API. <code>kubectl create token</code>. <a href="ch07-control-plane.html">7장</a></dd>
+</dl>
+</div>
+
+<div class="tier" data-tier="1">
+<h3>장애와 클라우드</h3>
+<dl class="terms">
+  <dt>장애 주입 (fault injection)</dt><dd>일부러 노드·배포·설정을 망가뜨려 시스템의 반응을 재는 실험. <a href="ch08-resilience.html">8장</a></dd>
+  <dt>대역 클러스터 (stand-in)</dt><dd>06 이 쓰는 kind-chaos. faas 와 노드 역할은 비슷하지만 taint 없음, kindnet. <a href="ch08-resilience.html">8장</a></dd>
+  <dt>NotReady / Unknown</dt><dd>노드 하트비트가 grace period(기본 50초) 넘게 없을 때의 노드 상태. <a href="ch08-resilience.html">8장</a></dd>
+  <dt>Lease (kube-node-lease)</dt><dd>kubelet 이 주기적으로 갱신하는 하트비트 리소스. <a href="ch08-resilience.html">8장</a></dd>
+  <dt>tolerationSeconds</dt><dd>NoExecute taint 를 몇 초 견딘 뒤 쫓겨날지. 기본 300, 06 방어는 20. <a href="ch08-resilience.html">8장</a></dd>
+  <dt>topologySpreadConstraints</dt><dd>파드를 노드·존마다 고르게 흩는 규칙. maxSkew, whenUnsatisfiable, nodeTaintsPolicy. <a href="ch08-resilience.html">8장</a></dd>
+  <dt>PodDisruptionBudget (PDB)</dt><dd>drain 같은 자발적 중단 때 최소 몇 개는 남겨 두라는 약속. 노드 장애(비자발적)는 막지 못한다. <a href="ch08-resilience.html">8장</a></dd>
+  <dt>cordon / drain</dt><dd>노드에 새 파드를 막기 / 기존 파드를 PDB 를 지키며 내보내기. 스팟 예고 대응의 기본. <a href="ch08-resilience.html">8장</a></dd>
+  <dt>합성 프로브 (synthetic probe)</dt><dd>밖에서 정해진 주기로 함수를 불러 성공·실패를 기록하는 스크립트. 사용자 체감의 대리 지표. <a href="ch08-resilience.html">8장</a></dd>
+  <dt>런북 (runbook)</dt><dd>알림이 울렸을 때 사람이 따라 할 절차. RB-01 ~ RB-04. <a href="ch08-resilience.html">8장</a></dd>
+  <dt>k3s</dt><dd>바이너리 하나로 된 가벼운 쿠버네티스 배포판. 기본 CNI flannel, 기본 인그레스 Traefik. <a href="ch09-ec2-k3s.html">9장</a></dd>
+  <dt>스팟 인스턴스 (Spot)</dt><dd>남는 EC2 를 싸게 쓰되 2분 예고 후 회수될 수 있는 구매 방식. exec 풀에 쓴다. <a href="ch09-ec2-k3s.html">9장</a></dd>
+  <dt>ASG (Auto Scaling Group)</dt><dd>같은 Launch Template 으로 EC2 수를 유지하는 묶음. 예약으로 매일 23:00 에 0. <a href="ch09-ec2-k3s.html">9장</a></dd>
+  <dt>NTH (Node Termination Handler)</dt><dd>스팟 회수 예고를 받아 노드를 cordon·drain 하는 AWS 도구. <a href="ch09-ec2-k3s.html">9장</a></dd>
+  <dt>FIS (Fault Injection Service)</dt><dd>AWS 의 장애 주입 서비스. 스팟 중단 예고를 일부러 보낸다. <a href="ch09-ec2-k3s.html">9장</a></dd>
+  <dt>SSM 포트 포워딩</dt><dd>인바운드 포트를 열지 않고 AWS Systems Manager 로 6443 에 터널을 뚫는 방법. <a href="ch09-ec2-k3s.html">9장</a></dd>
+  <dt>Terraform</dt><dd>인프라를 코드로 선언하고 plan/apply 로 맞추는 도구. 07 의 VPC·EC2·ASG·예산. <a href="ch09-ec2-k3s.html">9장</a></dd>
+</dl>
+</div>
+
+<h2 id="recap">정리</h2>
+
+<h3>핵심 개념 체크리스트</h3>
+<ul class="checklist">
+  <li>요청 두 갈래(함수 배포 / 함수 호출)가 각각 어떤 부품을 지나는지 말할 수 있다.</li>
+  <li>노드 풀 세 개의 역할과, 함수·빌드 파드가 거기 고정되는 장치(nodeSelector + toleration)를 설명할 수 있다.</li>
+  <li>Argo CD 가 관리하는 것(Application 10개 + AppSet 1개)과 스크립트·Helm 이 직접 까는 것을 구분할 수 있다.</li>
+  <li>run-all.sh 가 단계 README 순서를 따르지 않는 이유를 한 문장으로 말할 수 있다.</li>
+  <li>함수 phase 여섯 가지와 각 phase 를 판정하는 근거(Job 상태, ksvc buildId, Ready 조건)를 안다.</li>
+  <li>콜드 스타트에서 activator 가 하는 일과, tenant-a 의 NetworkPolicy 가 왜 knative-serving 을 열어야 하는지 안다.</li>
+  <li>카나리 abort 뒤 Argo CD 가 Synced + Degraded 로 보이는 이유와 마무리(git revert)를 안다.</li>
+  <li>노드 장애에서 "감지까지 50초" 와 "옮기기까지 300초(방어 후 20초)" 가 다른 시계라는 것을 안다.</li>
+  <li>신뢰 경계의 진짜 벽 두 개(RBAC, NetworkPolicy)와 가장 약한 고리(인증 없는 컨트롤 플레인 API)를 짚을 수 있다.</li>
+  <li>로컬 kind 와 EC2 k3s 의 taint 전략이 왜 반대인지 설명할 수 있다.</li>
+</ul>
+
+<h3>이 PoC 의 핵심 결정</h3>
+<div class="table-wrap"><table>
+  <thead><tr><th>선택</th><th>대안</th><th>버린 이유</th></tr></thead>
+  <tbody>
+    <tr><td>Argo CD (풀 방식 GitOps)</td><td>CI 에서 kubectl apply (푸시 방식)</td><td>클러스터 자격 증명이 CI 에 퍼지고, 손 변경을 되돌리는 장치가 없다</td></tr>
+    <tr><td>Knative Serving + Kourier</td><td>OpenFaaS, 직접 만든 HPA + Deployment</td><td>scale-to-zero 와 Revision 롤백을 직접 만들어야 한다. Istio 는 kind 에 무겁다</td></tr>
+    <tr><td>namespace = 테넌트 + tenant 차트</td><td>테넌트마다 클러스터 (vCluster 등)</td><td>맥 한 대 자원으로 불가. 울타리 리소스로 대부분의 격리를 보여 줄 수 있다</td></tr>
+    <tr><td>Cilium</td><td>kindnet (kind 기본)</td><td>NetworkPolicy 를 확실히 집행하고 Hubble 로 막힌 패킷을 볼 수 있다</td></tr>
+    <tr><td>kaniko 빌드 Job + digest 배포</td><td>Docker 소켓 마운트, 태그 배포</td><td>소켓은 노드 루트 권한과 같다. 태그는 같은 이름에 다른 내용이 올 수 있다</td></tr>
+    <tr><td>gVisor RuntimeClass</td><td>Kata Containers, Firecracker</td><td>kind 노드(컨테이너) 안에 VM 을 띄울 수 없다(중첩 가상화)</td></tr>
+    <tr><td>202 + 폴링 API</td><td>요청을 빌드 끝까지 붙잡기</td><td>수십 초 연결 유지는 프록시 타임아웃과 스레드 고갈을 부른다</td></tr>
+    <tr><td>에이전트 전용 ServiceAccount + 승인</td><td>관리자 kubeconfig 를 에이전트에게</td><td>프롬프트 한 줄로 클러스터 전체가 위험해진다</td></tr>
+    <tr><td>최종 모양 클러스터 하나 (run-all)</td><td>단계별 클러스터 재생성</td><td>앞 단계 결과가 사라지고 전체 흐름을 한 번에 볼 수 없다</td></tr>
+    <tr><td>EC2 + k3s (코드만)</td><td>EKS</td><td>관리형 컨트롤 플레인 비용이 예산을 넘는다</td></tr>
+  </tbody>
+</table></div>
+
+<h3>본선에서 떠올릴 패턴</h3>
+<ul>
+  <li><b>원하는 상태 + 조정 루프</b>: Argo CD, Knative autoscaler, Rollouts, ReplicaSet 이 모두 같은 모양이다. 새 주제가 나오면 "누가 원하는 상태를 적고, 누가 어떤 주기로 맞추나" 부터 그린다.</li>
+  <li><b>비동기 작업 = 202 + 상태 조회 + 멱등 ID</b>: 빌드뿐 아니라 리포트 생성, 대량 업로드, 결제 확인에도 그대로 쓴다. 상태를 메모리에 두면 재시작 때 고아가 생긴다는 한계까지 같이 말한다.</li>
+  <li><b>권한의 모양과 범위를 나누기</b>: ClusterRole(모양) + 테넌트별 RoleBinding(범위). SaaS 의 역할·조직 모델에도 같은 구조다.</li>
+  <li><b>코드 검사 뒤에 진짜 벽</b>: 앱 안의 검사는 뚫린다고 가정하고, 플랫폼 계층(RBAC, NetworkPolicy, IAM)에 한 겹을 더 둔다.</li>
+  <li><b>안전한 기본값 + 좁은 예외</b>: default-deny 후 허용, taint 후 toleration, PSA baseline 강제. 예외는 이름이 붙은 정책으로 남긴다.</li>
+  <li><b>자동 판정과 사람 승인의 경계</b>: 되돌리기 쉬운 것(카나리 abort, scale ±2)은 자동, 어려운 것(트래픽 고정 롤백)은 사람 승인.</li>
+  <li><b>두 시계 분리</b>: "감지까지" 와 "복구까지" 를 따로 재고 따로 줄인다. 장애 질문에는 늘 이 둘로 답한다.</li>
+</ul>
+
+<h3>스스로 답해 볼 질문</h3>
+<ol>
+  <li>사용자가 <code>curl -H "Host: hello.tenant-a.faas.local" localhost:8081</code> 을 쳤다. 응답이 오기까지 지나는 부품을 순서대로 말해 보라. 파드가 0개일 때는 무엇이 더 끼나?</li>
+  <li>같은 코드를 두 번 POST 하면 빌드는 몇 번 도나? 그 근거가 되는 코드 한 줄은?</li>
+  <li>컨트롤 플레인이 빌드 도중 재시작됐다. 상태 조회는 무엇을 돌려주고, 왜 영원히 그 상태인가? 고치는 설계 두 가지는?</li>
+  <li>tenant-a 의 <code>allow-from-namespaces</code> 를 지우고 push 했다. 무엇이 언제 어떻게 깨지나? Argo CD 화면은 어떻게 보이나?</li>
+  <li>카나리 분석의 Prometheus 주소에 오타가 있다. 좋은 버전을 배포하면 어떻게 되나? 그것이 왜 맞는 설계인가?</li>
+  <li>exec 노드 하나가 갑자기 멈췄다. 사용자 에러가 나는 구간과 멈추는 순간을 쿠버네티스 시계 두 개로 설명하라.</li>
+  <li>왜 run-all.sh 는 04 의 클러스터를 먼저 만들고 02 를 나중에 얹나? 반대로 하면 무엇이 사라지나?</li>
+  <li>에이전트가 tenant-b 의 함수를 scale 하려 한다. 어느 겹에서 막히나? 코드 검사가 버그로 뚫렸다면?</li>
+  <li>컨트롤 플레인 API 에 인증이 없다는 것이 왜 가장 약한 고리인가? 본선 설계라면 어디에 무엇을 두겠나?</li>
+  <li>kind 에서는 exec 풀에 taint 를 걸었고 EC2 에서는 걸지 않았다. 각각의 이유와 장단점은?</li>
+  <li>gVisor 대신 Firecracker 를 쓰자는 제안이 나왔다. 이 PoC 환경에서 안 되는 이유와 실제 클라우드에서 고려할 점은?</li>
+  <li>테넌트 c 를 추가하려면 어떤 파일을 몇 개 바꿔야 하나? 컨트롤 플레인 쪽에서 잊기 쉬운 것은?</li>
+</ol>
+
+<nav class="pager" aria-label="이전 다음 장"></nav>
+</article>
+</main>
+</div>

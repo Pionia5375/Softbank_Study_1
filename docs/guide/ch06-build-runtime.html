@@ -1206,19 +1206,19 @@ kubectl -n "$BUILD_NS" create configmap hello-src --from-file="$ctx/context.tar.
         <title id="f613-t">빌드 Job 에 걸린 세 개의 시간 제한: 컨트롤 플레인 build-timeout, activeDeadlineSeconds, ttlSecondsAfterFinished</title>
         <path d="M60 80 L900 80" class="d-e-api"/>
         <text x="40" y="60" class="d-lbl">Job 생성</text>
-        <text x="380" y="60" class="d-lbl">5분</text>
-        <text x="600" y="60" class="d-lbl">10분</text>
+                <text x="600" y="60" class="d-lbl">10분</text>
+        <text x="660" y="60" class="d-lbl">11분</text>
         <text x="800" y="60" class="d-lbl">끝난 뒤 +10분 / +1시간</text>
-        <rect x="60" y="100" width="340" height="44" rx="12" class="d-agent"/>
-        <text x="76" y="128" class="d-mono">컨트롤 플레인 build-timeout 5m</text>
+        <rect x="60" y="100" width="604" height="44" rx="12" class="d-agent"/>
+        <text x="76" y="128" class="d-mono">컨트롤 플레인 build-timeout 11m</text>
         <rect x="60" y="156" width="560" height="44" rx="12" class="d-warn-box"/>
         <text x="76" y="184" class="d-mono">activeDeadlineSeconds 600 → 파드 강제 종료, Job Failed</text>
         <rect x="640" y="212" width="260" height="44" rx="12" class="d-plain-box"/>
         <text x="656" y="240" class="d-mono">ttlSecondsAfterFinished</text>
-        <text x="60" y="284" class="d-sub">05: 5분이 지나면 컨트롤 플레인은 기다리기를 그만둔다. Job 은 10분까지 살 수 있다 (아래 주의).</text>
+        <text x="60" y="284" class="d-sub">05: 쿠버네티스가 10분에 Job 을 먼저 끝내고, 컨트롤 플레인은 그 결과(성공·실패)를 읽은 뒤 11분 전에 기다림을 끝낸다.</text>
       </svg>
     </div>
-    <figcaption><b>그림 6-11.</b> 빌드 Job 의 세 시계. 컨트롤 플레인의 기다림(보라)이 쿠버네티스의 강제 종료(노랑)보다 짧고, 끝난 Job 은 TTL(회색) 뒤에 ConfigMap 과 함께 지워진다.</figcaption>
+    <figcaption><b>그림 6-11.</b> 빌드 Job 의 세 시계. 컨트롤 플레인의 기다림(보라)이 쿠버네티스의 강제 종료(노랑)보다 길어서 Job 의 끝을 항상 본다. 끝난 Job 은 TTL(회색) 뒤에 ConfigMap 과 함께 지워진다.</figcaption>
   </figure>
   <pre class="mermaid">
 stateDiagram-v2
@@ -1234,7 +1234,7 @@ stateDiagram-v2
   Deleted --> [*]: ConfigMap 도 ownerReference 로 함께 삭제
   </pre>
   <aside class="callout warn"><p class="callout-title">주의: 05 의 시계 불일치</p>
-  <p>컨트롤 플레인의 <code>build-timeout: 5m</code> 이 지나면 <code>waitUntilCondition</code> 이 예외를 던지고 감사 로그에 <code>deploy.apply error</code> 가 남는다. 그런데 Job 은 10분까지 계속 돌다가 성공할 수 있다. 성공해도 ksvc 를 만들 스레드가 이미 없다(같은 코드로 다시 POST 하면 Job 이 재사용되고 새 스레드가 digest 를 읽어 이어 간다). 템플릿 주석이 "컨트롤 플레인 build-timeout(5m)보다 길게" 라고 적은 의도는 "쿠버네티스가 먼저 죽이지 않게" 인데, 반대로 "컨트롤 플레인이 먼저 포기" 하는 틈이 생긴다. 07장 알려진 한계(메모리에만 있는 대기 스레드)와 같은 뿌리다.</p></aside>
+  <p>두 시계의 순서가 중요하다. 컨트롤 플레인의 <code>build-timeout</code> 이 Job 의 <code>activeDeadlineSeconds</code> 보다 짧으면, 기다림이 먼저 끝나 <code>waitUntilCondition</code> 이 예외를 던지고 감사 로그에 <code>deploy.apply error</code> 가 남는다. 그런데 Job 은 계속 돌다가 성공할 수 있고, 성공해도 ksvc 를 만들 스레드가 이미 없다(같은 코드로 다시 POST 하면 Job 이 재사용되고 새 스레드가 digest 를 읽어 이어 간다). 처음 PoC 는 5m 대 600초라 정확히 이 틈이 있었고, 가이드를 쓰면서 <code>build-timeout: 11m</code> 으로 고쳤다. 이제는 쿠버네티스가 먼저 Job 을 끝내고(성공 또는 DeadlineExceeded), 컨트롤 플레인은 그 결과를 읽는다. 원칙: <b>바깥에서 기다리는 쪽의 시계가 안쪽 작업의 마감보다 길어야 한다.</b> 07장 알려진 한계(메모리에만 있는 대기 스레드)와는 별개로 남는 문제다.</p></aside>
 </div>
 
 <div class="tier" data-tier="3">
@@ -2605,7 +2605,7 @@ docker exec faas-worker3 uname -r</code></pre>
   <li>Python 런타임 Dockerfile 에서 <code>USER</code> 줄을 <code>COPY</code> 위로 옮기면 레이어 수와 캐시 동작이 어떻게 바뀌나?</li>
   <li>kaniko 가 privileged 없이도 빌드할 수 있는 이유와, 그런데도 "보안 경계가 아니다" 라고 하는 이유를 각각 한 문장으로.</li>
   <li>05 에서 <code>ttlSecondsAfterFinished</code> 를 0 으로 바꾸면 어떤 경쟁 조건이 생기나? 증상은 어느 상태에서 멈추는 것으로 보이나?</li>
-  <li>컨트롤 플레인 <code>build-timeout</code>(5분)과 Job <code>activeDeadlineSeconds</code>(10분)의 틈에서 무슨 일이 생길 수 있나? 고치는 설계 두 가지는?</li>
+  <li>컨트롤 플레인 <code>build-timeout</code>(11분)이 Job <code>activeDeadlineSeconds</code>(10분)보다 길어야 하는 이유는? 반대로 두면 무슨 일이 생기나? 스레드가 아예 기다리지 않게 하는 설계 두 가지는?</li>
   <li>runc 컨테이너와 gVisor 컨테이너에서 <code>uname -r</code> 결과가 다른 이유를 런타임 스택 그림의 층 이름으로 설명하라.</li>
   <li>RuntimeClass 의 <code>scheduling</code> 을 지웠을 때 gVisor 파드를 막는 마지막 벽은 무엇이고, 그 벽이 fail-closed 인 것이 왜 중요한가?</li>
   <li><code>?work=cpu</code> 와 <code>?work=io</code> 중 gVisor 에서 더 느려지는 쪽은? Sentry, 플랫폼, Gofer/directfs 중 어디에서 시간이 더해지나?</li>
