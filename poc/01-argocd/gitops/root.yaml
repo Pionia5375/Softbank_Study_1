@@ -13,15 +13,15 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: ___         # TODO(human): hello-fn 과 같은 레포
-    targetRevision: ___
-    path: ___            # TODO(human): Application YAML 들이 든 폴더
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1         # TODO(human): hello-fn 과 같은 레포
+    targetRevision: main
+    path: gitops/apps            # TODO(human): Application YAML 들이 든 폴더
     # Chart.yaml 이 없는 폴더면 Argo CD 는 "그냥 YAML 파일 묶음(directory)"으로 읽는다
   destination:
     server: https://kubernetes.default.svc
     # Application 오브젝트들은 argocd namespace 에 만들어져야 Argo CD 가 알아본다
-    namespace: ___       # TODO(human)
+    namespace: argocd       # TODO(human)
   syncPolicy:
     automated:
-      prune: ___         # TODO(human): hello-fn 과 같게 할지, 다르게 할지 이유와 함께
-      selfHeal: ___
+      prune: true         # TODO(human): hello-fn 과 같게 할지, 다르게 할지 이유와 함께
+      selfHeal: true
