@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>01 GitOps와 Argo CD · FaaS PoC 가이드</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="guide.css">
+<style>
+  /* 이 장 전용: 선 위 라벨의 바탕 (선이 글자를 가로지르지 않게) */
+  .lblbg { fill: var(--surface); }
+  .d-dim { opacity: 0.55; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="guide.js" defer></script>
+</head>
+<body>
+<div class="shell">
+<nav class="nav" aria-label="장 목록"></nav>
+<main>
+<article class="page">
+<header class="chapter-head">
+  <p class="eyebrow">01장 · 관련 폴더 poc/01-argocd (그리고 03~07 의 gitops/)</p>
+  <h1>GitOps와 Argo CD</h1>
+  <p class="lede"><code>git push</code> 한 번이 어떻게 클러스터 안의 파드가 되는지, Argo CD 의 부품 일곱 개가 그 사이에서 각각 무엇을 하는지, 그리고 그 길이 끊겼을 때 어디를 보고 어떻게 고치는지를 말로 설명할 수 있게 된다. 처음 보는 주제에서도 "원하는 상태를 적어 두고, 에이전트가 계속 맞춘다" 는 틀을 꺼내 쓸 수 있게 하는 것이 이 장의 목표다.</p>
+  <div class="chapter-meta">
+    <span class="chip">PoC 폴더 <b>poc/01-argocd</b></span>
+    <span class="chip">핵심 기술 <b>GitOps · Argo CD · Helm · App of Apps · ApplicationSet · AppProject</b></span>
+    <span class="chip">버전 <b>차트 argo/argo-cd 10.10.5 = Argo CD v3.5.5</b></span>
+  </div>
+</header>
+
+<h2 id="map">이 장의 지도</h2>
+<p>전체 PoC 는 kind 클러스터 <code>faas</code> 위에 플랫폼(Argo CD, Rollouts, Knative, 테넌트 울타리, 컨트롤 플레인)을 쌓고, 그 위에서 테넌트의 함수를 돌린다. 이 장은 그중 <strong>플랫폼이 Git 에서 클러스터로 들어오는 길</strong>을 다룬다. 01 단계에서 세운 Argo CD 와 App of Apps 는 이후 02~07 단계가 전부 그 위에 올라가는 바닥이다.</p>
+<figure>
+<div class="fig scroll">
+<svg viewBox="0 0 960 430" role="img" aria-labelledby="map-t">
+<title id="map-t">이 장의 위치: 맥에서 Git 으로, Git 에서 클러스터 안 Argo CD 로, Argo CD 에서 각 namespace 로</title>
+<defs><marker id="map-m-git" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-git"/></marker><marker id="map-m-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker><marker id="map-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker></defs>
+<rect x="20" y="60" width="200" height="120" rx="12" class="d-user-box"/>
+<text x="36" y="87" class="d-ttl">맥 (Jeong)</text>
+<text x="36" y="108" class="d-mono">git push</text>
+<text x="36" y="127" class="d-mono">UI localhost:8080</text>
+<rect x="20" y="260" width="200" height="120" rx="12" class="d-plain-box"/>
+<text x="36" y="287" class="d-ttl">GitHub main</text>
+<text x="36" y="308" class="d-mono">Pionia5375/</text>
+<text x="36" y="327" class="d-mono">Softbank_Study_1</text>
+<path d="M120 180 L120 256" class="d-e-git" marker-end="url(#map-m-git)"/>
+<rect x="87.1" y="210" width="65.9" height="19" rx="4" class="lblbg"/>
+<text x="120" y="224" class="d-lbl" text-anchor="middle">git push</text>
+<rect x="250" y="20" width="690" height="395" rx="12" class="d-pool"/>
+<text x="266" y="44" class="d-lbl">kind 클러스터 faas (컨텍스트 kind-faas)</text>
+<rect x="280" y="66" width="250" height="160" rx="12" class="d-cp-box"/>
+<text x="296" y="93" class="d-ttl">argocd namespace</text>
+<text x="296" y="114" class="d-mono">argocd-server</text>
+<text x="296" y="133" class="d-mono">repo-server · redis</text>
+<text x="296" y="152" class="d-mono">application-controller</text>
+<text x="296" y="171" class="d-mono">applicationset-controller</text>
+<rect x="440" y="76" width="41" height="20" rx="10" class="d-badge"/>
+<text x="460.4" y="90" class="d-badge-t" text-anchor="middle">이 장</text>
+<path d="M220 320 L250 320 L250 200 L276 200" class="d-e-git" marker-end="url(#map-m-git)"/>
+<rect x="230.2" y="238" width="39.6" height="19" rx="4" class="lblbg"/>
+<text x="250" y="252" class="d-lbl" text-anchor="middle">pull</text>
+<rect x="600" y="60" width="320" height="44" rx="10" class="d-card"/>
+<text x="614" y="88" class="d-mono">fn-demo</text>
+<text x="718" y="88" class="d-sub">hello-fn, bye-fn (01)</text>
+<path d="M530 146 C566 146 562 82 597 82" class="d-e-prov" marker-end="url(#map-m-prov)"/>
+<rect x="600" y="112" width="320" height="44" rx="10" class="d-card"/>
+<text x="614" y="140" class="d-mono">fn-canary</text>
+<text x="718" y="140" class="d-sub">podinfo Rollout (02)</text>
+<path d="M530 146 C566 146 562 134 597 134" class="d-e-prov" marker-end="url(#map-m-prov)"/>
+<rect x="600" y="164" width="320" height="44" rx="10" class="d-card"/>
+<text x="614" y="192" class="d-mono">tenant-a, b</text>
+<text x="718" y="192" class="d-sub">울타리 6겹 + hello (03)</text>
+<path d="M530 146 C566 146 562 186 597 186" class="d-e-prov" marker-end="url(#map-m-prov)"/>
+<rect x="600" y="216" width="320" height="44" rx="10" class="d-card"/>
+<text x="614" y="244" class="d-mono">fn-runtime</text>
+<text x="718" y="244" class="d-sub">ksvc 3개 (04)</text>
+<path d="M530 146 C566 146 562 238 597 238" class="d-e-prov" marker-end="url(#map-m-prov)"/>
+<rect x="600" y="268" width="320" height="44" rx="10" class="d-card"/>
+<text x="614" y="296" class="d-mono">faas-system</text>
+<text x="718" y="296" class="d-sub">컨트롤 플레인 (05)</text>
+<path d="M530 146 C566 146 562 290 597 290" class="d-e-prov" marker-end="url(#map-m-prov)"/>
+<rect x="280" y="300" width="250" height="95" rx="12" class="d-plain-box"/>
+<text x="296" y="324" class="d-ttl-s">사용자 함수 경로</text>
+<text x="296" y="345" class="d-sub">컨트롤 플레인 → API 직접</text>
+<text x="296" y="364" class="d-sub">GitOps 아님 (7장)</text>
+<rect x="600" y="340" width="320" height="44" rx="10" class="d-card"/>
+<text x="614" y="368" class="d-mono">tenant-a</text>
+<text x="718" y="368" class="d-sub">함수 ksvc hello (05)</text>
+<path d="M530 362 L597 362" class="d-e-api" marker-end="url(#map-m-api)"/>
+</svg>
+</div>
+<figcaption><b>그림 1-1.</b> 이 장이 다루는 부분은 초록 선(Git → Argo CD)과 주황 선(Argo CD → 각 namespace)이다. 회색 선(컨트롤 플레인이 쿠버네티스 API 로 직접 함수를 만드는 길)은 7장에서 다룬다. 플랫폼은 GitOps, 사용자 함수는 API 직접이라는 두 갈래를 처음부터 구분해 둔다.</figcaption>
+</figure>
+<ol><li><a href="#push-pull">push 배포와 pull 배포</a>: 밖에서 미는 배포와 안에서 끌어오는 배포의 차이, 그리고 우리 PoC 가 두 방식을 어디에 나눠 쓰는지</li><li><a href="#principles">OpenGitOps 4원칙</a>: 선언적, 버전·불변, 자동 pull, 계속 조정. 각 원칙이 Argo CD 의 어느 부품에 해당하나</li><li><a href="#architecture">Argo CD 구조와 부품</a>: server, repo-server, application-controller, applicationset-controller, redis, dex, notifications 의 안쪽</li><li><a href="#application">Application 한 장 읽기</a>: source, destination, syncPolicy 와 status 필드를 한 줄씩</li><li><a href="#reconcile">조정 루프와 diff</a>: 원하는 상태와 실제 상태를 어떻게 비교하나: 정규화, 3방향 비교, ignoreDifferences</li><li><a href="#status">Sync 상태와 Health 상태</a>: 두 축이 따로 움직이는 이유와 상태 기계</li><li><a href="#detect">변경 감지: 폴링, refresh, webhook</a>: timeout.reconciliation + jitter, normal/hard refresh, git push 에서 파드 Ready 까지</li><li><a href="#sync">Sync 작업: 단계, 웨이브, 훅, 옵션</a>: 적용 순서 규칙, PreSync/Sync/PostSync/SyncFail, CreateNamespace·ServerSideApply 등</li><li><a href="#auto">자동 동기화, prune, selfHeal, retry</a>: 왜 같은 커밋에서 실패한 자동 동기화는 다시 안 하나</li><li><a href="#tracking">리소스 추적과 finalizer</a>: Argo CD 가 "내 것" 을 알아보는 방법과 지울 때의 연쇄</li><li><a href="#sources">Helm 차트와 YAML 폴더 렌더링</a>: helm install 이 아니라 helm template. values 우선순위, directory recurse/exclude</li><li><a href="#app-of-apps">App of Apps</a>: root 하나로 나머지를 세우는 구조와 PoC 의 Application 나무</li><li><a href="#appset">ApplicationSet</a>: 틀 하나 + 목록 하나로 테넌트를 찍어 내는 공장 (03)</li><li><a href="#project">AppProject 와 Argo CD RBAC</a>: 테넌트가 남의 namespace 나 울타리를 못 건드리게 하는 Argo CD 쪽 벽 (03)</li><li><a href="#multicluster">여러 클러스터</a>: 로컬 kind 와 EC2 k3s 가 같은 Git 을 보는 방식 (07)</li><li><a href="#drift">드리프트, 롤백, 깨뜨려 보기</a>: README 5단계 세 실험: selfHeal, 라벨 불일치, prune</li><li><a href="#bootstrap">부트스트랩 문제</a>: Argo CD 는 자기 자신을 어떻게 까나. run-all 의 순서</li><li><a href="#recap">정리</a>: 체크리스트, 결정 표, 본선에서 옮겨 쓸 패턴, 스스로 답해 볼 질문</li></ol>
+<p>읽는 법: 절마다 <strong>1단계(개괄)</strong> → <strong>2단계(동작 원리)</strong> → <strong>3단계(세부 로직)</strong> 순서다. 왼쪽 목차 아래 "3단계 숨기기" 버튼으로 세부 로직을 접고 처음엔 1·2단계만 훑어도 된다. 각 절 끝의 색 상자는 우리 PoC 에서 어디인지(초록), 깨지면 어떻게 보이는지(빨강), 왜 이걸 골랐는지(보라), 공식 문서(파랑)다.</p>
+
+<h2 id="push-pull">push 배포와 pull 배포</h2>
+<div class="tier" data-tier="1">
+<h3>push 와 pull 은 무엇이 다른가</h3>
+<p>지금까지 실습(Lab 02~04, 07)에서는 맥에서 <code>helm install</code>, <code>kubectl apply</code> 를 직접 쳤다. 클러스터 <strong>밖</strong>에서 클러스터 <strong>안</strong>으로 밀어 넣으니 <strong>push 방식</strong>이다. GitOps 는 방향을 뒤집는다. 클러스터 안에서 도는 프로그램(에이전트)이 Git 을 읽어 와서 스스로 맞춘다. 그래서 <strong>pull 방식</strong>이다.</p>
+<figure>
+<div class="fig scroll">
+<svg viewBox="0 0 960 400" role="img" aria-labelledby="pp-t">
+<title id="pp-t">push 방식과 pull 방식 비교: 자격 증명이 어디 있고 누가 클러스터를 바꾸나</title>
+<defs><marker id="pp-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker><marker id="pp-m-git" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-git"/></marker><marker id="pp-m-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker><marker id="pp-m-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker><marker id="pp-m-async" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-async"/></marker><marker id="pp-m-obs" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-obs"/></marker><marker id="pp-m-fail" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker></defs>
+<rect x="20" y="20" width="440" height="360" rx="12" class="d-pool"/>
+<text x="40" y="50" class="d-ttl">push 방식</text>
+<rect x="40" y="80" width="160" height="70" rx="12" class="d-user-box"/>
+<text x="56" y="104" class="d-ttl-s">개발자 · CI</text>
+<text x="56" y="125" class="d-mono">kubectl · helm</text>
+<rect x="280" y="80" width="160" height="70" rx="12" class="d-card"/>
+<text x="296" y="104" class="d-ttl-s">API 서버</text>
+<text x="296" y="125" class="d-sub">클러스터 안</text>
+<path d="M200 115 L276 115" class="d-e-prov" marker-end="url(#pp-m-prov)"/>
+<rect x="214.5" y="90" width="47.0" height="19" rx="4" class="lblbg"/>
+<text x="238" y="104" class="d-lbl" text-anchor="middle">apply</text>
+<rect x="40" y="180" width="160" height="70" rx="12" class="d-warn-box"/>
+<text x="56" y="204" class="d-ttl-s">관리자 kubeconfig</text>
+<text x="56" y="225" class="d-sub">클러스터 밖에 보관</text>
+<rect x="280" y="180" width="160" height="70" rx="12" class="d-fail-box"/>
+<text x="296" y="204" class="d-ttl-s">kubectl edit</text>
+<text x="296" y="225" class="d-sub">드리프트, 알림 없음</text>
+<path d="M360 180 L360 154" class="d-e-fail" marker-end="url(#pp-m-fail)"/>
+<text x="40" y="296" class="d-sub">정답 = 마지막으로 명령 친 사람의 기억</text>
+<text x="40" y="320" class="d-sub">CI 가 클러스터 관리자 권한을 쥔다</text>
+<text x="40" y="344" class="d-sub">Git 과 실제가 달라져도 아무도 모른다</text>
+<rect x="500" y="20" width="440" height="360" rx="12" class="d-cp"/>
+<text x="520" y="50" class="d-ttl">pull 방식 (GitOps)</text>
+<rect x="520" y="80" width="150" height="70" rx="12" class="d-user-box"/>
+<text x="536" y="104" class="d-ttl-s">개발자</text>
+<text x="536" y="125" class="d-mono">git push</text>
+<rect x="520" y="190" width="150" height="70" rx="12" class="d-plain-box"/>
+<text x="536" y="214" class="d-ttl-s">Git (정답)</text>
+<text x="536" y="235" class="d-sub">main 브랜치</text>
+<path d="M595 150 L595 186" class="d-e-git" marker-end="url(#pp-m-git)"/>
+<rect x="610.2" y="160" width="39.6" height="19" rx="4" class="lblbg"/>
+<text x="630" y="174" class="d-lbl" text-anchor="middle">push</text>
+<rect x="715" y="70" width="210" height="200" rx="10" class="d-pool"/>
+<text x="727" y="90" class="d-lbl">클러스터</text>
+<rect x="730" y="100" width="180" height="56" rx="12" class="d-cp-box"/>
+<text x="746" y="134" class="d-ttl-s">Argo CD</text>
+<rect x="730" y="200" width="180" height="56" rx="12" class="d-card"/>
+<text x="746" y="234" class="d-ttl-s">API 서버</text>
+<path d="M670 225 L695 225 L695 128 L726 128" class="d-e-git" marker-end="url(#pp-m-git)"/>
+<rect x="675.2" y="168" width="39.6" height="19" rx="4" class="lblbg"/>
+<text x="695" y="182" class="d-lbl" text-anchor="middle">pull</text>
+<path d="M780 156 L780 196" class="d-e-prov" marker-end="url(#pp-m-prov)"/>
+<text x="806" y="181" class="d-lbl" text-anchor="middle">apply</text>
+<path d="M870 198 L870 160" class="d-e-obs" marker-end="url(#pp-m-obs)"/>
+<text x="876" y="183" class="d-lbl" text-anchor="start">watch</text>
+<text x="520" y="306" class="d-sub">정답 = Git 커밋 (git log 가 곧 감사 기록)</text>
+<text x="520" y="330" class="d-sub">클러스터 자격 증명이 밖으로 안 나간다</text>
+<text x="520" y="354" class="d-sub">다르면 알아채고 되돌린다 (selfHeal)</text>
+</svg>
+</div>
+<figcaption><b>그림 1-2.</b> 왼쪽 push: 밖(맥, CI)에 클러스터 관리자 열쇠가 있고, 명령이 끝나면 아무도 클러스터를 지켜보지 않는다. 오른쪽 pull: 클러스터 안의 Argo CD 가 Git 을 읽어 와(초록) 적용하고(주황), 실제 상태를 계속 지켜본다(청록 점선).</figcaption>
+</figure>
+<p>Java/Spring 에 비유하면, push 는 운영 서버에 SSH 로 들어가 jar 를 바꿔 끼우는 것이고, pull 은 서버마다 "설정 저장소의 최신 버전을 계속 보고 다르면 스스로 재배포하는 데몬" 을 두는 것이다. Spring Cloud Config 의 설정 새로고침을 클러스터 전체로 넓힌 모양이다.</p>
+<p>핵심 차이는 세 가지다. (1) 정답이 어디 있나: push 는 사람의 기억과 터미널 기록, pull 은 Git. (2) 열쇠가 어디 있나: push 는 CI·사람이 클러스터 관리자 kubeconfig 를 가진다, pull 은 클러스터 안 에이전트만 가진다. (3) 끝나고도 지켜보나: push 는 명령이 끝나면 끝, pull 은 계속 비교한다.</p>
+
+</div>
+<div class="tier" data-tier="2">
+<h3>시간 순서와 비교 축</h3>
+<p>두 방식의 동작을 시간 순서로 놓으면 차이가 더 분명하다. push 는 "한 번 실행되는 절차" 이고 pull 은 "끝나지 않는 반복" 이다.</p>
+<figure>
+<pre class="mermaid">
+sequenceDiagram
+  participant D as 개발자
+  participant CI as CI 서버
+  participant G as Git
+  participant A as Argo CD (클러스터 안)
+  participant K as API 서버
+  Note over D,K: push 방식
+  D->>G: git push
+  G->>CI: 파이프라인 시작
+  CI->>K: kubectl apply (관리자 권한)
+  K-->>CI: 성공 또는 실패, 그리고 끝
+  Note over D,K: pull 방식
+  D->>G: git push
+  loop 매 120초 + 0~60초 jitter
+    A->>G: 새 커밋 있나
+    A->>K: 실제 상태 조회 (watch 캐시)
+    A->>A: 비교
+    A->>K: 다르면 apply
+  end
+</pre>
+<figcaption><b>그림 1-3.</b> push 는 CI 가 명령을 한 번 내리고 끝난다. pull 은 Argo CD 가 Git 과 클러스터를 계속 번갈아 보며 맞춘다. pull 쪽에는 "끝" 이 없다.</figcaption>
+</figure>
+<div class="table-wrap"><table><thead><tr><th>축</th><th>push (CI 가 kubectl/helm)</th><th>pull (Argo CD)</th></tr></thead><tbody><tr><td>클러스터 열쇠</td><td>CI·사람에게 관리자 kubeconfig</td><td>Argo CD 의 ServiceAccount 만. 사람은 Git 쓰기 권한만</td></tr><tr><td>방화벽 방향</td><td>CI → 클러스터 API 로 <b>들어오는</b> 연결 필요</td><td>클러스터 → Git 으로 <b>나가는</b> 연결만. 클러스터 API 를 밖에 안 열어도 된다</td></tr><tr><td>드리프트</td><td>감지 못 함</td><td>계속 비교해서 OutOfSync 표시, selfHeal 이면 되돌림</td></tr><tr><td>감사 기록</td><td>CI 로그 (흩어짐)</td><td>git log + Argo CD 의 sync 이력</td></tr><tr><td>롤백</td><td>이전 명령을 다시 재구성</td><td><code>git revert</code> 후 push</td></tr><tr><td>반영 속도</td><td>즉시</td><td>폴링 주기만큼 늦음 (webhook 으로 줄임)</td></tr><tr><td>명령형 단계 (DB 마이그레이션 등)</td><td>자연스럽다</td><td>훅(PreSync 등)이나 별도 컨트롤러로 바꿔야 한다</td></tr></tbody></table></div>
+
+</div>
+<div class="tier" data-tier="3">
+<h3>pull 의 대가와 우리 PoC 의 경계</h3>
+<p>pull 이 공짜는 아니다. 세부적으로 따져야 할 대가와 경계는 다음과 같다.</p>
+<ul><li><strong>반영 지연</strong>: Argo CD 기본값은 120초 + 최대 60초 jitter 로 Git 을 본다. 데모 중에 push 하고 최악 3분을 기다릴 수 있다. 줄이는 법은 <a href="#detect">변경 감지</a> 절에서 다룬다.</li><li><strong>비밀값</strong>: Git 에 Secret 평문을 넣을 수 없다. 실무에서는 Sealed Secrets, External Secrets, SOPS 같은 도구를 붙인다. 우리 PoC 의 레포는 public 이라 비밀값을 Git 에 두지 않는 구조로 짰다 (Argo CD 의 admin 비밀번호는 설치 때 생긴 Secret, 05 의 토큰은 클러스터 안에서 만든다).</li><li><strong>명령형 작업</strong>: 이미지 빌드, DB 마이그레이션, 일회성 Job 은 "원하는 상태" 로 표현하기 어렵다. Argo CD 는 훅(PreSync/PostSync)으로 일부를 품고, 나머지는 CI 나 별도 컨트롤러가 맡는다.</li><li><strong>부트스트랩</strong>: Argo CD 자신은 누가 까나. 결국 첫 한두 줄은 push 다 (<a href="#bootstrap">부트스트랩</a> 절).</li><li><strong>혼합형</strong>: 흔한 실무 모양은 "CI 가 이미지를 빌드하고 Git 의 이미지 태그만 바꾸는 커밋을 만든다 → Argo CD 가 pull" 이다. CI 는 레지스트리와 Git 쓰기 권한만 갖고 클러스터 권한은 없다.</li></ul>
+<p>우리 PoC 는 의도적으로 두 방식을 섞는다. <strong>플랫폼</strong>(Argo CD 가 관리하는 모든 것)은 pull, <strong>사용자 함수</strong>는 컨트롤 플레인(05)이 쿠버네티스 API 로 직접 만든다. 함수는 사용자가 HTTP 로 올리는 데이터이고 초 단위로 바뀌며, 버전 이력은 Knative Revision 과 감사 로그가 들고 있기 때문이다. 이 선택의 근거와 대가는 7장에서 자세히 본다.</p>
+<pre class="pseudo"><code><span class="k">판단</span> 이 변경을 GitOps 로 할까, API 직접으로 할까:
+  <span class="k">만약</span> 바꾸는 사람이 플랫폼 운영자이고, 변경이 드물고, 검토(PR)가 필요하다
+    → Git 에 쓰고 Argo CD 가 pull   <span class="c">// 01~06 의 플랫폼 전부</span>
+  <span class="k">만약</span> 바꾸는 주체가 최종 사용자·프로그램이고, 초 단위로 많이 바뀐다
+    → 전용 API 가 검증 후 쿠버네티스 API 로 직접   <span class="c">// 05 컨트롤 플레인의 함수 배포</span>
+  <span class="k">만약</span> 둘 다 해당하면
+    → API 가 Git 에 커밋을 만들게 하고 Argo CD 가 pull   <span class="c">// 반영이 폴링만큼 늦어진다</span></code></pre>
+
+</div>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>poc/01-argocd/README.md</code> 1.1~1.2 절이 이 이야기를 한다. 01 단계 이후 <code>kubectl apply</code> 를 손으로 치는 것은 각 단계의 Application(또는 ApplicationSet) 한 장씩뿐이고, 그 안의 워크로드는 전부 Argo CD 가 Git 에서 가져온다. 사용자 함수(<code>tenant-a/hello</code>)만 예외로 컨트롤 플레인이 직접 만든다 (<code>poc/ANALYSIS.md</code> 1절 "두 갈래").</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: "push 했는데 아무 일도 없다"</p><p><b>증상</b>: 파일을 고쳤는데 클러스터가 그대로다. <b>볼 곳</b>: <code>kubectl -n argocd get application hello-fn -o jsonpath='{.status.sync.revision}'</code> 와 <code>git rev-parse origin/main</code> 를 비교한다. 같지 않으면 아직 폴링 전이거나, 애초에 push 를 안 했다 (Argo CD 는 맥의 작업 폴더가 아니라 GitHub 를 읽는다). <b>고치는 법</b>: push 했는지 확인 → <code>kubectl -n argocd annotate application hello-fn argocd.argoproj.io/refresh=normal --overwrite</code> 로 지금 다시 보게 한다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p><b>선택</b>: pull 방식 GitOps (Argo CD). <b>대안 (가)</b> CI 에서 <code>kubectl apply</code>/<code>helm upgrade</code>: CI 에 클러스터 관리자 권한을 줘야 하고 드리프트를 못 잡는다. <b>대안 (나)</b> Flux: 같은 pull 방식이고 기능도 비슷하지만 기본 웹 UI 가 없어서 2분 데모에서 "지금 동기화 중" 장면을 보여 주기 어렵다 (<code>poc/01-argocd/README.md</code> 핵심 결정 1).</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><ul><li><a href="https://opengitops.dev/">OpenGitOps 원칙</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/core_concepts/">Argo CD 핵심 개념</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/">Argo CD 자동 동기화 (CI 가 API 서버 접근이 필요 없다는 설명)</a></li></ul></aside>
+
+<h2 id="principles">OpenGitOps 4원칙</h2>
+<div class="tier" data-tier="1">
+<h3>네 가지 원칙</h3>
+<p>"GitOps" 는 도구 이름이 아니라 원칙 묶음이다. CNCF 산하 OpenGitOps 프로젝트가 네 가지로 정리했다. 원문은 "GitOps 로 관리되는 시스템의 <em>원하는 상태</em>(desired state)는 다음을 만족해야 한다" 로 시작한다.</p>
+<figure>
+<div class="fig scroll">
+<svg viewBox="0 0 960 320" role="img" aria-labelledby="gp-t">
+<title id="gp-t">OpenGitOps 4원칙과 Argo CD·PoC 대응</title>
+<defs><marker id="gp-m-git" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-git"/></marker></defs>
+<rect x="20" y="30" width="210" height="160" rx="12" class="d-cp-box"/>
+<text x="36" y="57" class="d-ttl">1 선언적</text>
+<text x="36" y="85" class="d-mono">Declarative</text>
+<text x="36" y="111" class="d-sub">원하는 상태를 YAML 로</text>
+<text x="36" y="137" class="d-subd">PoC: Helm 차트, Application</text>
+<path d="M230 110 L253 110" class="d-e-git" marker-end="url(#gp-m-git)"/>
+<rect x="255" y="30" width="210" height="160" rx="12" class="d-cp-box"/>
+<text x="271" y="57" class="d-ttl">2 버전·불변</text>
+<text x="271" y="85" class="d-mono">Versioned, Immutable</text>
+<text x="271" y="111" class="d-sub">커밋은 바꿀 수 없다</text>
+<text x="271" y="137" class="d-subd">PoC: git revert 가 롤백</text>
+<path d="M465 110 L488 110" class="d-e-git" marker-end="url(#gp-m-git)"/>
+<rect x="490" y="30" width="210" height="160" rx="12" class="d-cp-box"/>
+<text x="506" y="57" class="d-ttl">3 자동 pull</text>
+<text x="506" y="85" class="d-mono">Pulled Automatically</text>
+<text x="506" y="111" class="d-sub">안의 에이전트가 읽는다</text>
+<text x="506" y="137" class="d-subd">PoC: repo-server 폴링</text>
+<path d="M700 110 L723 110" class="d-e-git" marker-end="url(#gp-m-git)"/>
+<rect x="725" y="30" width="210" height="160" rx="12" class="d-cp-box"/>
+<text x="741" y="57" class="d-ttl">4 계속 조정</text>
+<text x="741" y="85" class="d-mono">Continuously Reconciled</text>
+<text x="741" y="111" class="d-sub">다르면 맞춘다</text>
+<text x="741" y="137" class="d-subd">PoC: controller, selfHeal</text>
+<path d="M840 190 L840 220 L120 220 L120 194" class="d-e-git" marker-end="url(#gp-m-git)"/>
+<rect x="331.8" y="211" width="296.5" height="19" rx="4" class="lblbg"/>
+<text x="480" y="225" class="d-lbl" text-anchor="middle">반복: 실제가 바뀌거나 Git 이 바뀌면 다시 1부터</text>
+<rect x="20" y="248" width="920" height="56" rx="12" class="d-plain-box"/>
+<text x="36" y="281" class="d-subd">우리 PoC: 플랫폼은 넷 다 지킨다. 사용자 함수(05)는 1만 지키고 2~4 는 Knative Revision 과 감사 로그가 대신한다</text>
+</svg>
+</div>
+<figcaption><b>그림 1-4.</b> OpenGitOps 가 정의한 4원칙. 각 카드 아래 줄이 우리 PoC 에서 그 원칙을 맡는 부분이다.</figcaption>
+</figure>
+<dl class="terms"><dt>1. 선언적 (Declarative)</dt><dd>원하는 상태를 "어떻게" 가 아니라 "무엇" 으로 적는다. "파드를 하나 더 띄워라" 가 아니라 "replicas: 2".</dd><dt>2. 버전 관리·불변 (Versioned and Immutable)</dt><dd>원하는 상태를 바꿀 수 없고 이력이 전부 남는 저장소에 둔다. Git 커밋은 해시로 고정되어 고칠 수 없다.</dd><dt>3. 자동으로 끌어옴 (Pulled Automatically)</dt><dd>소프트웨어 에이전트가 저장소에서 원하는 상태를 스스로 가져간다. 사람이 밀어 넣지 않는다.</dd><dt>4. 계속 조정 (Continuously Reconciled)</dt><dd>에이전트가 실제 상태를 계속 관찰하고 원하는 상태를 적용하려고 시도한다.</dd></dl>
+
+</div>
+<div class="tier" data-tier="2">
+<h3>원칙이 하나의 루프가 되는 방식</h3>
+<p>네 원칙은 하나의 루프로 이어진다. 1·2 가 "정답을 어디에 어떻게 두나", 3·4 가 "정답과 현실을 누가 어떻게 맞추나" 다.</p>
+<figure>
+<pre class="mermaid">
+flowchart LR
+  A["사람이 YAML 수정<br/>(1 선언적)"] --> B["git commit, push<br/>(2 버전·불변)"]
+  B --> C["repo-server 가 읽고 렌더링<br/>(3 자동 pull)"]
+  C --> D["controller 가 비교"]
+  E["클러스터 실제 상태<br/>(watch 캐시)"] --> D
+  D -->|"같음"| F["Synced, 아무것도 안 함"]
+  D -->|"다름"| G["apply<br/>(4 계속 조정)"]
+  G --> E
+  F -.->|"다음 주기"| C
+</pre>
+<figcaption><b>그림 1-5.</b> 4원칙이 이어진 루프. 2번(커밋) 이후는 사람 손을 타지 않는다.</figcaption>
+</figure>
+<div class="table-wrap"><table><thead><tr><th>원칙</th><th>Argo CD 에서 맡는 것</th><th>빠지면 생기는 일</th></tr></thead><tbody><tr><td>1 선언적</td><td>Application 의 source 가 가리키는 YAML·Helm 차트·Kustomize</td><td>절차(스크립트)는 "지금 상태" 와 비교할 기준이 없다. 두 번 돌리면 결과가 달라질 수 있다</td></tr><tr><td>2 버전·불변</td><td>targetRevision 을 커밋 SHA 로 바꿔 해석, status.sync.revision 에 기록</td><td>어느 버전이 깔렸는지 모른다. 롤백 대상이 없다</td></tr><tr><td>3 자동 pull</td><td>repo-server(Git 읽기·렌더링), 폴링·webhook</td><td>사람이 잊으면 반영이 안 된다. CI 에 클러스터 열쇠가 필요하다</td></tr><tr><td>4 계속 조정</td><td>application-controller 의 비교 루프, automated sync, selfHeal</td><td>한 번 맞춘 뒤 누가 바꾸면 끝. 드리프트가 쌓인다</td></tr></tbody></table></div>
+
+</div>
+<div class="tier" data-tier="3">
+<h3>원칙의 경계와 PoC 에서 어긋나는 곳</h3>
+<p>원칙을 문자 그대로 적용하면 우리 PoC 에서 걸리는 지점이 몇 군데 있다. 심사에서 "그럼 이건 GitOps 가 아니지 않나" 라는 질문을 받을 수 있는 곳이다.</p>
+<ul><li><strong>브랜치는 움직이는 포인터다</strong>. <code>targetRevision: main</code> 은 매번 다른 커밋을 가리킨다. 원칙 2 의 "불변" 은 커밋 하나하나가 불변이라는 뜻이고, Argo CD 는 비교할 때마다 main 을 SHA 로 풀어서 <code>status.sync.revision</code> 에 적는다. 운영에서 더 엄격하게 하려면 태그나 SHA 를 고정한다.</li><li><strong>차트 버전 범위는 불변을 깬다</strong>. 07 의 <code>node-termination-handler.yaml</code> 은 <code>targetRevision: "0.*"</code> 이다. Git 커밋은 그대로인데 Helm 저장소에 새 0.x 차트가 올라오면 다른 매니페스트가 렌더링된다. 파일 주석도 이걸 임시값이라고 적어 두었다.</li><li><strong>사용자 함수(05)는 원칙 2·3 을 일부러 포기한다</strong>. 함수 코드는 HTTP 로 들어오고 Git 에 커밋되지 않는다. 대신 이미지를 digest(<code>@sha256:...</code>)로 고정해서 "같은 Revision 은 같은 바이트" 라는 불변성은 지킨다. 이력은 Knative Revision 과 감사 로그에 남는다.</li><li><strong>Secret 과 일회성 Job</strong>은 원칙 1 로 표현하기 어렵다. 01 의 Argo CD admin 비밀번호(<code>argocd-initial-admin-secret</code>)는 Helm 설치 때 생기고 Git 에 없다.</li></ul>
+<pre class="pseudo"><code><span class="k">검사</span> 어떤 리소스 R 이 GitOps 원칙을 지키는가:
+  선언적     = R 이 Git 의 YAML 로부터 렌더링되는가            <span class="c">// helm template, directory</span>
+  불변       = 같은 커밋 SHA 로 렌더링하면 항상 같은 결과인가    <span class="c">// 버전 범위, randAlphaNum 이면 아님</span>
+  자동 pull  = R 을 바꾸는 주체가 클러스터 안 에이전트뿐인가    <span class="c">// 사람의 kubectl 은 드리프트</span>
+  계속 조정  = R 이 바뀌면 에이전트가 알아채고 되돌리는가      <span class="c">// selfHeal: true</span></code></pre>
+
+</div>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>01~06 의 플랫폼 Application 은 전부 <code>targetRevision: main</code> + <code>automated: {prune: true, selfHeal: true}</code> 다. 즉 원칙 4 를 가장 강하게 켠 상태다. 예외는 07 의 NTH 차트(버전 범위)와 05 의 사용자 함수(API 직접)다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: 같은 커밋인데 결과가 다르다</p><p><b>증상</b>: Git 은 안 바뀌었는데 어느 날 Application 이 OutOfSync 가 되거나 다른 버전이 깔린다. <b>볼 곳</b>: <code>kubectl -n argocd get application &lt;이름&gt; -o yaml</code> 의 <code>spec.source.targetRevision</code> 이 범위(<code>0.*</code>)나 <code>HEAD</code> 인지, 차트 템플릿에 <code>randAlphaNum</code>, <code>now</code> 같은 함수가 있는지. <b>고치는 법</b>: 버전을 정확한 숫자로 고정하고, 무작위 값은 Secret 으로 미리 만들어 참조한다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이 원칙을 기준으로 삼나</p><p>도구(Argo CD, Flux)는 바뀌어도 원칙은 남는다. 본선에서 처음 보는 도구가 나오면 "이 도구는 원칙 3·4 를 하나?" 로 바로 분류할 수 있다. 예: Terraform 은 원칙 1·2 는 지키지만 3·4 는 사람이 <code>apply</code> 해야 하는 push 다 (07 단계가 Terraform 을 손으로 apply 하는 이유).</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><ul><li><a href="https://opengitops.dev/">OpenGitOps Principles v1.0.0</a></li><li><a href="https://github.com/open-gitops/documents">OpenGitOps 문서 저장소 (PRINCIPLES.md, GLOSSARY.md)</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/">Argo CD 개요</a></li></ul></aside>
+
+<nav class="pager" aria-label="이전 다음 장"></nav>
+</article>
+</main>
+</div>
+</body>
+</html>
