@@ -1,0 +1,26 @@
+# Argo CD Application: poc/02-rollouts/app 폴더를 fn-canary namespace 에 맞춰 둔다 (정답본)
+# 1단계 App of Apps 폴더(poc/01-argocd/gitops/apps)엔 넣지 않고 kubectl apply 로 한 번 붙인다
+# 문서: https://argo-cd.readthedocs.io/en/stable/user-guide/application-specification/
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: podinfo
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1
+    targetRevision: main
+    # Chart.yaml 이 없는 평범한 YAML 폴더 → Argo CD 가 안의 *.yaml 을 그대로 apply
+    path: poc/02-rollouts/app
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: fn-canary
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

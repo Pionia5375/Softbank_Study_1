@@ -1,0 +1,19 @@
+# Service = podinfo 파드들 앞의 고정 주소. Jeong 작성. 빈칸 3개.
+# 이미 Lab 02·04 에서 써 봤다. 다른 점은 딱 하나: 이 Service 는 stable 파드와 canary 파드를 "구분 없이" 다 받는다.
+# 문서: https://kubernetes.io/docs/concepts/services-networking/service/
+apiVersion: v1
+kind: Service
+metadata:
+  name: podinfo
+  namespace: fn-canary
+  labels:
+    app: podinfo
+spec:
+  type: ClusterIP
+  # 이 라벨이 붙은 파드면 버전 상관없이 다 받는다 → 트래픽 비율 = 파드 수 비율
+  selector:
+    app: ___          # TODO(human): rollout.yaml 의 파드 라벨과 같게
+  ports:
+    - name: http
+      port: ___       # TODO(human): 클러스터 안에서 부를 포트. load.sh 가 http://podinfo.fn-canary.svc.cluster.local/ 로 부른다 (포트 생략 = ?)
+      targetPort: ___ # TODO(human): 파드 쪽 포트. 숫자 대신 rollout.yaml 에서 붙인 포트 "이름"을 써 본다

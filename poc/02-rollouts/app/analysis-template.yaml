@@ -1,0 +1,39 @@
+# AnalysisTemplate = "카나리가 괜찮은지 판정하는 법". Jeong 작성. 빈칸 5개.
+# 흐름: 15초마다 Prometheus 에 질의 → 숫자 하나 받음 → successCondition 에 넣어 합격/불합격 (README 1.5)
+# 문서: https://argo-rollouts.readthedocs.io/en/stable/features/analysis/
+#       https://argo-rollouts.readthedocs.io/en/stable/analysis/prometheus/
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate
+  namespace: fn-canary
+spec:
+  # Rollout 이 넘겨 주는 값의 이름. 아래 query 안에서 {{args.이름}} 으로 쓴다
+  args:
+    - name: ___                  # TODO(human): rollout.yaml 의 analysis.args 이름과 같게
+  metrics:
+    - name: success-rate
+      # 카나리 파드가 뜨고 지표가 2~3번 긁힐 때까지 기다린 뒤 첫 측정
+      initialDelay: 30s
+      # 몇 초마다 잴지
+      interval: 15s
+      # TODO(human) 오늘의 결정 D: 합격선과 몇 번 떨어지면 abort 할지 (README 1.5 표)
+      #   successCondition: result[0] 이 질의 결과 숫자 (0~1). 예: result[0] >= 0.99
+      #   failureLimit: 불합격 횟수가 이 값을 "넘으면" Failed. 0 = 첫 불합격에서 바로 abort
+      successCondition: ___
+      failureLimit: ___
+      # 질의 자체가 실패(주소 틀림, 결과 없음)한 횟수가 이걸 넘으면 Error → 이것도 abort. README 4절에서 일부러 깨뜨린다
+      consecutiveErrorLimit: 4
+      provider:
+        prometheus:
+          # Prometheus Service 주소. 모양: http://<서비스>.<namespace>.svc.cluster.local:<포트>
+          # 서비스 이름·포트는 설치 후 `kubectl -n monitoring get svc` 로 확인
+          address: ___           # TODO(human)
+          # 카나리 파드만(rollouts_pod_template_hash), 사용자 요청만(path="root") 골라서 최근 1분 동안의 2xx 비율
+          # 왜 30s 가 아니라 1m 창인지는 README 1.5 끝 "나쁜 버전은 자기 지표도 망가뜨린다"
+          # 위 줄 = 2xx 응답 수/초, 아래 줄 = 전체 응답 수/초. 나누면 성공률
+          query: |
+            sum(rate(http_request_duration_seconds_count{namespace="fn-canary", app="podinfo", path="root", rollouts_pod_template_hash="{{args.canary-hash}}", status=~___}[1m]))
+            /
+            sum(rate(http_request_duration_seconds_count{namespace="fn-canary", app="podinfo", path="root", rollouts_pod_template_hash="{{args.canary-hash}}"}[1m]))
+          # TODO(human) 위 status=~ 뒤 빈칸: "2로 시작하는 세 자리" 를 뜻하는 정규식을 큰따옴표로 감싸서

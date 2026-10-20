@@ -1,0 +1,75 @@
+# Rollout = Deployment 자리에 들어가는 Argo Rollouts 리소스 (정답본)
+# 문서: https://argo-rollouts.readthedocs.io/en/stable/features/specification/
+#       https://argo-rollouts.readthedocs.io/en/stable/features/canary/
+#       https://argo-rollouts.readthedocs.io/en/stable/features/analysis/#background-analysis
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: podinfo
+  namespace: fn-canary
+spec:
+  # 파드 5개. setWeight 20 = 카나리 1개 + stable 4개 가 되도록 5로 고른다
+  replicas: 5
+  # 예전 ReplicaSet 몇 개를 남겨 둘지 (되돌리기용)
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: podinfo
+  # ---- 여기부터 template 은 Deployment 와 똑같다 ----
+  template:
+    metadata:
+      labels:
+        app: podinfo
+      annotations:
+        # Prometheus 차트의 kubernetes-pods 작업이 이 두 줄을 보고 이 파드를 긁는다
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9898"
+    spec:
+      containers:
+        - name: podinfo
+          # [배포 1 = 좋은 배포] 6.14.1 → 6.15.0, 메시지 v1 → v2
+          image: ghcr.io/stefanprodan/podinfo:6.14.1
+          command:
+            - ./podinfo
+            - --port=9898
+            - --level=info
+            # [배포 2 = 나쁜 배포] 아래 줄 주석을 풀고 메시지를 v3-bad 로. 요청 3개 중 1개 꼴로 4xx/5xx 를 돌려준다
+            # - --random-error
+          env:
+            - name: PODINFO_UI_MESSAGE
+              value: "v1"
+          ports:
+            - name: http
+              containerPort: 9898
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+  # ---- 여기부터가 Deployment 에 없는 부분 ----
+  strategy:
+    canary:
+      # 결정 1: 몇 % 씩, 얼마나 기다리며 늘릴까
+      steps:
+        - setWeight: 20          # step 0: 카나리 1개
+        - pause: {duration: 60s} # step 1: 60초 지켜보기
+        - setWeight: 60          # step 2: 카나리 3개
+        - pause: {duration: 60s} # step 3
+        # 마지막 step 이 끝나면 100% 로 올리고 카나리가 새 stable 이 된다
+      # 백그라운드 분석: 카나리가 도는 내내 AnalysisTemplate 을 반복 실행. 한 번이라도 Failed 면 즉시 abort
+      analysis:
+        templates:
+          - templateName: success-rate
+        # step 1(첫 pause)부터 시작. step 0 은 카나리 파드가 막 뜨는 중이라 지표가 없다
+        startingStep: 1
+        args:
+          # 이번 카나리 파드들에 붙은 rollouts-pod-template-hash 값을 템플릿에 넘긴다
+          - name: canary-hash
+            valueFrom:
+              podTemplateHashValue: Latest

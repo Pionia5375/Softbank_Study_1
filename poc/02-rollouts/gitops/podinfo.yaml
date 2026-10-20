@@ -1,0 +1,31 @@
+# Argo CD Application: poc/02-rollouts/app 폴더를 fn-canary namespace 에 맞춰 둔다. Jeong 작성. 빈칸 4개.
+# 1단계에서 hello-fn.yaml 을 쓴 것과 같은 모양이다. 거기서 복사해 와서 고쳐도 된다.
+# 다른 점: 1단계 App of Apps 폴더(poc/01-argocd/gitops/apps)엔 넣지 않고, 이 파일을 kubectl apply 로 한 번만 붙인다
+#          (1단계 폴더는 그 단계 소유. 02 를 지우고 다시 할 때도 이 파일 하나만 지우면 된다)
+# 문서: https://argo-cd.readthedocs.io/en/stable/user-guide/application-specification/
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: podinfo
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1
+    targetRevision: main
+    # Chart.yaml 이 없는 평범한 YAML 폴더면 Argo CD 가 안의 *.yaml 을 그대로 apply 한다
+    path: ___                # TODO(human): rollout.yaml 등이 있는 폴더 (레포 루트 기준)
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ___           # TODO(human)
+  syncPolicy:
+    automated:
+      # 1단계에서 고른 값을 그대로 쓰되, 아래 질문의 답을 README 7절에 한 줄
+      #   질문: Rollouts 가 abort 해서 클러스터는 v1 으로 돌아갔는데 Git 은 아직 v3-bad 다.
+      #         selfHeal 이 true 면 Argo CD 가 v3-bad 를 다시 밀어 넣을까? (README 3절 6단계에서 확인)
+      prune: ___             # TODO(human)
+      selfHeal: ___          # TODO(human)
+    syncOptions:
+      - CreateNamespace=true

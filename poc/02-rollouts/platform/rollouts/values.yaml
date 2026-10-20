@@ -1,0 +1,32 @@
+# Argo Rollouts Helm values. Jeong 작성. 빈칸 4개.
+# 차트 argo/argo-rollouts 2.43.8 = Argo Rollouts v1.10.1
+# 기본값 전체 보기: helm show values argo/argo-rollouts --version 2.43.8 | less
+# 문서: https://argo-rollouts.readthedocs.io/en/stable/installation/
+#       https://github.com/argoproj/argo-helm/tree/main/charts/argo-rollouts
+
+# Rollout·AnalysisTemplate·AnalysisRun 같은 "새 리소스 종류"(CRD)를 차트가 같이 깔지
+installCRDs: ___       # TODO(human): 안 깔면 kubectl apply 할 때 "no matches for kind Rollout" 이 난다
+# helm uninstall 할 때 CRD 를 남길지.
+# CRD 를 지우면 그 종류의 리소스(우리 Rollout 전부)가 같이 지워진다. 실수로 지웠을 때 앱이 통째로 사라지지 않게
+keepCRDs: ___          # TODO(human)
+
+controller:
+  # TODO(human) 오늘의 결정 A: 컨트롤러를 몇 개 띄울까 (기본값 2)
+  #   2 = 리더 선출로 1개만 일하고 1개는 대기. 1개가 죽어도 바로 이어받는다
+  #   1 = 메모리 절약. 죽어 있는 동안 "새 배포의 단계 진행"만 멈추고 떠 있는 앱은 그대로
+  #   README 1.6 을 읽고 고른 뒤, 이유를 7절 결정 표에 한 줄
+  replicas: ___
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  # 컨트롤러 자신의 지표 (/metrics, 8090 포트). 오늘은 안 긁지만 켜 둔다
+  metrics:
+    enabled: true
+
+# 클러스터 안에 웹 대시보드 Pod 를 띄울지.
+# 노트북에서 `kubectl argo rollouts dashboard` 를 치면 같은 화면이 localhost:3100 에 뜬다 (플러그인이 직접 서버 노릇)
+dashboard:
+  enabled: ___         # TODO(human): 위 설명을 보고 필요한지 판단

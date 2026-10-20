@@ -1,0 +1,37 @@
+# Prometheus Helm values (정답본). 차트 prometheus-community/prometheus 29.37.0 = Prometheus v3.15.0
+# 기본값 전체: helm show values prometheus-community/prometheus --version 29.37.0
+# 문서: https://github.com/prometheus-community/helm-charts/tree/main/charts/prometheus
+
+# 이 차트는 기본으로 부품 5개를 같이 깐다. 오늘 필요한 건 Prometheus 서버 하나뿐
+alertmanager:
+  enabled: false            # 알림 발송기. 롤백 판단은 Argo Rollouts 가 하므로 필요 없음
+kube-state-metrics:
+  enabled: false            # K8s 리소스 상태 지표. 오늘 질의에 안 쓴다
+prometheus-node-exporter:
+  enabled: false            # 노드 CPU·메모리 지표. 오늘 질의에 안 쓴다
+prometheus-pushgateway:
+  enabled: false            # 짧게 끝나는 Job 이 지표를 밀어 넣는 곳. 안 쓴다
+
+# 설정(ConfigMap)이 바뀌면 Prometheus 에 "다시 읽어" 신호를 보내는 옆 컨테이너. 오늘은 설정을 안 바꾸니 끈다
+configmapReload:
+  prometheus:
+    enabled: false
+
+server:
+  global:
+    # 결정 3: 얼마나 자주 긁나. 기본 1m 이면 rate() 계산에 쓸 점이 너무 적어서
+    # 나쁜 카나리를 잡는 데 1분 넘게 걸린다. 10s 면 AnalysisTemplate 의 1m 창 안에 점 6개 (몇 개 빠져도 계산된다)
+    scrape_interval: 10s
+    scrape_timeout: 5s
+    evaluation_interval: 30s
+  # 지표 보관 기간. 실습용이라 짧게
+  retention: "1d"
+  # 디스크(PVC) 대신 emptyDir. Pod 가 다시 뜨면 지표가 사라지지만 오늘은 상관없다
+  persistentVolume:
+    enabled: false
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi

@@ -1,0 +1,42 @@
+# Prometheus Helm values. Jeong 작성. 빈칸 6개.
+# 차트 prometheus-community/prometheus 29.37.0 = Prometheus v3.15.0
+# 기본값 전체 보기: helm show values prometheus-community/prometheus --version 29.37.0 | less
+# 문서: https://github.com/prometheus-community/helm-charts/tree/main/charts/prometheus
+#       https://prometheus.io/docs/prometheus/latest/configuration/configuration/
+#
+# Lab 06 의 kube-prometheus-stack 과 다른 차트다. 이건 "Prometheus 서버 하나 + 기본 긁기 설정" 짜리 가벼운 차트.
+# 이 차트는 기본으로 부품 5개를 같이 깐다. 오늘 질의(카나리 성공률)에 필요한 게 뭔지 보고 켜고 끈다.
+
+alertmanager:
+  enabled: ___              # TODO(human): 알림 발송기. 롤백 판단은 누가 하지?
+kube-state-metrics:
+  enabled: ___              # TODO(human): K8s 리소스 상태(Pod 몇 개 Ready 등) 지표
+prometheus-node-exporter:
+  enabled: ___              # TODO(human): 노드 CPU·메모리 지표
+prometheus-pushgateway:
+  enabled: ___              # TODO(human): 짧게 끝나는 Job 이 지표를 밀어 넣는 곳
+
+# 설정(ConfigMap)이 바뀌면 Prometheus 에 "다시 읽어" 신호를 보내는 옆 컨테이너. 오늘은 설정을 안 바꾸니 끈다
+configmapReload:
+  prometheus:
+    enabled: false
+
+server:
+  global:
+    # TODO(human) 오늘의 결정 C: 얼마나 자주 긁을까 (기본 1m)
+    #   README 1.5 "긁는 간격과 알아채는 시간" 을 읽고 고른다. 단위까지 쓴다 (예: 30s)
+    #   AnalysisTemplate 의 rate(...[1m]) 창 안에 점이 2개 이상(넉넉하게는 4개 이상) 있어야 값이 나온다
+    scrape_interval: ___
+    scrape_timeout: 5s
+    evaluation_interval: 30s
+  # 지표 보관 기간. 실습용이라 짧게
+  retention: "1d"
+  # 디스크(PVC)를 붙일지. false = emptyDir (Pod 가 다시 뜨면 지표가 사라짐)
+  persistentVolume:
+    enabled: ___            # TODO(human): 오늘 지표를 하루 넘게 들고 있을 필요가 있나?
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi

@@ -1,0 +1,27 @@
+# Argo Rollouts Helm values (정답본). 차트 argo/argo-rollouts 2.43.8 = Argo Rollouts v1.10.1
+# 기본값 전체: helm show values argo/argo-rollouts --version 2.43.8
+# 문서: https://argo-rollouts.readthedocs.io/en/stable/installation/
+
+# Rollout·AnalysisTemplate 같은 새 리소스 종류(CRD)를 차트가 같이 깐다
+installCRDs: true
+# helm uninstall 해도 CRD 는 남긴다. CRD 를 지우면 그 종류의 리소스(우리 Rollout)가 전부 같이 지워지기 때문
+keepCRDs: true
+
+controller:
+  # 결정: 1개. 2개면 리더 선출로 1개만 일하고 1개는 대기(HA). kind 노트북에선 메모리만 먹는다.
+  # 본선 EC2 에서도 컨트롤러가 죽는 동안엔 "새 배포가 멈출" 뿐 떠 있는 앱은 그대로라 1개로 충분
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 256Mi
+  # 컨트롤러 자신의 지표(/metrics, 8090). 오늘은 안 긁지만 끄지 않는다 (기본 true)
+  metrics:
+    enabled: true
+
+# 클러스터 안에 웹 대시보드를 띄울지. 끈다:
+# 노트북에서 `kubectl argo rollouts dashboard` 를 치면 같은 화면이 localhost:3100 에 뜬다 (플러그인이 직접 서버 노릇)
+dashboard:
+  enabled: false

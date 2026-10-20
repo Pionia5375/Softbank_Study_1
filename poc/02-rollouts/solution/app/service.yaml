@@ -1,0 +1,19 @@
+# Service = podinfo 파드들 앞의 고정 주소 (정답본)
+# 문서: https://kubernetes.io/docs/concepts/services-networking/service/
+apiVersion: v1
+kind: Service
+metadata:
+  name: podinfo
+  namespace: fn-canary
+  labels:
+    app: podinfo
+spec:
+  type: ClusterIP
+  # app=podinfo 인 파드면 stable 이든 canary 든 전부 받는다.
+  # 그래서 트래픽 비율 = 파드 수 비율 (canary 1 : stable 4 = 20%)
+  selector:
+    app: podinfo
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
