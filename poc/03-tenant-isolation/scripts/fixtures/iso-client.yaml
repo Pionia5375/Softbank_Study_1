@@ -1,0 +1,25 @@
+# 격리 실험용 "요청 보내는 쪽" 파드 (Claude 작성, 테스트 도구). kubectl exec 로 안에서 curl 을 친다.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: iso-client
+  labels:
+    app: iso-client
+    poc03: fixture
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 100
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: curl
+      image: curlimages/curl:8.11.1
+      command: ["sleep", "3600"]
+      resources:
+        requests: { cpu: 10m, memory: 16Mi }
+        limits: { cpu: 100m, memory: 32Mi }
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]

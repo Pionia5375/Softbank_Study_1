@@ -1,0 +1,48 @@
+# 테넌트 공장. tenants/ 폴더의 yaml 파일 하나마다 Application 하나를 찍어 낸다. 정답본.
+# 새 테넌트 = tenants/ 에 파일 하나 추가 + git push. 테넌트 삭제 = 파일 삭제 + push (namespace 까지 지워진다!)
+# 붙이는 법: kubectl apply -f poc/03-tenant-isolation/solution/gitops/tenants-appset.yaml
+# 문서: https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators-Git/
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: tenants
+  namespace: argocd
+spec:
+  # {{ .name }} 같은 Go 템플릿 문법을 쓴다. 없는 키를 쓰면 조용히 빈칸이 아니라 에러를 낸다
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - git:
+        repoURL: https://github.com/Pionia5375/Softbank_Study_1
+        revision: main
+        files:
+          # 이 경로에 맞는 파일마다 Application 하나. 파일 안의 키(name 등)가 템플릿 변수가 된다
+          - path: poc/03-tenant-isolation/solution/tenants/*.yaml
+  template:
+    metadata:
+      # 테넌트 이름 그대로 (tenant-a, tenant-b)
+      name: '{{ .name }}'
+      namespace: argocd
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      # 울타리는 플랫폼이 관리 → default Project. 테넌트 자신의 함수는 tenant-a Project (gitops/tenant-a-hello.yaml)
+      project: default
+      source:
+        repoURL: https://github.com/Pionia5375/Softbank_Study_1
+        targetRevision: main
+        path: poc/03-tenant-isolation/solution/charts/tenant
+        helm:
+          # 차트 폴더 기준 상대 경로. 레포 안이면 차트 밖 파일도 values 로 쓸 수 있다
+          valueFiles:
+            - '../../tenants/{{ .path.filename }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{ .name }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+  # 결정: 파일을 지우면 Application 도 지운다 (create-update 로 바꾸면 지우기는 사람이 손으로)
+  syncPolicy:
+    applicationsSync: sync

@@ -1,0 +1,9 @@
+# 테넌트 b. 작은 요금제라고 치고 한도를 절반으로.
+name: tenant-b
+quota:
+  requestsCpu: 500m
+  requestsMemory: 512Mi
+  limitsCpu: "1"
+  limitsMemory: 1Gi
+  pods: "5"
+  services: "3"

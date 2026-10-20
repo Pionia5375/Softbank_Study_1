@@ -1,0 +1,7 @@
+# 테넌트 하나 = 이 차트 한 번 설치. 정답본.
+# 차트가 만드는 것: Namespace, ResourceQuota, LimitRange, NetworkPolicy 4장, ServiceAccount + Role + RoleBinding, Argo CD AppProject
+apiVersion: v2
+name: tenant
+description: FaaS 테넌트 하나의 격리 울타리 (namespace + 자원 한도 + 네트워크 차단 + 권한)
+type: application
+version: 0.1.0

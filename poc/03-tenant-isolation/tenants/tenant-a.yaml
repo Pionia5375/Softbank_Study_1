@@ -1,0 +1,12 @@
+# 테넌트 a. Jeong 작성.
+# 이 파일 한 장이 두 역할을 한다: (1) ApplicationSet 이 Application 을 찍어 내는 입력 (2) tenant 차트의 values.
+# 차트 기본값(charts/tenant/values.yaml)과 다른 것만 적으면 된다. 여기 적은 값이 기본값을 덮어쓴다.
+# 테넌트 이름 = namespace 이름. 소문자·숫자·하이픈만
+name: ___
+quota:
+  requestsCpu: "1"
+  requestsMemory: 1Gi
+  limitsCpu: "2"
+  limitsMemory: 2Gi
+  pods: "10"
+  services: "5"

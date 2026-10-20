@@ -1,0 +1,2 @@
+# 테넌트 b 의 함수. Jeong 작성. 격리 실험에서 "a 가 b 를 부를 수 있나" 의 과녁 중 하나.
+# TODO(human): tenant-a-hello.yaml 을 복사해서 a → b 로 바꾼다 (이름, project, namespace, message 네 군데)

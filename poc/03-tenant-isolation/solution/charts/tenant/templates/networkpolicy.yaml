@@ -1,0 +1,76 @@
+# 네트워크 울타리. 규칙은 "전부 막고(1) 필요한 것만 연다(2~4)".
+# NetworkPolicy 는 허용 목록을 더하는 방식이라, 여러 장이 있으면 합집합이 허용된다.
+
+# 1) 이 namespace 의 모든 파드: 들어오는 것·나가는 것 전부 차단
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: {{ .Values.name }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# 2) 같은 namespace 파드끼리는 주고받기 허용
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: {{ .Values.name }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector: {}
+  egress:
+    - to:
+        - podSelector: {}
+---
+# 3) DNS 조회(kube-system 의 CoreDNS, 53번 포트)는 허용. 이게 없으면 서비스 이름으로 못 부른다
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: {{ .Values.name }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+{{- if .Values.network.allowFromNamespaces }}
+---
+# 4) 지정한 namespace(예: 공용 게이트웨이)에서 들어오는 것만 허용
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-namespaces
+  namespace: {{ .Values.name }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+      {{- range .Values.network.allowFromNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+      {{- end }}
+{{- end }}

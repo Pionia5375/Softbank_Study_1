@@ -1,0 +1,49 @@
+# tenant 차트 기본값. 정답본.
+# 테넌트마다 다른 값은 tenants/<이름>.yaml 에 쓰고, 여기 값은 "따로 안 적으면 이거" 다.
+
+# 테넌트 이름 = namespace 이름 = AppProject 이름. 비워 두면 템플릿이 에러를 낸다 (required)
+name: ""
+
+# ---- ResourceQuota: namespace 전체 합계 한도 ----
+quota:
+  requestsCpu: "1"        # 이 namespace 파드들의 requests.cpu 합계 최대 1코어
+  requestsMemory: 1Gi
+  limitsCpu: "2"          # limits.cpu 합계 최대 2코어 → "CPU 를 다 못 먹는다" 의 실제 숫자
+  limitsMemory: 2Gi
+  pods: "10"              # 파드 개수 최대
+  services: "5"
+
+# ---- LimitRange: 컨테이너 1개 기준 기본값·최대값 ----
+limitRange:
+  # resources 를 안 적은 컨테이너에 자동으로 붙는 limits
+  default:
+    cpu: 200m
+    memory: 128Mi
+  # resources 를 안 적은 컨테이너에 자동으로 붙는 requests
+  defaultRequest:
+    cpu: 50m
+    memory: 64Mi
+  # 컨테이너 1개가 요청할 수 있는 최대값. 넘으면 파드 생성이 거절된다
+  max:
+    cpu: "1"
+    memory: 512Mi
+
+# ---- Pod Security Admission 레벨 ----
+podSecurity:
+  enforce: baseline       # 어기면 거절 (privileged, hostPath, hostNetwork 등 탈출 통로를 막는다)
+  warn: restricted        # 어기면 경고만 (root 실행 등). 함수 이미지가 정리되면 enforce 로 올린다
+
+# ---- 네트워크 ----
+network:
+  # 이 테넌트로 들어오는 트래픽을 허용할 namespace 이름들 (예: 공용 게이트웨이). 기본은 없음
+  allowFromNamespaces: []
+
+# ---- 권한 ----
+rbac:
+  # 이 테넌트 개발자로 묶일 그룹 이름. 비우면 "<name>-developers"
+  group: ""
+
+# ---- Argo CD ----
+argocd:
+  namespace: argocd
+  repoURL: https://github.com/Pionia5375/Softbank_Study_1

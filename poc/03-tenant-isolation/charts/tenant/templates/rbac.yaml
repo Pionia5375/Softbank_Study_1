@@ -1,0 +1,60 @@
+# 권한 울타리. Jeong 작성.
+# 세 장: 누가(ServiceAccount·Group) / 무엇을(Role) / 연결(RoleBinding).
+# Role 은 자기 namespace 안에서만 효력이 있다 → tenant-a 의 Role 은 tenant-b 에 아무 힘이 없다. 이게 "B 로그를 못 본다" 의 근거.
+# 문서: https://kubernetes.io/docs/reference/access-authn-authz/rbac/
+
+# 1) 봇 계정: CI·배포 에이전트(05 단계 MCP 도구)가 이 계정으로 kubectl 을 친다
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deployer
+  namespace: {{ .Values.name }}
+---
+# 2) 할 수 있는 일 목록
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ___
+metadata:
+  name: tenant-developer
+  namespace: {{ .Values.name }}
+rules:
+  # 함수 배포·조회. apiGroups "" = 핵심 그룹(pods, services 등). 확인: kubectl api-resources
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # 로그는 pods 가 아니라 하위 리소스 pods/log 로 따로 준다. 읽기만
+  - apiGroups: [""]
+    resources: ["___", "events", "endpoints"]
+    verbs: ["get", "list", "watch"]
+  # Deployment 는 apps 그룹
+  - apiGroups: ["___"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # 울타리는 볼 수만 있고 못 바꾼다 (바꿀 수 있으면 격리가 무의미)
+  - apiGroups: [""]
+    resources: ["resourcequotas", "limitranges"]
+    verbs: ___
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  # TODO(human) 결정: secrets 를 줄까? 정답본은 일부러 뺐다. 주면 같은 namespace 의 모든 비밀번호를 읽을 수 있다
+---
+# 3) 누구에게 줄지
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: tenant-developer
+  namespace: {{ .Values.name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: tenant-developer
+subjects:
+  # 사람: 그룹 단위로 준다. values 의 rbac.group 이 비어 있으면 "<name>-developers"
+  #   default = 앞 값이 비었을 때 쓸 값, printf = 문자열 끼워 넣기
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: {{ .Values.rbac.group | default (printf "%s-developers" .Values.name) }}
+  # 봇: 위 1)의 ServiceAccount
+  - kind: ___
+    name: deployer
+    namespace: {{ .Values.name }}

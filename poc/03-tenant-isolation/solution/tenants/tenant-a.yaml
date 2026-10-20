@@ -1,0 +1,10 @@
+# 테넌트 a. 이 파일 한 장이 (1) ApplicationSet 이 Application 을 찍어 내는 입력이고 (2) tenant 차트의 values 다.
+# 차트 기본값(charts/tenant/values.yaml)과 다른 것만 적는다.
+name: tenant-a
+quota:
+  requestsCpu: "1"
+  requestsMemory: 1Gi
+  limitsCpu: "2"
+  limitsMemory: 2Gi
+  pods: "10"
+  services: "5"

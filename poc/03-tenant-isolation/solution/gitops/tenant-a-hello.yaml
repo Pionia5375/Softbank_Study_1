@@ -1,0 +1,27 @@
+# 테넌트 a 가 자기 함수(01 단계의 hello-fn 차트)를 자기 Project 로 배포한다. 정답본.
+# project: tenant-a 이므로 Argo CD 가 "tenant-a namespace 에만, 울타리 오브젝트는 금지" 규칙을 강제한다.
+# 붙이는 법: kubectl apply -f poc/03-tenant-isolation/solution/gitops/tenant-a-hello.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tenant-a-hello
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: tenant-a
+  source:
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1
+    targetRevision: main
+    path: poc/01-argocd/functions/hello-fn
+    helm:
+      valuesObject:
+        message: "hello from tenant-a"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tenant-a
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    # CreateNamespace 는 쓰지 않는다. namespace 는 플랫폼(tenants ApplicationSet)이 만든다

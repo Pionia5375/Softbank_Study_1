@@ -1,0 +1,23 @@
+# CPU 를 무한히 먹으려는 파드 (Claude 작성, 테스트 도구).
+# resources 를 일부러 안 적었다 → tenant namespace 에선 LimitRange 기본 limits(cpu 200m)가 자동으로 붙는다.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: iso-hog
+  labels:
+    app: iso-hog
+    poc03: fixture
+spec:
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hog
+      image: busybox:1.36
+      command: ["sh", "-c", "while :; do :; done"]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]

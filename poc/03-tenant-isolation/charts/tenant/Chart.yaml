@@ -1,0 +1,11 @@
+# 테넌트 하나 = 이 차트 한 번 설치. Jeong 작성.
+# Chart.yaml = 차트의 이름표. helm 이 이 파일이 있는 폴더를 "차트"로 알아본다.
+# 문서: https://helm.sh/docs/topics/charts/#the-chartyaml-file
+# 빈칸은 밑줄 세 개. 다 채우면 README 의 grep 검사 출력이 없어야 한다.
+apiVersion: v2
+# 차트 이름. 폴더 이름과 같게
+name: ___
+description: FaaS 테넌트 하나의 격리 울타리 (namespace + 자원 한도 + 네트워크 차단 + 권한)
+type: application
+# 차트 자체 버전 (SemVer: 0.1.0 처럼 점 두 개)
+version: ___

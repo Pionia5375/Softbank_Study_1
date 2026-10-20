@@ -1,0 +1,89 @@
+# 네트워크 울타리. Jeong 작성.
+# 규칙: 파드가 NetworkPolicy 에 "한 장이라도 걸리면" 그 방향(들어오기/나가기)은 허용 목록에 있는 것만 통과한다.
+#   여러 장이 걸리면 허용 목록의 합집합. 그래서 "전부 막는 한 장(1)" + "여는 몇 장(2~4)" 으로 쓴다.
+# 실제로 막는 건 쿠버네티스가 아니라 CNI(Cilium)다. kindnet 클러스터에선 이 파일이 있어도 아무것도 안 막힌다.
+# 문서: https://kubernetes.io/docs/concepts/services-networking/network-policies/
+#       레시피 모음: https://github.com/ahmetb/kubernetes-network-policy-recipes
+
+# 1) 이 namespace 의 모든 파드: 들어오는 것·나가는 것 전부 차단
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: {{ .Values.name }}
+spec:
+  # 빈 중괄호 한 겹 = "이 namespace 의 모든 파드"
+  podSelector: ___
+  # 막을 방향 두 개 (Ingress = 들어오기, Egress = 나가기). ingress/egress 허용 목록은 안 적는다 = 전부 차단
+  policyTypes:
+    - ___
+    - ___
+---
+# 2) 같은 namespace 파드끼리는 주고받기 허용
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-same-namespace
+  namespace: {{ .Values.name }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        # namespaceSelector 없이 podSelector 만 쓰면 "같은 namespace 의 파드" 라는 뜻
+        - podSelector: {}
+  egress:
+    - ___:
+        - podSelector: {}
+---
+# 3) DNS 조회(kube-system 의 CoreDNS)는 허용. 이게 없으면 iso-echo.tenant-a 같은 이름을 IP 로 못 바꾼다
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: {{ .Values.name }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        # 같은 "- " 항목 안에 namespaceSelector 와 podSelector 를 같이 쓰면 AND (kube-system 안의 kube-dns 파드만)
+        # 따로 "- " 를 붙이면 OR 가 되어 훨씬 넓게 열린다. 많이 하는 실수
+        - namespaceSelector:
+            matchLabels:
+              # 모든 namespace 에 쿠버네티스가 자동으로 붙이는 이름표
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              # CoreDNS 파드의 라벨. 확인: kubectl -n kube-system get pods --show-labels | grep coredns
+              k8s-app: ___
+      ports:
+        # DNS 는 보통 UDP, 응답이 크면 TCP. 둘 다 53번
+        - protocol: UDP
+          port: ___
+        - protocol: TCP
+          port: 53
+{{- if .Values.network.allowFromNamespaces }}
+---
+# 4) 지정한 namespace(예: 공용 게이트웨이)에서 들어오는 것만 허용. 목록이 비어 있으면 이 장은 아예 안 만든다 (위의 if)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-from-namespaces
+  namespace: {{ .Values.name }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+      # range = 목록을 한 줄씩 돌며 아래 블록을 반복. 블록 안의 점(.)은 "지금 도는 항목" (namespace 이름 하나)
+      {{- range .Values.network.allowFromNamespaces }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ . }}
+      {{- end }}
+{{- end }}

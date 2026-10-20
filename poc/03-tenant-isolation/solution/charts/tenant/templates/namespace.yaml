@@ -1,0 +1,11 @@
+# 테넌트의 방. 이름표(label)로 "누구 방인지"와 "어떤 파드까지 받아 줄지(Pod Security)"를 단다.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ required "values 에 name 이 필요하다" .Values.name }}
+  labels:
+    tenant: {{ .Values.name }}
+    pod-security.kubernetes.io/enforce: {{ .Values.podSecurity.enforce }}
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: {{ .Values.podSecurity.warn }}
+    pod-security.kubernetes.io/warn-version: latest

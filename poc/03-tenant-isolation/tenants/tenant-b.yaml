@@ -1,0 +1,10 @@
+# 테넌트 b. Jeong 작성. 작은 요금제라고 치고 a 의 절반.
+# TODO(human): quota 6줄을 a 의 절반으로 채운다 (requestsCpu 는 500m 처럼 밀리코어로 써도 된다)
+name: tenant-b
+quota:
+  requestsCpu: ___
+  requestsMemory: ___
+  limitsCpu: ___
+  limitsMemory: ___
+  pods: ___
+  services: "3"

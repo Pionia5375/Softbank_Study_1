@@ -1,0 +1,36 @@
+# Argo CD 쪽 울타리. Jeong 작성.
+# 테넌트가 자기 함수를 Argo CD 로 배포할 때 쓰는 Project. 이 Project 의 Application 은
+#   (1) 자기 namespace 에만, (2) 울타리 오브젝트(Quota·NetworkPolicy·RBAC)는 못 만들고, (3) 클러스터 전체 오브젝트도 못 만든다.
+# 울타리 자체는 플랫폼(이 차트, default Project)만 관리한다.
+# 문서: https://argo-cd.readthedocs.io/en/stable/user-guide/projects/
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: {{ .Values.name }}
+  # AppProject 는 Argo CD 가 사는 namespace 에 있어야 Argo CD 가 알아본다 (테넌트 namespace 가 아님!)
+  namespace: ___
+spec:
+  description: {{ printf "tenant %s workloads" .Values.name | quote }}
+  # 어느 Git 레포에서 가져와도 되나
+  sourceRepos:
+    - {{ .Values.argocd.repoURL }}
+  # 어디에 배포해도 되나: 같은 클러스터의 자기 namespace 하나만
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: ___
+  # 클러스터 전체 오브젝트(Namespace, ClusterRole 등) 허용 목록. 빈 목록 = 하나도 못 만든다
+  clusterResourceWhitelist: ___
+  # namespace 안 오브젝트 중 금지 목록. group 은 apiVersion 의 / 앞부분 (v1 처럼 / 가 없으면 "")
+  namespaceResourceBlacklist:
+    - group: ""
+      kind: ResourceQuota
+    - group: ""
+      kind: LimitRange
+    - group: ___
+      kind: NetworkPolicy
+    - group: cilium.io
+      kind: CiliumNetworkPolicy
+    - group: rbac.authorization.k8s.io
+      kind: Role
+    - group: rbac.authorization.k8s.io
+      kind: RoleBinding

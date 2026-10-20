@@ -1,0 +1,24 @@
+# 테넌트 b 의 함수. 격리 실험에서 "a 가 b 를 부를 수 있나" 의 과녁. 정답본.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: tenant-b-hello
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: tenant-b
+  source:
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1
+    targetRevision: main
+    path: poc/01-argocd/functions/hello-fn
+    helm:
+      valuesObject:
+        message: "hello from tenant-b"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tenant-b
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

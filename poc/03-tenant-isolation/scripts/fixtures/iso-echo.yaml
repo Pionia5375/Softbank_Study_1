@@ -1,0 +1,53 @@
+# 격리 실험용 과녁 (Claude 작성, 테스트 도구). test-isolation.sh 가 tenant-a, tenant-b 에 하나씩 깔고 끝나면 지운다.
+# 테넌트 함수(hello-fn)에 의존하지 않으려고 따로 둔다. Pod Security restricted 를 지키도록 보안 설정을 다 넣었다.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iso-echo
+  labels:
+    app: iso-echo
+    poc03: fixture
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iso-echo
+  template:
+    metadata:
+      labels:
+        app: iso-echo
+        poc03: fixture
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: echo
+          image: hashicorp/http-echo:1.0
+          args: ["-text=iso-echo", "-listen=:5678"]
+          ports:
+            - name: http
+              containerPort: 5678
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 32Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iso-echo
+  labels:
+    poc03: fixture
+spec:
+  selector:
+    app: iso-echo
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

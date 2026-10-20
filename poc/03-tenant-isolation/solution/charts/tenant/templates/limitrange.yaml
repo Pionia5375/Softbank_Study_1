@@ -1,0 +1,19 @@
+# 컨테이너 1개 단위 기본값·최대값. Quota 가 limits.cpu 를 세는 순간 "limits 없는 파드"는 거절되므로,
+# 기본 limits 를 자동으로 붙여 주는 LimitRange 가 짝으로 꼭 필요하다.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: tenant-limits
+  namespace: {{ .Values.name }}
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: {{ .Values.limitRange.default.cpu | quote }}
+        memory: {{ .Values.limitRange.default.memory | quote }}
+      defaultRequest:
+        cpu: {{ .Values.limitRange.defaultRequest.cpu | quote }}
+        memory: {{ .Values.limitRange.defaultRequest.memory | quote }}
+      max:
+        cpu: {{ .Values.limitRange.max.cpu | quote }}
+        memory: {{ .Values.limitRange.max.memory | quote }}

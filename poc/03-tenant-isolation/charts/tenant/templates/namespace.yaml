@@ -1,0 +1,17 @@
+# 테넌트의 방. Jeong 작성.
+# 이름표(label)로 "누구 방인지" 와 "어떤 파드까지 받아 줄지(Pod Security)" 를 단다.
+# 문서: https://kubernetes.io/docs/concepts/security/pod-security-admission/  (namespace 라벨로 켠다)
+# 주의: 템플릿 파일에선 주석 안의 중괄호 두 겹도 Helm 이 해석한다. 주석에 쓰지 말 것 (01 단계 함정 1과 같음)
+apiVersion: v1
+kind: ___
+metadata:
+  # required = 값이 비어 있으면 helm template 이 이 문장을 에러로 내고 멈춘다
+  name: {{ required "values 에 name 이 필요하다" .Values.name }}
+  labels:
+    # 테넌트 표시. 나중에 "테넌트 namespace 전부" 를 고를 때 쓴다 (kubectl get ns -l tenant)
+    tenant: ___
+    # 빈칸: 키는 pod-security.kubernetes.io/<모드> 모양. 모드는 enforce(거절) / warn(경고)
+    ___: {{ .Values.podSecurity.enforce }}
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: {{ .Values.podSecurity.warn }}
+    pod-security.kubernetes.io/warn-version: latest

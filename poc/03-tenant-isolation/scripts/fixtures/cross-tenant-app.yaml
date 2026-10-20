@@ -1,0 +1,18 @@
+# tenant-a Project 로 tenant-b namespace 에 배포를 시도하는 Application (Claude 작성, 테스트 도구).
+# Argo CD 가 "이 Project 에선 그 목적지가 허용되지 않는다" 로 거절해야 정상.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: iso-cross-tenant
+  namespace: argocd
+  labels:
+    poc03: fixture
+spec:
+  project: tenant-a
+  source:
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1
+    targetRevision: main
+    path: poc/01-argocd/functions/hello-fn
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: tenant-b
