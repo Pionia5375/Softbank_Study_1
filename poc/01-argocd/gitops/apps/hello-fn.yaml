@@ -36,7 +36,7 @@ spec:
       prune: true
       # TODO(human) 결정 2: 누가 kubectl 로 클러스터를 직접 바꾸면 Git 상태로 되돌릴까?
       #   true = 바로 되돌림 (장애 중 손으로 고친 것도 되돌려짐!) / false = OutOfSync 로 표시만
-      selfHeal: true
+      selfHeal: false
     syncOptions:
       # destination.namespace 가 없으면 만들어 준다
       - CreateNamespace=true
