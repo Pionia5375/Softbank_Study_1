@@ -1,0 +1,35 @@
+# 두 번째 함수 bye-fn. 차트는 hello-fn 과 같은 걸 재사용하고, message 만 덮어쓴다.
+# App of Apps 가 이 폴더를 보고 있어서, 파일 추가 + push 만으로 자동 생성된다 (kubectl apply 안 함).
+# 문서: https://argo-cd.readthedocs.io/en/stable/user-guide/helm/
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bye-fn
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1
+    targetRevision: main
+    # hello-fn 과 같은 차트를 공유한다. 템플릿은 .Release.Name 기반이라
+    # Application 이름(bye-fn)만 다르면 Deployment/Service 이름이 안 겹친다
+    path: poc/01-argocd/functions/hello-fn
+    helm:
+      # valuesObject = 차트의 values.yaml 위에 덮어쓸 값. inline YAML 로 쓸 수 있다
+      # 여기선 message 만 바꾸고 나머지(replicaCount, image, port 등)는 차트 기본값 그대로
+      valuesObject:
+        message: "bye v1"
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: fn-demo
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
