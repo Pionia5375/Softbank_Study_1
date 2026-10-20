@@ -51,7 +51,7 @@ Git (GitHub main) ← Argo CD 가 2~3분마다 읽음 (01 values: reconciliation
 deploy-fn.sh ─POST {name, code}→ 컨트롤 플레인 (faas-system)
   1. 테넌트 확인: namespace tenant-a 에 라벨 tenant=tenant-a 가 있나            ✗ → 404 (kube-system 같은 곳에 못 넣게)
   2. buildId = 코드 해시. 같은 코드면 빌드 재사용 (멱등)
-  3. ConfigMap src-<id> + kaniko Job build-<id> 생성 (faas-build ns)          ✗ RBAC → 403, AUDIT 줄에 error
+  3. ConfigMap src-<id> + kaniko Job build-<id> 생성 (faas-build ns)          ✗ RBAC 거절 → API 응답 502 (AUDIT 줄 없음, 로그의 예외로 본다)
   4. Job 파드 → build 풀 (nodeSelector + toleration)                         ✗ toleration 없음 → Pending
      initContainer 가 ConfigMap 을 cp -L 로 복사 → kaniko 가 이미지 빌드
      → push kind-registry:5000/tenant-a/hello:<id>, digest 를 /dev/termination-log 에
@@ -130,7 +130,7 @@ git push (나쁜 이미지) → Argo CD sync → Rollout 이 새 ReplicaSet 을 
 - 읽기: `deploy/FunctionDeployer.java` (startDeploy → finishDeploy) → `templates/build-job.yaml` → `templates/ksvc.yaml` → `k8s/platform/control-plane/rbac.yaml` → `mcp-server/ops_mcp/tools.py` → `guardrails.py`
 - 결정: 함수는 API 직접(vs 함수도 GitOps), 클러스터 안 kaniko + digest 고정(vs 태그), 별도 MCP 서버 + 좁은 SA + 5층 가드레일(vs Spring 내장/관리자 kubeconfig)
 - 깨뜨리기
-  - B9. `k8s/platform/control-plane/tenant-a.yaml` 의 RoleBinding 삭제 push → 배포가 BUILDING → ? 에서 멈추나. AUDIT 줄로 어느 단계인지 (README 5단계 확인 질문)
+  - B9. `k8s/platform/control-plane/tenant-a.yaml` 의 RoleBinding 삭제 push → 빌드 Job 은 faas-build 권한이라 끝까지 돈다. 그다음 6번(ksvc apply)이 403 으로 실패하고, 상태 조회도 ksvc 를 먼저 읽어서 매번 502. 컨트롤 플레인 로그의 `deploy.apply` 줄로 확인 (README 5단계 확인 질문)
   - B10. 빌드 중에 `kubectl -n faas-system delete pod -l app=control-plane` → Job 은 끝났는데 ksvc 가 안 생김 (알려진 한계 1). 고치는 설계 2가지를 말로
   - B11. ops-agent Role 에서 `patch` 제거 → MCP scale 이 파이썬 가드레일은 통과하고 RBAC 403 에서 막힘 (README 9단계)
   - 측정: `scripts/measure-deploy.sh 3` (새 빌드 3회 + 재사용 1회)

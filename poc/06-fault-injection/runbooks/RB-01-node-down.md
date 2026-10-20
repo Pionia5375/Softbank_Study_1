@@ -51,7 +51,7 @@ kubectl -n <ns> rollout status deploy/<함수>        # successfully rolled out
 프로브를 켜 두었다면 에러가 0 으로 돌아왔는지 본다.
 
 ## 재발 방지 (이미 넣은 것 / 다음 것)
-- 넣은 것: tolerationSeconds 단축, topologySpreadConstraints(ScheduleAnyway), PDB minAvailable 1 → `defenses/`
+- 넣은 것: tolerationSeconds 단축, topologySpreadConstraints(DoNotSchedule + nodeTaintsPolicy Honor + matchLabelKeys, README "핵심 결정 3개" 표의 3번), PDB minAvailable 1 → `defenses/`
 - 다음 것: (1) exec 노드 2대 이상 + AZ 2개 (EC2, 7단계). (2) 앞단 재시도: 노드가 NotReady 로 판정되기 전 약 50초의 실패는 쿠버네티스 설정으로는 못 줄인다. 게이트웨이(Kourier/Envoy)의 재시도·아웃라이어 감지가 그 구간을 메운다 【추정】 측정 전. (3) 스팟 회수 처리기(AWS Node Termination Handler 또는 Karpenter)로 hard 를 spot 으로 바꾸기.
 
 ## 기록할 것

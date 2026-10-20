@@ -27,7 +27,7 @@ spec:
   #   코드 문법 오류 같은 실패는 다시 해도 또 실패한다 → 0 이면 빨리 실패를 알려 준다
   #   레지스트리 일시 장애 같은 실패는 다시 하면 성공한다 → 1~2 면 덜 실패한다
   backoffLimit: 0
-  # 빌드가 10분을 넘으면 강제로 끝낸다 (무한 루프 코드 등). 컨트롤 플레인 build-timeout(5m)보다 길게
+  # 빌드가 10분을 넘으면 강제로 끝낸다 (무한 루프 코드 등). 컨트롤 플레인 build-timeout(11m)은 이것보다 길어야 한다 (Job 이 먼저 끝나야 결과를 읽는다)
   activeDeadlineSeconds: 600
   # 끝난 Job 은 1시간 뒤 자동 삭제. 소스 ConfigMap 도 이 Job 이 주인(ownerReference)이라 같이 지워진다
   ttlSecondsAfterFinished: 3600

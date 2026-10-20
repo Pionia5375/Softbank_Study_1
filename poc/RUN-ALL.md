@@ -152,7 +152,7 @@ tenant-a ... tenant-b-hello        ← 전부 Synced/Healthy (bye-fn 도)
 1. **platform 3/6 Cilium 에서 오래 멈춤**: `cilium status` 로 어떤 파드가 안 떴는지. Docker 메모리 부족이 흔하다.
 2. **hello-gvisor 만 안 뜸 (faas-functions Degraded)**: gVisor 가 Docker Desktop 에서 안 도는 경우. 04 README "9절 보충" 순서대로. 30분 넘으면 범위를 줄인다: gVisor 측정은 7단계(EC2)로 넘기고 runc 로만 간다. 나머지 단계는 계속 진행해도 된다.
 3. **빌드 Job 실패 (`429 Too Many Requests`)**: Docker Hub 다운로드 한도. 04 README "9절 보충"의 미러 방법(golang 이미지를 kind-registry 에 미리 넣기). 05 단계는 `python:3.12-slim` 도 같은 방법.
-4. **tenant-a 가 Healthy 가 안 됨**: `kubectl -n argocd describe application tenant-a | tail -20`. ApplicationSet 이 Git 을 읽는 데 3분 걸릴 수 있다(폴링). 급하면 `kubectl -n argocd annotate applicationset tenants argocd.argoproj.io/refresh=true`.
+4. **tenant-a 가 Healthy 가 안 됨**: `kubectl -n argocd describe application tenant-a | tail -20`. ApplicationSet 이 Git 을 읽는 데 3분 걸릴 수 있다(폴링). 급하면 `kubectl -n argocd annotate applicationset tenants argocd.argoproj.io/application-set-refresh=true` (ApplicationSet 은 Application 과 주석 이름이 다르다).
 5. **control-plane 의 deploy-fn 이 BUILDING 에서 안 넘어감**: `kubectl -n faas-build get pods` → Pending 이면 build 노드 taint/라벨, ImagePullBackOff 면 kaniko 이미지. READY 인데 HTTP 000/타임아웃이면 이번에 고친 NetworkPolicy 가 반영됐는지: `kubectl -n tenant-a get networkpolicy allow-from-namespaces`.
 6. **포트 8081 이 이미 사용 중**: `lsof -i :8081` 로 무엇이 쓰는지 보고 끈다.
 

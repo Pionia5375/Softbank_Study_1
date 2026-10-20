@@ -8,7 +8,7 @@ metadata:
   name: hello
   namespace: tenant-a
 spec:
-  # replicas 2 중 1개는 항상 남긴다. 2(=replicas)로 두면 drain 이 영원히 못 끝난다 (README 5절 깨뜨리기)
+  # replicas 2 중 1개는 항상 남긴다. 2(=replicas)로 두면 drain 이 영원히 못 끝난다 (README 4.4 깨뜨리기)
   minAvailable: 1
   selector:
     matchLabels: { app: hello }

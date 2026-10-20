@@ -1,4 +1,4 @@
-# 시나리오 1 방어: 함수 파드가 노드 다운을 견디게 하는 설정 — 정답본
+# 시나리오 1 방어: 함수 파드가 노드 다운을 견디게 하는 설정
 # 이 파일은 Deployment 에 "덧붙일 조각"(strategic merge patch)이다. 대역 대상엔 kubectl patch 로 붙이고,
 # 진짜 함수(4단계 차트)엔 같은 필드를 차트의 Deployment(또는 Knative Service) template.spec 에 넣는다.
 #   https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/#taint-based-evictions

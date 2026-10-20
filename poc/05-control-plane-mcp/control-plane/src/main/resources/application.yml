@@ -17,7 +17,8 @@ faas:
   registry-pull: localhost:5001
   # 3단계 tenant 차트가 namespace 에 붙인 라벨 키 (값 = namespace 이름, 예: tenant=tenant-a)
   tenant-label: tenant
-  build-timeout: 5m
+  # 빌드 Job 의 activeDeadlineSeconds(600초)보다 길게. 짧으면 5~10분 걸린 빌드가 성공해도 반영할 스레드가 없다
+  build-timeout: 11m
   max-code-bytes: 262144
 management:
   endpoints:

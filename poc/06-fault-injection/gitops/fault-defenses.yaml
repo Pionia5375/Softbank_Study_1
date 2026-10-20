@@ -1,4 +1,4 @@
-# 6단계 방어 설정(PDB)을 Git 으로 배포하는 Argo CD Application — 정답본
+# 6단계 방어 설정(PDB)을 Git 으로 배포하는 Argo CD Application
 # 진짜 클러스터에서만 쓴다 (대역 클러스터엔 Argo CD 가 없다). 1단계 App of Apps 에 붙이려면 이 파일을
 # poc/01-argocd/gitops/apps/ 에 복사해 push 하거나, 그냥 kubectl apply -f 로 붙인다.
 #   https://argo-cd.readthedocs.io/en/stable/user-guide/directory/

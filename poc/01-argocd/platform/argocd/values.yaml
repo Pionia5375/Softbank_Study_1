@@ -35,5 +35,5 @@ configs:
     # 대안: GitHub webhook(푸시하면 GitHub 가 Argo CD 를 바로 깨움). 그런데 맥 안 kind 는
     #   GitHub 에서 접근할 주소가 없어서 터널(cloudflared 등)이 필요하다 → 오늘은 polling 으로 재 보고 비교.
     # 값을 고르고, 고른 이유를 이 단계 README 8절 결정 표에 한 줄 적는다.
-    timeout.reconciliation: 120           # TODO(human): 예) 180s / 60s / 30s 중 하나
-    timeout.reconciliation.jitter: 60    # TODO(human): 예) 60s / 10s / 0s
+    timeout.reconciliation: 120s          # 단위(s)를 꼭 붙인다. 숫자만 쓰면 Argo CD 가 못 읽고 기본값(180s)으로 돈다 【추정】
+    timeout.reconciliation.jitter: 60s   # 실제 간격 = 120s + 0~60s 무작위

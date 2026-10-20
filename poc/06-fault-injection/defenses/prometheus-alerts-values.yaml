@@ -1,4 +1,4 @@
-# 장애 감지 알림 — 정답본 (Jeong 이 defenses/prometheus-alerts-values.yaml 을 직접 쓴다. 막혔을 때만 볼 것)
+# 장애 감지 알림 (Prometheus 규칙). run-all 은 이 파일을 그대로 쓴다
 # 2단계 Prometheus(Helm release prometheus, 차트 prometheus-community/prometheus 29.37.0)에 "덧붙이는" values.
 #   helm upgrade prometheus prometheus-community/prometheus --version 29.37.0 -n monitoring \
 #     -f poc/02-rollouts/platform/prometheus/values.yaml -f poc/06-fault-injection/defenses/prometheus-alerts-values.yaml

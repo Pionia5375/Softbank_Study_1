@@ -1,6 +1,6 @@
-# 5단계 플랫폼(컨트롤 플레인 + 에이전트 권한)을 Argo CD 가 관리하게 하는 Application. Jeong 작성, 빈칸 5개.
-# 다 채운 뒤 poc/01-argocd/gitops/apps/ 에 복사해서 push 하면 root(App of Apps)가 알아서 만든다.
-# 주의: k8s/platform/ 의 빈칸(___)을 다 채우고 push 한 뒤에 복사한다. 빈칸이 남은 YAML 은 sync 에서 에러가 난다
+# 5단계 플랫폼(컨트롤 플레인 + 에이전트 권한)을 Argo CD 가 관리하게 하는 Application.
+# run-all.sh 는 이 파일을 kubectl apply 로 바로 넣는다 (RUN-ALL.md 결정 3). poc/01-argocd/gitops/apps/ 에 복사하면 root(App of Apps)가 대신 만든다.
+# 주의: Argo CD 는 Git 을 읽으니, k8s/platform/ 을 바꿨다면 push 한 뒤에 sync 한다
 # 문서: https://argo-cd.readthedocs.io/en/stable/user-guide/directory/
 apiVersion: argoproj.io/v1alpha1
 kind: Application

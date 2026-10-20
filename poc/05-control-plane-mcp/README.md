@@ -287,11 +287,12 @@ kubectl auth can-i patch services.serving.knative.dev -n kube-system --as=system
 
 맥 터미널 1 의 `spring-boot:run` 을 끄고, 클러스터 안 컨트롤 플레인으로 바꿔 다시 배포:
 ```bash
-kubectl -n faas-system port-forward svc/control-plane 8080:80
-GW=http://localhost:8081 scripts/deploy-fn.sh tenant-a hello samples/hello-v1.py
+kubectl -n faas-system port-forward svc/control-plane 8090:80
+#   맥 8090 → 컨트롤 플레인 Service 80. 8080 은 Argo CD UI port-forward 와 겹쳐서 피한다 (run-all.sh 와 같은 값)
+CP=http://localhost:8090 GW=http://localhost:8081 scripts/deploy-fn.sh tenant-a hello samples/hello-v1.py
 ```
 
-확인 질문: tenant-a.yaml 의 RoleBinding 을 지우면 배포의 어느 단계에서, 어떤 에러가 나나? (상태가 BUILDING → ? 에서 멈춘다. 컨트롤 플레인 로그의 AUDIT 줄을 보면 된다)
+확인 질문: tenant-a.yaml 의 RoleBinding 을 지우면 배포의 어느 단계에서, 어떤 에러가 나나? (힌트: 빌드 Job 은 faas-build 권한이라 끝까지 돈다. 그다음 ksvc 를 만들 때 막히고, 상태 조회도 ksvc 를 먼저 읽어서 502 가 된다. 컨트롤 플레인 로그의 `deploy.apply` AUDIT 줄을 본다)
 
 붙여 줄 것: `kubectl -n argocd get applications`, can-i 3줄 결과, 두 번째 deploy-fn.sh 출력
 
