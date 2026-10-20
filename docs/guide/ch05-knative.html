@@ -1,0 +1,1938 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>05 서버리스: Knative · FaaS PoC 가이드</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="guide.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="guide.js" defer></script>
+</head>
+<body>
+<div class="shell">
+<nav class="nav" aria-label="장 목록"></nav>
+<main>
+<article class="page">
+
+<header class="chapter-head">
+  <p class="eyebrow">05장 · 관련 폴더 poc/04-faas-runtime, poc/05-control-plane-mcp</p>
+  <h1>서버리스: Knative Serving 과 Kourier 로 0↔N</h1>
+  <p class="lede">함수 파드가 요청이 없으면 0개로 사라지고, 요청이 오면 다시 뜨는 일이 Knative 안에서 어떤 객체·부품·알고리즘으로 일어나는지 설명할 수 있게 된다. 우리 PoC 의 Knative Service 세 장과 05 템플릿을 한 줄씩 읽고, 깨졌을 때 어디를 봐야 하는지도 말할 수 있게 된다.</p>
+  <div class="chapter-meta">
+    <span class="chip">PoC 폴더 <b>poc/04-faas-runtime</b></span>
+    <span class="chip">이어지는 곳 <b>poc/05 templates/ksvc.yaml · ops_mcp</b></span>
+    <span class="chip">핵심 기술 <b>Knative Serving · KPA · activator · queue-proxy · Kourier</b></span>
+    <span class="chip">버전 <b>Knative / Kourier v1.23.0</b></span>
+  </div>
+</header>
+
+<h2 id="map">이 장의 지도</h2>
+<p>전체 아키텍처에서 이 장이 맡는 곳은 "요청이 함수 파드에 닿기까지"와 "파드 수를 0 과 N 사이에서 움직이는 일"이다. 맥의 <code>localhost:8081</code> 로 들어온 요청은 control-plane 노드의 NodePort 31080 을 지나 Kourier(Envoy) 로 가고, Kourier 는 Host 헤더를 보고 함수를 고른다. 함수 파드가 있으면 파드로, 없으면 activator 로 간다. 함수 파드는 exec 풀에만 뜨고, Knative 부품은 전부 system 풀에 뜬다.</p>
+
+<figure>
+  <div class="fig scroll">
+    <svg viewBox="0 0 960 400" role="img" aria-labelledby="map-t">
+      <title id="map-t">이 장이 다루는 범위: Kourier, knative-serving, exec 풀의 함수 파드</title>
+      <defs>
+        <marker id="map-m-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+        <marker id="map-m-git" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-git"/></marker>
+        <marker id="map-m-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+        <marker id="map-m-async" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-async"/></marker>
+      </defs>
+      <rect x="20" y="170" width="170" height="90" rx="12" class="d-plain-box"/>
+      <text x="38" y="204" class="d-ttl">맥</text>
+      <text x="38" y="230" class="d-mono">curl :8081</text>
+      <text x="38" y="248" class="d-mono">-H Host: ...</text>
+
+      <rect x="220" y="20" width="720" height="360" rx="14" class="d-pool"/>
+      <text x="236" y="40" class="d-lbl">kind 클러스터 faas</text>
+
+      <rect x="240" y="50" width="190" height="80" rx="12" class="d-card"/>
+      <text x="256" y="82" class="d-ttl-s">control-plane 노드</text>
+      <text x="256" y="108" class="d-mono">NodePort 31080</text>
+
+      <rect x="450" y="50" width="200" height="80" rx="12" class="d-plain-box"/>
+      <text x="466" y="82" class="d-ttl-s">컨트롤 플레인 (05)</text>
+      <text x="466" y="108" class="d-mono">faas-system</text>
+
+      <rect x="670" y="50" width="250" height="80" rx="12" class="d-plain-box"/>
+      <text x="686" y="82" class="d-ttl-s">Argo CD (04)</text>
+      <text x="686" y="108" class="d-mono">faas-functions</text>
+
+      <rect x="236" y="160" width="430" height="210" rx="12" class="d-card"/>
+      <text x="248" y="180" class="d-lbl">system 풀 (taint 없음)</text>
+      <rect x="260" y="190" width="180" height="56" rx="10" class="d-user-box"/>
+      <text x="276" y="216" class="d-ttl-s">Kourier (Envoy)</text>
+      <text x="276" y="236" class="d-mono">kourier-system</text>
+      <rect x="260" y="262" width="390" height="96" rx="10" class="d-cp-box"/>
+      <text x="276" y="288" class="d-ttl-s">knative-serving</text>
+      <text x="276" y="312" class="d-mono">controller · webhook · autoscaler</text>
+      <text x="276" y="334" class="d-mono">activator · net-kourier-controller</text>
+
+      <rect x="690" y="160" width="230" height="210" rx="12" class="d-card"/>
+      <text x="702" y="180" class="d-lbl">exec 풀 (taint NoSchedule)</text>
+      <rect x="706" y="190" width="198" height="56" rx="10" class="d-user-box"/>
+      <text x="720" y="214" class="d-ttl-s">fn-runtime</text>
+      <text x="720" y="236" class="d-mono">hello-runc/gvisor/warm</text>
+      <rect x="706" y="272" width="198" height="56" rx="10" class="d-user-box"/>
+      <text x="720" y="296" class="d-ttl-s">tenant-a</text>
+      <text x="720" y="318" class="d-mono">hello (05 배포)</text>
+
+      <path d="M105 170 L105 90 L240 90" class="d-e-user" marker-end="url(#map-m-user)"/>
+      <path d="M350 130 L350 190" class="d-e-user" marker-end="url(#map-m-user)"/>
+      <path d="M440 218 L706 218" class="d-e-user" marker-end="url(#map-m-user)"/>
+      <text x="612" y="210" class="d-lbl">Host 헤더</text>
+      <path d="M650 300 L706 300" class="d-e-async" marker-end="url(#map-m-async)"/>
+      <path d="M520 130 L520 262" class="d-e-prov" marker-end="url(#map-m-prov)"/>
+      <path d="M700 130 L700 148 L600 148 L600 262" class="d-e-git" marker-end="url(#map-m-git)"/>
+    </svg>
+  </div>
+  <figcaption><b>그림 5-1.</b> 이 장의 범위(초록 칸 knative-serving 과 파란 칸). 파란 실선 = 사용자 요청, 보라 점선 = 파드가 0개일 때 activator 를 거치는 길, 주황 = 05 컨트롤 플레인이 Knative Service 를 직접 적용, 초록 = 04 함수 3개를 Argo CD 가 Git 에서 적용. 이미지 빌드와 gVisor 는 <a href="ch06-build-runtime.html">06장</a>, 노드 풀은 <a href="ch03-tenancy.html">03장</a>.</figcaption>
+</figure>
+
+<div class="table-wrap"><table><thead><tr><th>절</th><th>한 줄</th></tr></thead><tbody>
+<tr><td><a href="#serverless">서버리스와 FaaS</a></td><td>무엇을 플랫폼에 맡기나, 0 까지 줄이는 경제학, Lambda·OpenFaaS·KEDA·Cloud Run 과 비교</td></tr>
+<tr><td><a href="#resource-model">Knative Serving 자원 모델</a></td><td>Service → Configuration → Revision, Route, 바뀌지 않는 Revision, 트래픽 분할과 태그</td></tr>
+<tr><td><a href="#components">부품: 컨트롤 플레인과 데이터 플레인</a></td><td>controller, webhook, autoscaler, activator, net-kourier-controller, queue-proxy, Envoy</td></tr>
+<tr><td><a href="#request-path">요청 경로: 파드가 있을 때와 0개일 때</a></td><td>ServerlessService 의 proxy/serve 모드, PodAutoscaler, activator 가 끼는 순간</td></tr>
+<tr><td><a href="#autoscaling">KPA 오토스케일링 알고리즘</a></td><td>동시성 대 RPS, target 과 70%, stable 60초·panic 6초, scale-to-zero 조건, target-burst-capacity</td></tr>
+<tr><td><a href="#queue-proxy">queue-proxy</a></td><td>파드 안 문지기: 동시성 상한, 지표, 준비 확인, 우아한 종료</td></tr>
+<tr><td><a href="#networking">네트워크 층: KIngress 와 Kourier</a></td><td>Envoy + xDS, Host 헤더 라우팅, config-domain, kind 의 NodePort</td></tr>
+<tr><td><a href="#configmaps">설정 맵</a></td><td>config-features, config-deployment(태그 해석), config-autoscaler, config-network</td></tr>
+<tr><td><a href="#coldstart">콜드 스타트 해부</a></td><td>스케줄 → 이미지 → 시작 → 앱 초기화 → 준비 → activator 가 넘김</td></tr>
+<tr><td><a href="#our-ksvc">우리 함수 3개 (04)</a></td><td>hello-runc, hello-gvisor, hello-gvisor-warm 을 한 줄씩</td></tr>
+<tr><td><a href="#template-05">05 Knative Service 템플릿</a></td><td>nodeSelector, toleration, containerConcurrency, timeoutSeconds, build-id 로 새 Revision</td></tr>
+<tr><td><a href="#measure">측정 스크립트의 논리</a></td><td>coldstart.sh, latency.sh, build-noise.sh 가 무엇을 기다리고 무엇을 재나</td></tr>
+<tr><td><a href="#mcp">MCP scale·rollback 과 Knative 필드</a></td><td>min-scale 주석, traffic 고정, server-side apply 의 필드 주인</td></tr>
+<tr><td><a href="#break">깨지면</a></td><td>플래그 꺼짐, toleration 빠짐, NetworkPolicy, http 레지스트리 태그 해석</td></tr>
+<tr><td><a href="#decisions">결정 표</a></td><td>Knative vs KEDA vs 직접, Kourier vs Istio</td></tr>
+<tr><td><a href="#recap">정리</a></td><td>체크리스트, 본선에서 옮겨 쓸 패턴, 스스로 답해 볼 질문</td></tr>
+</tbody></table></div>
+
+<!-- ============================================================ -->
+<h2 id="serverless">서버리스와 FaaS</h2>
+
+<div class="tier" data-tier="1">
+  <h3>서버리스는 "서버가 없다"가 아니라 "서버 수를 사용자가 정하지 않는다"</h3>
+  <p>서버리스(serverless)는 서버를 몇 대 띄울지, 언제 줄일지를 사용자가 아니라 플랫폼이 요청량을 보고 정하는 운영 모델이다. 그중 FaaS(Function as a Service)는 사용자가 "함수 코드" 만 올리면 빌드·배포·스케일·격리를 플랫폼이 다 하는 형태다. Spring 에 비유하면, 개발자는 <code>@RestController</code> 메서드 하나만 쓰고 톰캣을 몇 개 띄울지, 로드 밸런서에 어떻게 붙일지는 전혀 신경 쓰지 않는 상태다.</p>
+  <p>핵심 성질은 셋이다.</p>
+  <ul>
+    <li><strong>요청 기반 스케일</strong>: 동시에 처리 중인 요청 수(또는 초당 요청 수)를 보고 인스턴스 수를 정한다. CPU 사용률을 보는 HPA(Horizontal Pod Autoscaler)와 다르다.</li>
+    <li><strong>0 까지 줄이기(scale-to-zero)</strong>: 요청이 없으면 인스턴스를 0개로. 쉬는 함수는 자원을 먹지 않는다.</li>
+    <li><strong>콜드 스타트(cold start)</strong>: 0개일 때 온 첫 요청은 인스턴스가 뜰 때까지 기다린다. 0 까지 줄이는 대가다.</li>
+  </ul>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 300" role="img" aria-labelledby="faas4-t">
+        <title id="faas4-t">FaaS 플랫폼이 하는 4가지 일과 우리 PoC 의 부품</title>
+        <defs>
+          <marker id="faas4-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <rect x="20" y="110" width="140" height="80" rx="12" class="d-plain-box"/>
+        <text x="40" y="146" class="d-ttl">사용자</text>
+        <text x="40" y="170" class="d-sub">코드만 올림</text>
+        <rect x="200" y="30" width="170" height="240" rx="12" class="d-prov-box"/>
+        <text x="218" y="64" class="d-ttl">1. 빌드</text>
+        <text x="218" y="92" class="d-sub">코드 → 이미지</text>
+        <text x="218" y="200" class="d-mono">Kaniko Job</text>
+        <text x="218" y="222" class="d-mono">build 풀</text>
+        <text x="218" y="250" class="d-lbl">06장</text>
+        <rect x="390" y="30" width="170" height="240" rx="12" class="d-plain-box"/>
+        <text x="408" y="64" class="d-ttl">2. 배포</text>
+        <text x="408" y="92" class="d-sub">주소 하나 부여</text>
+        <text x="408" y="200" class="d-mono">ksvc apply</text>
+        <text x="408" y="222" class="d-mono">Argo CD · 05 API</text>
+        <text x="408" y="250" class="d-lbl">이 장 · 07장</text>
+        <rect x="580" y="30" width="170" height="240" rx="12" class="d-cp-box"/>
+        <text x="598" y="64" class="d-ttl">3. 스케일</text>
+        <text x="598" y="92" class="d-sub">0 ↔ N</text>
+        <text x="598" y="200" class="d-mono">Knative KPA</text>
+        <text x="598" y="222" class="d-mono">activator</text>
+        <text x="598" y="250" class="d-lbl">이 장</text>
+        <rect x="770" y="30" width="170" height="240" rx="12" class="d-agent"/>
+        <text x="788" y="64" class="d-ttl">4. 격리</text>
+        <text x="788" y="92" class="d-sub">남의 코드 가두기</text>
+        <text x="788" y="200" class="d-mono">gVisor runsc</text>
+        <text x="788" y="222" class="d-mono">exec 풀</text>
+        <text x="788" y="250" class="d-lbl">06장 · 03장</text>
+        <path d="M160 150 L200 150" class="d-e-api" marker-end="url(#faas4-m)"/>
+        <path d="M370 150 L390 150" class="d-e-api" marker-end="url(#faas4-m)"/>
+        <path d="M560 150 L580 150" class="d-e-api" marker-end="url(#faas4-m)"/>
+        <path d="M750 150 L770 150" class="d-e-api" marker-end="url(#faas4-m)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-2.</b> FaaS 플랫폼의 4가지 일. 이 장은 3번(스케일)과, 2번 중 "Knative Service 가 무엇을 만드나"를 다룬다. 빌드와 격리 런타임은 <a href="ch06-build-runtime.html">06장</a>.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>0 까지 줄이는 일의 경제학</h3>
+  <p>항상 켜 두는 서버는 "가장 바쁠 때" 기준으로 자리를 잡는다. 요청이 뜸한 함수 수백 개가 각자 파드 하나씩 쥐고 있으면, 노드 메모리는 대부분 쉬는 프로세스가 차지한다. 0 까지 줄이면 그 자리를 다른 함수가 쓴다. 멀티테넌트 FaaS 에서는 "함수 수 × 최소 파드 수 × 파드 메모리" 가 곧 노드 대수이므로, 최소 파드 수를 0 으로 할 수 있느냐가 비용 구조를 바꾼다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 330" role="img" aria-labelledby="econ-t">
+        <title id="econ-t">요청량과 파드 수: 항상 켜 둠과 0 까지 줄임의 비교 (개념도, 숫자 없음)</title>
+        <path d="M80 280 L920 280" class="d-e"/>
+        <path d="M80 280 L80 40" class="d-e"/>
+        <text x="840" y="304" class="d-lbl">시간</text>
+        <text x="40" y="50" class="d-lbl">양</text>
+        <rect x="150" y="190" width="90" height="90" rx="4" class="d-user-box"/>
+        <rect x="470" y="230" width="50" height="50" rx="4" class="d-user-box"/>
+        <rect x="700" y="150" width="110" height="130" rx="4" class="d-user-box"/>
+        <path d="M80 120 L900 120" class="d-e-prov"/>
+        <text x="96" y="110" class="d-lbl">항상 켜 둠: 가장 바쁠 때 기준 N개</text>
+        <path d="M82 278 L150 278 L150 170 L280 170 L280 278 L470 278 L470 210 L560 210 L560 278 L700 278 L700 140 L850 140 L850 278 L900 278" class="d-e-git"/>
+        <text x="300" y="200" class="d-lbl">0 까지 줄임</text>
+        <text x="300" y="262" class="d-sub">쉬는 동안 0개</text>
+        <circle cx="150" cy="170" r="6" class="d-tag-fail"/>
+        <circle cx="470" cy="210" r="6" class="d-tag-fail"/>
+        <circle cx="700" cy="140" r="6" class="d-tag-fail"/>
+        <text x="96" y="160" class="d-lbl">콜드 스타트</text>
+        <text x="568" y="236" class="d-sub">grace 동안 남음</text>
+        <rect x="620" y="44" width="16" height="12" class="d-user-box"/>
+        <text x="644" y="55" class="d-sub">요청량</text>
+        <path d="M720 50 L750 50" class="d-e-git"/>
+        <text x="758" y="55" class="d-sub">0↔N 파드 수</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-3.</b> 개념도. 파란 막대 = 요청량, 주황 = 항상 켜 둔 파드 수, 초록 = 0↔N 파드 수. 초록 선 아래 면적이 작을수록 자원을 덜 쓴다. 빨간 점이 콜드 스타트가 생기는 순간이다. 요청이 끊긴 뒤에도 잠깐 남는 꼬리는 stable window 와 scale-to-zero-grace-period 때문이다 (KPA 절).</figcaption>
+  </figure>
+  <p>대가는 두 가지다. 첫째, 콜드 스타트 지연이 사용자에게 보인다. 둘째, 0 에서 1 로 가는 동안 요청을 어딘가 붙잡아 둘 장치가 필요하다. Knative 에서 그 장치가 activator 다. 그래서 설계 질문은 언제나 "이 함수는 콜드 스타트를 감수할 만큼 뜸한가" 이고, 아니면 <code>min-scale</code> 로 웜 파드를 남긴다.</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>다른 서버리스 플랫폼과 무엇이 같고 다른가</h3>
+  <p>같은 문제(요청 기반 스케일, 0 까지 줄임, 콜드 스타트 중 요청 보관)를 서로 다른 층에서 푼다. 비교 기준은 "스케일 단위", "0 일 때 요청을 누가 잡나", "버전·트래픽 분할", "격리 단위" 다.</p>
+  <div class="table-wrap"><table><thead><tr><th>플랫폼</th><th>스케일 단위·지표</th><th>0 일 때 요청 보관</th><th>버전·트래픽</th><th>격리·실행</th><th>우리와의 관계</th></tr></thead><tbody>
+  <tr><td>AWS Lambda</td><td>실행 환경 하나가 요청 하나(동시성 1)씩</td><td>Lambda 서비스 내부 (사용자에게 안 보임)</td><td>버전 + 별칭(alias) 가중치</td><td>Firecracker microVM</td><td>"Provisioned Concurrency" 가 우리 <code>min-scale</code> 에 해당. 사용자에게 노드가 안 보인다</td></tr>
+  <tr><td>OpenFaaS</td><td>gateway 가 Prometheus 지표(초당 요청)로 replica 조정</td><td>gateway 가 잡고 깨움. 0 까지 줄이기는 상용판 쪽 기능 【확인 필요】</td><td>함수 = Deployment 하나, Revision 개념 없음</td><td>보통 runc</td><td>쿠버네티스 위 FaaS 의 다른 길. 함수 템플릿·CLI 가 강점</td></tr>
+  <tr><td>KEDA HTTP add-on</td><td>interceptor 가 센 대기 요청 수 → KEDA 가 Deployment replica 조정</td><td>interceptor(프록시)가 잡아 둠</td><td>없음 (Deployment 를 그대로)</td><td>파드 그대로</td><td>대안 1순위. 기존 Deployment 에 붙는 장점, Revision·트래픽 분할 없음</td></tr>
+  <tr><td>Google Cloud Run</td><td>컨테이너 인스턴스, 인스턴스당 동시 요청 상한</td><td>Google 프런트엔드</td><td>Revision + 트래픽 % + 태그 URL</td><td>샌드박스 (1세대는 gVisor) 【확인 필요】</td><td>Knative Serving API 와 호환되는 관리형 서비스. ksvc YAML 모양이 거의 같다</td></tr>
+  <tr><td><strong>Knative Serving</strong></td><td>파드, 동시 요청 수(기본) 또는 RPS</td><td>activator</td><td>Revision + Route(%, 태그)</td><td>RuntimeClass 로 고름 (우리는 runc / gVisor)</td><td>이 PoC 의 선택</td></tr>
+  </tbody></table></div>
+  <figure>
+  <pre class="mermaid">
+flowchart TD
+  Q1["함수가 하루 대부분 쉬나"] -->|예| Q2["첫 요청 지연을 사용자가 견디나"]
+  Q1 -->|아니오| A1["min-scale 1 이상<br/>또는 일반 Deployment"]
+  Q2 -->|예| A2["min-scale 0<br/>scale-to-zero"]
+  Q2 -->|아니오| Q3["예측 가능한 시간대가 있나"]
+  Q3 -->|예| A3["시간대별 min-scale 조정<br/>MCP scale 도구"]
+  Q3 -->|아니오| A4["min-scale 1 + 작은 이미지<br/>웜 1개 비용 감수"]
+  </pre>
+  <figcaption><b>그림 5-4.</b> 0 까지 줄일지 정하는 순서도. 우리 PoC 는 hello-runc·hello-gvisor 가 A2, hello-gvisor-warm 이 A4, 05 의 MCP scale 도구가 A3 를 사람이나 에이전트가 하게 한다.</figcaption>
+  </figure>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>04 의 함수 3개(<code>poc/04-faas-runtime/functions/ksvc/</code>)가 0↔N 을 직접 보여 준다. hello-runc 와 hello-gvisor 는 <code>min-scale: "0"</code> 이라 요청이 끊기면 사라지고, hello-gvisor-warm 은 <code>min-scale: "1"</code> 이라 하나가 늘 남는다. 05 의 사용자 함수(<code>tenant-a/hello</code>)는 템플릿에 min-scale 을 아예 쓰지 않아 기본값 0 으로 시작하고, 운영 에이전트가 MCP <code>scale</code> 도구로 올린다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: "가끔 첫 요청만 느리다" 는 불만. 장애가 아니라 scale-to-zero 의 정상 동작이다. <strong>볼 곳</strong>: 그 시각 직전 함수 파드 수(<code>kubectl get pods -l serving.knative.dev/service=&lt;함수&gt;</code>), 응답의 <code>cold</code> 칸. <strong>고치는 법</strong>: 그 함수만 min-scale 1, 또는 <code>scale-down-delay</code> 로 꼬리를 늘린다. 전체를 바꾸지 않는다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 Knative 인가 (대안)</p><p>작년 본선 주제가 FaaS 였고 상위 팀이 Knative + gVisor 조합이었다(04 README). 우리가 필요한 것은 (1) 0↔N, (2) 0 일 때 요청 보관, (3) 버전별 트래픽 분할(롤백), (4) 노드 풀 고정이다. KEDA HTTP add-on 은 (1)(2)는 되지만 (3)이 없다. OpenFaaS 는 (3)이 약하고 0 까지 줄이기가 커뮤니티판에서 제한적이다 【확인 필요】. 직접 만들기는 본선 시간 안에 못 한다. 자세한 표는 <a href="#decisions">결정 표</a>.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/">Knative Serving 개요</a> · <a href="https://knative.dev/docs/serving/autoscaling/scale-to-zero/">Scale to zero</a> · <a href="https://knative.dev/docs/concepts/serving-resources/">Serving 자원 개념</a> · <a href="https://cloud.google.com/run/docs/resource-model">Cloud Run 자원 모델</a> · <a href="https://github.com/kedacore/http-add-on">KEDA HTTP add-on</a></p></aside>
+
+
+<!-- ============================================================ -->
+<h2 id="resource-model">Knative Serving 자원 모델</h2>
+
+<div class="tier" data-tier="1">
+  <h3>한 장을 넣으면 네 종류가 생긴다</h3>
+  <p>우리가 쓰는 것은 <code>kind: Service</code> (apiVersion <code>serving.knative.dev/v1</code>, 줄여서 ksvc) 한 장뿐이다. Knative controller 는 이 한 장을 둘로 쪼갠다. "무엇을 돌릴까"(컨테이너 이미지·환경 변수·자원) 는 <strong>Configuration</strong> 에, "요청을 어디로 보낼까"(몇 % 를 어느 버전으로) 는 <strong>Route</strong> 에 넘긴다. Configuration 은 <code>spec.template</code> 이 바뀔 때마다 <strong>Revision</strong> 을 하나씩 새로 만든다. Revision 은 그 순간의 코드·설정 스냅샷이고, 한 번 만들어지면 바뀌지 않는다.</p>
+  <p>Spring 에 비유하면 Revision 은 "빌드된 jar 하나 + 그 jar 의 application.yml" 이고, Route 는 "로드 밸런서의 가중치 표" 다. 롤백은 jar 를 다시 빌드하는 게 아니라 가중치 표만 예전 jar 쪽으로 돌리는 일이 된다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 520" role="img" aria-labelledby="rm-t">
+        <title id="rm-t">Service 가 Configuration 과 Route 를 만들고, Configuration 이 Revision 을 쌓고, Route 가 Revision 에 트래픽을 나눈다</title>
+        <defs>
+          <marker id="rm-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="rm-m-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+        </defs>
+        <rect x="360" y="20" width="240" height="70" rx="12" class="d-cp-box"/>
+        <text x="380" y="50" class="d-ttl">Service (ksvc)</text>
+        <text x="380" y="74" class="d-mono">serving.knative.dev/v1</text>
+
+        <rect x="60" y="120" width="300" height="72" rx="12" class="d-card"/>
+        <text x="80" y="150" class="d-ttl">Configuration</text>
+        <text x="80" y="176" class="d-mono">spec.template 의 주인</text>
+
+        <rect x="60" y="260" width="200" height="100" rx="12" class="d-card"/>
+        <text x="78" y="288" class="d-ttl-s">hello-00001</text>
+        <text x="78" y="312" class="d-mono">image @sha256:aa..</text>
+        <text x="78" y="340" class="d-sub">트래픽 0% (예비)</text>
+
+        <rect x="290" y="260" width="200" height="100" rx="12" class="d-card"/>
+        <text x="308" y="288" class="d-ttl-s">hello-00002</text>
+        <text x="308" y="312" class="d-mono">image @sha256:bb..</text>
+        <text x="308" y="340" class="d-sub">태그 canary</text>
+
+        <rect x="520" y="260" width="200" height="100" rx="12" class="d-user-box"/>
+        <text x="538" y="288" class="d-ttl-s">hello-00003</text>
+        <text x="538" y="312" class="d-mono">image @sha256:cc..</text>
+        <text x="538" y="340" class="d-sub">가장 최근 Ready</text>
+
+        <rect x="520" y="420" width="380" height="72" rx="12" class="d-card"/>
+        <text x="540" y="450" class="d-ttl">Route</text>
+        <text x="540" y="476" class="d-mono">spec.traffic 의 주인, URL 부여</text>
+
+        <path d="M420 90 L420 105 L210 105 L210 120" class="d-e-api" marker-end="url(#rm-m-api)"/>
+        <path d="M600 55 L930 55 L930 456 L900 456" class="d-e-api" marker-end="url(#rm-m-api)"/>
+        <path d="M210 192 L210 228" class="d-e-api"/>
+        <path d="M110 228 L570 228" class="d-e-api"/>
+        <path d="M110 228 L110 260" class="d-e-api" marker-end="url(#rm-m-api)"/>
+        <path d="M340 228 L340 260" class="d-e-api" marker-end="url(#rm-m-api)"/>
+        <path d="M570 228 L570 260" class="d-e-api" marker-end="url(#rm-m-api)"/>
+        <text x="380" y="220" class="d-lbl">template 이 바뀔 때마다 하나씩</text>
+        <path d="M660 420 L660 360" class="d-e-user" marker-end="url(#rm-m-user)"/>
+        <text x="668" y="396" class="d-lbl">90%</text>
+        <path d="M560 420 L560 395 L440 395 L440 360" class="d-e-user" marker-end="url(#rm-m-user)"/>
+        <text x="300" y="400" class="d-lbl">10% · tag canary</text>
+        <text x="60" y="400" class="d-sub">Revision 마다 Deployment,</text>
+        <text x="60" y="422" class="d-sub">PodAutoscaler, SKS 가 딸린다</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-5.</b> Knative Serving 자원 계층. Service 는 Configuration 과 Route 를 만들고(회색), Configuration 은 template 이 바뀔 때마다 Revision 을 쌓는다. Route 는 Revision 들에 요청을 비율로 나눈다(파랑). 이 그림의 90/10 은 예시이고 우리 PoC 는 항상 최신 Revision 100% 다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>누가 어떤 필드의 주인인가</h3>
+  <p>Service 는 두 자식의 "주인 노릇" 만 한다. Service 의 <code>spec.template</code> 은 Configuration 의 <code>spec.template</code> 으로 그대로 복사되고, Service 의 <code>spec.traffic</code> 은 Route 의 <code>spec.traffic</code> 으로 복사된다. 그래서 Configuration 이나 Route 를 직접 고치면 Service controller 가 다시 덮어쓴다. 고칠 곳은 언제나 ksvc 다.</p>
+  <figure>
+  <pre class="mermaid">
+classDiagram
+  class Service {
+    +spec.template RevisionTemplateSpec
+    +spec.traffic TrafficTarget[]
+    +status.url
+    +status.latestCreatedRevisionName
+    +status.latestReadyRevisionName
+  }
+  class Configuration {
+    +spec.template
+    +status.latestCreatedRevisionName
+    +status.latestReadyRevisionName
+  }
+  class Revision {
+    +spec.containers
+    +spec.containerConcurrency
+    +spec.timeoutSeconds
+    +metadata.annotations autoscaling
+    +status.conditions Ready
+  }
+  class Route {
+    +spec.traffic
+    +status.url
+    +status.traffic
+  }
+  class TrafficTarget {
+    +revisionName
+    +configurationName
+    +latestRevision bool
+    +percent
+    +tag
+  }
+  Service *-- Configuration : 1 대 1
+  Service *-- Route : 1 대 1
+  Configuration "1" o-- "N" Revision : 만든다
+  Route "1" --> "N" TrafficTarget
+  TrafficTarget ..> Revision : 가리킨다
+  </pre>
+  <figcaption><b>그림 5-6.</b> Serving API 의 주요 필드 (클래스도). <code>latestRevision: true</code> 인 대상은 "Configuration 의 latestReadyRevisionName" 을 따라가고, <code>revisionName</code> 대상은 특정 Revision 에 고정된다.</figcaption>
+  </figure>
+  <p>Revision 이름은 <code>&lt;서비스&gt;-&lt;5자리 세대 번호&gt;</code> 다. 우리 함수는 <code>hello-runc-00001</code>, 05 의 <code>tenant-a/hello</code> 는 <code>hello-00001</code>, <code>hello-00002</code> … 로 쌓인다. 세대 번호는 Configuration 의 <code>metadata.generation</code> 이고 Revision 라벨 <code>serving.knative.dev/configurationGeneration</code> 에도 남는다. 05 의 MCP rollback 은 이 라벨로 Revision 을 정렬한다.</p>
+  <p>Revision 이 하나 생기면 그 아래로 쿠버네티스 객체가 딸린다: Deployment(파드), PodAutoscaler(KPA 의 판단 대상, <code>autoscaling.internal.knative.dev</code>), ServerlessService(SKS, <code>networking.internal.knative.dev</code>), 그리고 SKS 가 만드는 쿠버네티스 Service 두 개(공개용 <code>&lt;revision&gt;</code>, 내부용 <code>&lt;revision&gt;-private</code>). Route 는 KIngress(<code>networking.internal.knative.dev/v1alpha1 Ingress</code>) 를 만들고, 그 KIngress 를 Kourier 가 Envoy 설정으로 번역한다.</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>바뀌지 않는 Revision, latestRevision, 트래픽 분할, 태그</h3>
+  <h4>불변성 (immutability)</h4>
+  <p>Revision 의 spec 은 만들어진 뒤 바뀌지 않는다. 그래서 "Revision 3 = 이 이미지 + 이 설정" 이 영원히 참이다. 이것이 롤백을 믿을 만하게 만드는 전제인데, 이미지를 태그(<code>:v1</code>)로 적으면 그 전제가 흔들린다. Knative 가 Revision 을 만들 때 태그를 digest(<code>@sha256:…</code>)로 바꿔 Revision status 에 적어 두는 이유다(설정 맵 절의 태그 해석). <code>spec.template</code> 의 어떤 칸이든(주석 한 줄이라도) 바뀌면 새 Revision 이 생긴다. 이름을 직접 정하려면 <code>spec.template.metadata.name</code> 을 쓸 수 있지만, 그 이름이 이미 있으면 거절된다.</p>
+  <h4>latestRevision 과 Ready</h4>
+  <p><code>latestCreatedRevisionName</code> 은 가장 최근에 만든 Revision, <code>latestReadyRevisionName</code> 은 그중 Ready 가 된 가장 최근 Revision 이다. 새 Revision 이 Ready 가 안 되면(파드가 Pending, 이미지 못 받음, 준비 확인 실패) 둘이 갈라지고, <code>latestRevision: true</code> 트래픽은 계속 이전 Ready Revision 으로 간다. 이 성질 때문에 "새 배포가 망가져도 옛 버전이 계속 응답" 한다 (깨지면 절의 toleration 시나리오).</p>
+  <figure>
+  <pre class="mermaid">
+stateDiagram-v2
+  [*] --> Created: template 변경
+  Created --> Deploying: Deployment 생성
+  Deploying --> Ready: 파드 준비 확인 통과
+  Deploying --> Failed: progress-deadline 초과<br/>또는 컨테이너 실패
+  Ready --> Active: Route 가 가리킴
+  Ready --> Reserve: 트래픽 0 퍼센트
+  Active --> Reserve: 다른 Revision 으로 전환
+  Reserve --> Active: 롤백, traffic 고정
+  Reserve --> Collected: config-gc 조건 충족
+  Failed --> Collected: config-gc 조건 충족
+  Collected --> [*]
+  </pre>
+  <figcaption><b>그림 5-7.</b> Revision 의 일생. Ready 여부(conditions)와 라우팅 상태(라벨 <code>serving.knative.dev/routingState</code> 의 active·reserve 등)는 서로 다른 축이다. 트래픽을 받지 않는 Revision 은 파드가 0 으로 줄고 객체만 남는다. 상태 이름은 설명용으로 단순화했다.</figcaption>
+  </figure>
+  <h4>트래픽 분할과 태그</h4>
+  <p><code>spec.traffic</code> 은 목록이고 <code>percent</code> 합이 100 이어야 한다. 각 항목은 셋 중 하나로 대상을 고른다: <code>revisionName</code>(고정), <code>configurationName</code>, <code>latestRevision: true</code>(최신 Ready 를 따라감). <code>tag</code> 를 붙이면 그 대상만 받는 별도 주소가 생긴다. 주소 모양은 config-network 의 <code>tag-template</code>(기본 <code>{{.Tag}}-{{.Name}}</code>)과 <code>domain-template</code>(기본 <code>{{.Name}}.{{.Namespace}}.{{.Domain}}</code>) 을 합친 것이다. percent 0 + tag 조합은 "운영 트래픽은 안 주고 시험용 주소만 여는" 다크 런치(dark launch)다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 300" role="img" aria-labelledby="tag-t">
+        <title id="tag-t">Host 이름별로 다른 Revision 으로 가는 트래픽과 태그 주소</title>
+        <defs>
+          <marker id="tag-m-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+        </defs>
+        <rect x="20" y="40" width="340" height="70" rx="12" class="d-user-box"/>
+        <text x="38" y="68" class="d-lbl">기본 주소</text>
+        <text x="38" y="92" class="d-mono">hello.tenant-a.faas.local</text>
+        <rect x="20" y="180" width="340" height="70" rx="12" class="d-user-box"/>
+        <text x="38" y="208" class="d-lbl">태그 주소</text>
+        <text x="38" y="232" class="d-mono">canary-hello.tenant-a.faas.local</text>
+        <rect x="620" y="30" width="300" height="80" rx="12" class="d-card"/>
+        <text x="640" y="62" class="d-ttl-s">hello-00003</text>
+        <text x="640" y="88" class="d-mono">latestRevision: true</text>
+        <rect x="620" y="190" width="300" height="80" rx="12" class="d-card"/>
+        <text x="640" y="222" class="d-ttl-s">hello-00002</text>
+        <text x="640" y="248" class="d-mono">revisionName + tag: canary</text>
+        <path d="M360 62 L620 62" class="d-e-user" marker-end="url(#tag-m-user)"/>
+        <text x="460" y="54" class="d-lbl">90%</text>
+        <path d="M360 92 L500 92 L500 240 L620 240" class="d-e-user" marker-end="url(#tag-m-user)"/>
+        <text x="508" y="160" class="d-lbl">10%</text>
+        <path d="M360 210 L620 210" class="d-e-user" marker-end="url(#tag-m-user)"/>
+        <text x="372" y="198" class="d-lbl">100% (태그만)</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-8.</b> 트래픽 분할과 태그. 기본 주소는 90/10 으로 나뉘고, 태그 주소는 그 Revision 만 받는다. 05 의 MCP rollback 은 이 목록을 <code>[{revisionName: X, percent: 100}]</code> 한 줄로 바꾸는 일이다.</figcaption>
+  </figure>
+  <pre class="pseudo"><code><span class="k">함수</span> Route 재조정(route):
+  targets = []
+  <span class="k">각</span> t <span class="k">in</span> route.spec.traffic:
+    <span class="k">만약</span> t.latestRevision:  rev = configuration.status.latestReadyRevisionName
+    <span class="k">아니면</span>:               rev = t.revisionName
+    <span class="k">만약</span> rev 가 Ready 아님: route.status.Ready = False  <span class="c">// 그래도 기존 KIngress 는 안 지운다</span>
+    targets.add(rev, t.percent, t.tag)
+  <span class="k">확인</span> sum(percent) == 100
+  KIngress 규칙 = [ 기본 호스트 → targets 전부 (비율대로) ]
+               + [ 태그마다 "tag-name.ns.domain" → 그 rev 100% ]
+  KIngress 를 apply  <span class="c">// net-kourier-controller 가 받아서 Envoy 로</span></code></pre>
+  <p>Revision 은 쌓이기만 하지 않는다. config-gc 의 기본값(<code>retain-since-create-time 48h</code>, <code>retain-since-last-active-time 15h</code>, <code>min-non-active-revisions 20</code>, <code>max-non-active-revisions 1000</code>) 에 따라 트래픽을 안 받는 오래된 Revision 은 지워진다. 그래서 "몇 달 전 Revision 으로 롤백" 은 보장되지 않는다. 지우면 안 되는 Revision 에는 주석 <code>serving.knative.dev/no-gc: "true"</code> 를 붙인다.</p>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>04 의 ksvc 세 장에는 <code>traffic</code> 칸이 없다. 쓰지 않으면 기본값이 "최신 Ready Revision 100%" 다. 05 템플릿은 같은 뜻을 <code>traffic: [{latestRevision: true, percent: 100}]</code> 로 명시한다. 이유는 MCP rollback 이 traffic 을 특정 Revision 으로 고정한 뒤, 다음 배포의 server-side apply 가 이 줄로 다시 "최신 따라가기" 로 되돌리게 하려는 것이다 (<a href="#mcp">MCP 절</a>).</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: <code>kubectl get ksvc</code> 의 LATESTCREATED 와 LATESTREADY 가 다르다. 함수는 응답하는데 새 코드가 아니다. <strong>볼 곳</strong>: <code>kubectl -n tenant-a get revisions</code> 에서 READY 가 False 인 Revision 의 REASON, <code>kubectl describe revision &lt;이름&gt;</code>. <strong>고치는 법</strong>: 원인(이미지, 스케줄, 준비 확인)을 고친 새 template 을 다시 apply 한다. 망가진 Revision 을 지울 필요는 없다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/reference/serving-api/">Serving API 레퍼런스</a> · <a href="https://knative.dev/docs/concepts/serving-resources/revisions/">Revisions</a> · <a href="https://knative.dev/docs/serving/traffic-management/">Traffic management</a> · <a href="https://knative.dev/docs/serving/revisions/revision-admin-config-options/">Revision 가비지 컬렉션</a> · <a href="https://github.com/knative/specs">Knative Runtime/API 명세</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="components">부품: 컨트롤 플레인과 데이터 플레인</h2>
+
+<div class="tier" data-tier="1">
+  <h3>결정하는 쪽과 요청을 나르는 쪽</h3>
+  <p>Knative 부품은 두 무리로 나뉜다. <strong>컨트롤 플레인</strong>(control plane)은 객체를 보고 다른 객체를 만들거나 숫자를 정한다. 요청 자체는 만지지 않는다. <strong>데이터 플레인</strong>(data plane)은 실제 HTTP 요청이 지나가는 길이다. 단, activator 는 둘 다에 걸친다: 요청을 나르면서(데이터) autoscaler 에 수요 신호를 보낸다(컨트롤).</p>
+  <div class="grid">
+    <div class="item"><h4>controller</h4><p>Service → Configuration·Route → Revision → Deployment·PodAutoscaler·SKS 를 만드는 재조정 루프 묶음.</p></div>
+    <div class="item"><h4>webhook</h4><p>ksvc 가 API 서버에 저장되기 전에 검사·기본값 채우기. 기능 플래그 위반을 여기서 거절한다.</p></div>
+    <div class="item"><h4>autoscaler</h4><p>queue-proxy 지표를 2초마다 보고 PodAutoscaler 의 원하는 파드 수를 정한다 (KPA).</p></div>
+    <div class="item"><h4>activator</h4><p>파드가 0개이거나 여유가 모자랄 때 요청을 받아 잡아 두고, 파드가 생기면 넘긴다.</p></div>
+    <div class="item"><h4>net-kourier-controller</h4><p>KIngress 를 Envoy 설정으로 번역해 xDS 로 밀어 준다. knative-serving 에 뜬다.</p></div>
+    <div class="item"><h4>queue-proxy</h4><p>함수 파드마다 붙는 옆 컨테이너. 요청을 세고, 상한을 지키고, 준비를 확인한다.</p></div>
+  </div>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>한 장으로 보는 전체 구조</h3>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 980 640" role="img" aria-labelledby="arch-t">
+        <title id="arch-t">Knative Serving 의 컨트롤 플레인과 데이터 플레인 구성도</title>
+        <defs>
+          <marker id="arch-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="arch-m-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+          <marker id="arch-m-async" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-async"/></marker>
+          <marker id="arch-m-obs" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-obs"/></marker>
+        </defs>
+        <rect x="20" y="20" width="700" height="300" rx="14" class="d-cp"/>
+        <text x="500" y="310" class="d-lbl">knative-serving (system 풀)</text>
+
+        <rect x="40" y="60" width="200" height="90" rx="12" class="d-card"/>
+        <text x="58" y="92" class="d-ttl-s">controller</text>
+        <text x="58" y="116" class="d-mono">Service→Config→Rev</text>
+        <text x="58" y="136" class="d-mono">Route→KIngress</text>
+
+        <rect x="480" y="60" width="220" height="90" rx="12" class="d-card"/>
+        <text x="498" y="92" class="d-ttl-s">autoscaler (KPA)</text>
+        <text x="498" y="116" class="d-mono">2초마다 결정</text>
+        <text x="498" y="136" class="d-mono">PA.desiredScale</text>
+
+        <rect x="40" y="190" width="220" height="100" rx="12" class="d-card"/>
+        <text x="58" y="222" class="d-ttl-s">net-kourier-</text>
+        <text x="58" y="242" class="d-ttl-s">controller</text>
+        <text x="58" y="268" class="d-mono">KIngress→xDS</text>
+
+        <rect x="280" y="190" width="180" height="100" rx="12" class="d-card"/>
+        <text x="298" y="222" class="d-ttl-s">webhook</text>
+        <text x="298" y="248" class="d-mono">검사·기본값</text>
+        <text x="298" y="268" class="d-mono">API 서버가 부름</text>
+
+        <rect x="480" y="190" width="180" height="100" rx="12" class="d-agent"/>
+        <text x="498" y="222" class="d-ttl-s">activator</text>
+        <text x="498" y="248" class="d-mono">요청 버퍼</text>
+        <text x="498" y="268" class="d-mono">:8012</text>
+
+        <rect x="760" y="20" width="200" height="120" rx="12" class="d-plain-box"/>
+        <text x="778" y="54" class="d-ttl-s">API 서버</text>
+        <text x="778" y="80" class="d-mono">ksvc, Revision,</text>
+        <text x="778" y="100" class="d-mono">PA, SKS, KIngress</text>
+
+        <rect x="760" y="170" width="200" height="120" rx="12" class="d-plain-box"/>
+        <text x="778" y="204" class="d-ttl-s">설정 맵</text>
+        <text x="778" y="230" class="d-mono">config-autoscaler</text>
+        <text x="778" y="250" class="d-mono">config-features</text>
+        <text x="778" y="270" class="d-mono">config-network ...</text>
+
+        <rect x="20" y="360" width="330" height="140" rx="14" class="d-pool"/>
+        <text x="36" y="384" class="d-lbl">kourier-system (system 풀)</text>
+        <rect x="40" y="400" width="290" height="80" rx="12" class="d-user-box"/>
+        <text x="58" y="432" class="d-ttl-s">3scale-kourier-gateway</text>
+        <text x="58" y="458" class="d-mono">Envoy :8080</text>
+
+        <rect x="40" y="540" width="290" height="70" rx="12" class="d-plain-box"/>
+        <text x="58" y="570" class="d-ttl-s">클라이언트</text>
+        <text x="58" y="594" class="d-mono">맥 :8081 → 노드 31080</text>
+
+        <rect x="400" y="360" width="560" height="260" rx="14" class="d-pool"/>
+        <text x="416" y="384" class="d-lbl">tenant-a / fn-runtime (exec 풀)</text>
+        <rect x="420" y="400" width="520" height="190" rx="12" class="d-card"/>
+        <text x="440" y="428" class="d-ttl-s">함수 파드</text>
+        <rect x="440" y="450" width="250" height="110" rx="10" class="d-cp-box"/>
+        <text x="458" y="480" class="d-ttl-s">queue-proxy</text>
+        <text x="458" y="506" class="d-mono">:8012 요청 받기</text>
+        <text x="458" y="526" class="d-mono">:9090 지표 :8022 관리</text>
+        <rect x="730" y="450" width="190" height="110" rx="10" class="d-user-box"/>
+        <text x="748" y="480" class="d-ttl-s">user-container</text>
+        <text x="748" y="506" class="d-mono">:8080 (PORT)</text>
+        <text x="748" y="526" class="d-mono">우리 함수</text>
+
+        <path d="M140 60 L140 44 L760 44" class="d-e-api" marker-end="url(#arch-m-api)"/>
+        <text x="300" y="38" class="d-lbl">watch · create · update</text>
+        <path d="M700 100 L760 100" class="d-e-api" marker-end="url(#arch-m-api)"/>
+        <path d="M150 290 L150 400" class="d-e-async" marker-end="url(#arch-m-async)"/>
+        <text x="158" y="350" class="d-lbl">xDS :18000</text>
+        <path d="M570 190 L570 150" class="d-e-async" marker-end="url(#arch-m-async)"/>
+        <path d="M185 540 L185 480" class="d-e-user" marker-end="url(#arch-m-user)"/>
+        <path d="M330 450 L385 450 L385 490 L440 490" class="d-e-user" marker-end="url(#arch-m-user)"/>
+        <text x="336" y="442" class="d-lbl">serve</text>
+        <path d="M300 400 L300 330 L520 330 L520 290" class="d-e-user" marker-end="url(#arch-m-user)"/>
+        <text x="322" y="324" class="d-lbl">proxy</text>
+        <path d="M600 290 L600 450" class="d-e-user" marker-end="url(#arch-m-user)"/>
+        <path d="M690 505 L730 505" class="d-e-user" marker-end="url(#arch-m-user)"/>
+        <path d="M670 450 L670 150" class="d-e-obs" marker-end="url(#arch-m-obs)"/>
+        <text x="678" y="340" class="d-lbl">지표 :9090</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-9.</b> Knative Serving + Kourier 구성도. 회색 = API 호출(watch·create), 보라 점선 = 비동기 신호(xDS 설정 밀어 주기, activator 의 수요 신호), 파랑 = 사용자 요청, 청록 점선 = autoscaler 가 queue-proxy 지표를 긁는 길. 요청은 파드가 충분하면 Envoy → queue-proxy 로 바로(serve), 0개이거나 여유가 모자라면 Envoy → activator → queue-proxy 로(proxy) 간다.</figcaption>
+  </figure>
+  <p>요청이 지나가는 순서는 늘 같다: <strong>Envoy</strong>(Kourier 게이트웨이) → (필요하면 <strong>activator</strong>) → 파드 안 <strong>queue-proxy</strong>(:8012) → <strong>user-container</strong>(:8080). 함수 코드는 queue-proxy 뒤에 숨어 있어서, Knative 는 코드를 한 줄도 고치지 않고 요청 수를 세고 상한을 지킬 수 있다. 이게 사이드카(sidecar) 방식의 힘이다.</p>
+  <figure>
+  <pre class="mermaid">
+flowchart LR
+  KSVC["Service"] --> CFG["Configuration"]
+  KSVC --> RT["Route"]
+  CFG --> REV["Revision"]
+  REV --> DEP["Deployment<br/>queue-proxy 주입"]
+  REV --> PA["PodAutoscaler<br/>KPA"]
+  REV --> IMG["태그를 digest 로<br/>status 에 기록"]
+  PA --> SKS["ServerlessService"]
+  SKS --> PUB["Service 공개용<br/>endpoints 를 직접 관리"]
+  SKS --> PRIV["Service -private<br/>파드를 고름"]
+  RT --> KI["KIngress"]
+  KI --> NK["net-kourier-controller"]
+  NK --> ENV["Envoy 설정"]
+  PA -.->|"desiredScale"| DEP
+  </pre>
+  <figcaption><b>그림 5-10.</b> 재조정 사슬. 화살표는 "만든다(소유한다)". PodAutoscaler 의 결정은 Deployment 의 replicas 로 흘러간다. 공개용 Service 의 endpoints 를 파드로 채우느냐 activator 로 채우느냐가 serve/proxy 모드의 정체다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>부품별 세부</h3>
+  <div class="table-wrap"><table><thead><tr><th>부품</th><th>종류</th><th>하는 일</th><th>지켜보는 것</th><th>죽으면</th></tr></thead><tbody>
+  <tr><td>controller</td><td>Deployment, 여러 재조정기 묶음</td><td>Service·Configuration·Revision·Route 재조정, Deployment 와 KIngress 생성, 이미지 태그 → digest 해석</td><td>serving.knative.dev 전부, 설정 맵</td><td>이미 떠 있는 함수는 계속 응답. 새 배포·변경이 반영 안 됨</td></tr>
+  <tr><td>webhook</td><td>admission webhook (검사 + 변경)</td><td>스키마·필드 허용 검사(기능 플래그), 기본값(containerConcurrency, timeoutSeconds 등) 채우기, 생성자 주석 기록</td><td>API 서버가 호출</td><td>ksvc 생성·수정이 API 서버에서 실패 (webhook 호출 실패)</td></tr>
+  <tr><td>autoscaler</td><td>Deployment</td><td>Revision 마다 decider 를 두고 지표 수집(초 단위) → 2초마다 desiredScale 계산, 여유 용량(EBC) 계산</td><td>PodAutoscaler, queue-proxy :9090, activator 의 stat</td><td>파드 수가 그 자리에 멈춘다. 0 에서 깨우지 못한다</td></tr>
+  <tr><td>activator</td><td>Deployment (HPA 로 늘어남)</td><td>요청 버퍼, 파드 준비 확인 뒤 전달, containerConcurrency 를 지키는 부하 분산, 수요 신호 전송</td><td>Revision 의 endpoints</td><td>proxy 모드 Revision(0개 포함)의 요청이 실패. serve 모드는 영향 적음</td></tr>
+  <tr><td>net-kourier-controller</td><td>Deployment (knative-serving)</td><td>KIngress → Envoy 리스너·라우트·클러스터, xDS 서버(:18000)</td><td>KIngress, endpoints</td><td>Envoy 는 마지막 설정으로 계속 동작. 새 함수 주소가 안 생김</td></tr>
+  <tr><td>3scale-kourier-gateway</td><td>Envoy Deployment (kourier-system)</td><td>Host 헤더로 라우팅, 재시도·타임아웃</td><td>xDS</td><td>모든 함수 요청 실패 (입구)</td></tr>
+  <tr><td>queue-proxy</td><td>파드마다 사이드카</td><td>동시성 상한, 지표, 준비 확인, 타임아웃, 우아한 종료</td><td>user-container</td><td>그 파드만 NotReady</td></tr>
+  </tbody></table></div>
+  <p>activator 와 autoscaler 사이에는 두 방향의 신호가 있다. (1) autoscaler 가 activator 의 지표를 받는다: Revision 이 proxy 모드일 때 activator 가 그 Revision 으로 들어온 동시 요청 수를 웹소켓으로 autoscaler 에 보낸다. 파드가 0개일 때는 queue-proxy 가 없으니 이것이 유일한 수요 신호다. (2) autoscaler 가 "이 Revision 에 activator 몇 개를 붙일지(activator 부분 집합 크기)" 를 정한다. 기본 2개 이상, <code>activator-capacity</code>(기본 100) 와 여유 용량으로 계산한다.</p>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>poc/04-faas-runtime/scripts/setup.sh</code> 2/5 단계가 <code>serving-crds.yaml</code> → <code>serving-core.yaml</code> 순서로 깔고, 3/5 단계가 <code>kourier.yaml</code> 을 깐다. 부품은 전부 toleration 이 없어서 taint 가 없는 system 풀로 모인다(03장 노드 풀). 확인 명령: <code>kubectl -n knative-serving get pods -o wide</code> 에 activator, autoscaler, controller, webhook, net-kourier-controller 가 보여야 한다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: ksvc apply 가 <code>failed calling webhook "webhook.serving.knative.dev"</code> 로 실패. <strong>볼 곳</strong>: <code>kubectl -n knative-serving get pods</code> 의 webhook 상태, system 풀 메모리. <strong>고치는 법</strong>: webhook 파드가 뜰 때까지 기다리거나 system 노드 자원을 늘린다. 반대로 autoscaler 만 죽었으면 증상은 "0 인 함수가 안 깨어난다(요청이 activator 에서 타임아웃)" 로 다르다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/architecture/">Serving 아키텍처</a> · <a href="https://knative.dev/docs/serving/request-flow/">HTTP 요청 흐름</a> · <a href="https://knative.dev/docs/serving/knative-kubernetes-services/">Knative 가 만드는 쿠버네티스 Service</a> · <a href="https://github.com/knative/serving/blob/main/docs/scaling/SYSTEM.md">scaling SYSTEM.md (설계 문서)</a></p></aside>
+
+
+<!-- ============================================================ -->
+<h2 id="request-path">요청 경로: 파드가 있을 때와 0개일 때</h2>
+
+<div class="tier" data-tier="1">
+  <h3>입구는 같고, 갈림길은 하나</h3>
+  <p>Envoy 는 함수 주소(Host 헤더)를 보고 그 Revision 의 공개용 쿠버네티스 Service 로 보낸다. 갈림길은 그 Service 의 <strong>endpoints 목록에 무엇이 들어 있느냐</strong>다. 파드 IP 가 들어 있으면 요청은 파드로 바로 가고(serve 모드), activator IP 가 들어 있으면 activator 로 간다(proxy 모드). 이 목록을 바꾸는 것이 ServerlessService(SKS) 이고, 언제 바꿀지 정하는 것이 PodAutoscaler(KPA) 다. Envoy 설정은 바뀌지 않는다는 점이 중요하다. 그래서 전환이 빠르다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 400" role="img" aria-labelledby="rp-t">
+        <title id="rp-t">serve 모드와 proxy 모드의 요청 경로 비교</title>
+        <defs>
+          <marker id="rp-m-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+          <marker id="rp-m-async" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-async"/></marker>
+          <marker id="rp-m-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+        </defs>
+        <text x="20" y="36" class="d-lbl">A. 파드 1개 이상, 여유 충분 = SKS serve 모드</text>
+        <rect x="20" y="56" width="160" height="70" rx="12" class="d-user-box"/>
+        <text x="38" y="88" class="d-ttl-s">Envoy</text>
+        <text x="38" y="110" class="d-mono">Host 로 고름</text>
+        <rect x="230" y="56" width="220" height="70" rx="12" class="d-card"/>
+        <text x="248" y="86" class="d-ttl-s">공개 Service</text>
+        <text x="248" y="110" class="d-mono">endpoints = 파드 IP</text>
+        <rect x="500" y="56" width="180" height="70" rx="12" class="d-cp-box"/>
+        <text x="518" y="88" class="d-ttl-s">queue-proxy</text>
+        <text x="518" y="110" class="d-mono">:8012</text>
+        <rect x="730" y="56" width="200" height="70" rx="12" class="d-user-box"/>
+        <text x="748" y="88" class="d-ttl-s">user-container</text>
+        <text x="748" y="110" class="d-mono">:8080</text>
+        <path d="M180 91 L230 91" class="d-e-user" marker-end="url(#rp-m-user)"/>
+        <path d="M450 91 L500 91" class="d-e-user" marker-end="url(#rp-m-user)"/>
+        <path d="M680 91 L730 91" class="d-e-user" marker-end="url(#rp-m-user)"/>
+
+        <path d="M20 160 L940 160" class="d-pool"/>
+
+        <text x="20" y="196" class="d-lbl">B. 파드 0개, 또는 여유 부족 = SKS proxy 모드</text>
+        <rect x="20" y="216" width="160" height="70" rx="12" class="d-user-box"/>
+        <text x="38" y="248" class="d-ttl-s">Envoy</text>
+        <text x="38" y="270" class="d-mono">같은 설정</text>
+        <rect x="230" y="216" width="220" height="70" rx="12" class="d-card"/>
+        <text x="248" y="246" class="d-ttl-s">공개 Service</text>
+        <text x="248" y="270" class="d-mono">endpoints = activator</text>
+        <rect x="500" y="216" width="180" height="70" rx="12" class="d-agent"/>
+        <text x="518" y="248" class="d-ttl-s">activator</text>
+        <text x="518" y="270" class="d-mono">잡아 두기</text>
+        <rect x="730" y="216" width="200" height="70" rx="12" class="d-card"/>
+        <text x="748" y="246" class="d-ttl-s">파드 (생기면)</text>
+        <text x="748" y="270" class="d-mono">-private 로 찾음</text>
+        <rect x="500" y="320" width="180" height="56" rx="12" class="d-plain-box"/>
+        <text x="518" y="354" class="d-ttl-s">autoscaler</text>
+        <rect x="730" y="320" width="200" height="56" rx="12" class="d-prov-box"/>
+        <text x="748" y="344" class="d-ttl-s">Deployment</text>
+        <text x="748" y="366" class="d-mono">replicas 0 → 1</text>
+        <path d="M180 251 L230 251" class="d-e-user" marker-end="url(#rp-m-user)"/>
+        <path d="M450 251 L500 251" class="d-e-user" marker-end="url(#rp-m-user)"/>
+        <path d="M680 251 L730 251" class="d-e-user" marker-end="url(#rp-m-user)"/>
+        <path d="M590 286 L590 320" class="d-e-async" marker-end="url(#rp-m-async)"/>
+        <path d="M680 348 L730 348" class="d-e-prov" marker-end="url(#rp-m-prov)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-11.</b> 두 가지 요청 경로. Envoy 설정은 똑같고, 공개 Service 의 endpoints 내용만 다르다. B 에서 activator 는 수요 신호를 autoscaler 에 보내고(보라 점선), autoscaler 가 Deployment 를 0 → 1 로 늘린다(주황). activator 는 파드가 준비되면 요청을 넘긴다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>0 → 1: 첫 요청이 응답을 받기까지</h3>
+  <figure>
+  <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant C as 클라이언트
+  participant E as Envoy
+  participant A as activator
+  participant S as autoscaler
+  participant K as API 서버
+  participant P as 새 파드 queue-proxy
+  C->>E: GET Host hello.tenant-a.faas.local
+  E->>A: 공개 Service endpoints 가 activator
+  A->>A: Revision 별 버퍼에 요청 보관
+  A->>S: 수요 신호 (동시 요청 1)
+  S->>K: PodAutoscaler desiredScale 1
+  K->>K: Deployment replicas 0 에서 1
+  K->>P: 스케줄, 이미지, 컨테이너 시작
+  A->>P: 준비 확인 (probe)
+  P-->>A: 준비됨
+  A->>P: 보관한 요청 전달
+  P-->>C: 응답 (activator, Envoy 경유)
+  S->>K: 여유가 생기면 SKS serve 모드
+  </pre>
+  <figcaption><b>그림 5-12.</b> scale-from-zero 시퀀스. activator 는 파드 준비를 스스로 확인한 뒤에 넘기므로, 쿠버네티스 endpoints 갱신을 기다리지 않는다. 그동안 클라이언트 연결은 열린 채로 기다린다(그래서 실패가 아니라 "느림" 이 된다).</figcaption>
+  </figure>
+  <h3>N → 0: 요청이 끊긴 뒤 사라지기까지</h3>
+  <figure>
+  <pre class="mermaid">
+sequenceDiagram
+  participant S as autoscaler
+  participant PA as PodAutoscaler
+  participant SKS as ServerlessService
+  participant A as activator
+  participant D as Deployment
+  Note over S: 마지막 요청 뒤 stable window 동안 평균 동시성 0
+  S->>PA: desiredScale 0
+  PA->>PA: Active 를 False 로 (inactive)
+  PA->>SKS: proxy 모드로
+  SKS->>A: 공개 endpoints 를 activator 로 바꿈
+  PA->>A: activator 가 경로에 있는지 확인 (probe)
+  Note over PA: proxy 상태로 grace period 경과 확인
+  PA->>D: replicas 0
+  D-->>D: 파드 종료, queue-proxy 가 남은 요청 정리
+  </pre>
+  <figcaption><b>그림 5-13.</b> scale-to-zero 시퀀스. 순서가 핵심이다. 먼저 activator 를 경로에 넣고(proxy 모드), 그게 실제로 반영됐는지 확인한 다음에야 마지막 파드를 지운다. 거꾸로 하면 그 틈에 온 요청이 갈 곳이 없다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>SKS 모드를 고르는 규칙과 상태 기계</h3>
+  <p>KPA 재조정기(<code>pkg/reconciler/autoscaling/kpa</code>)는 매번 다음을 정한다. 기본은 proxy 이고, 두 조건이 모두 참일 때만 serve 로 바꾼다.</p>
+  <pre class="pseudo"><code><span class="k">함수</span> SKS 모드 정하기(pa, decider):
+  mode = PROXY
+  <span class="k">만약</span> want == 알수없음 <span class="k">그리고</span> pa 가 inactive:   <span class="c">// autoscaler 재시작 직후, 이전에 0 이었음</span>
+      mode = PROXY
+  <span class="k">아니고 만약</span> want &gt; 0 <span class="k">그리고</span> decider.ExcessBurstCapacity &gt;= 0:
+      mode = SERVE                                <span class="c">// 파드가 있고 여유도 충분할 때만 activator 를 뺀다</span>
+  activator 개수 = computeNumActivators(ready 파드 수, decider)  <span class="c">// 최소 2</span>
+  SKS.spec.mode = mode
+  SKS.spec.numActivators = activator 개수</code></pre>
+  <figure>
+  <pre class="mermaid">
+stateDiagram-v2
+  state "Active, proxy" as AP
+  state "Active, serve" as AS
+  state "Inactive, proxy" as IP
+  state "Activating, proxy" as ACT
+  [*] --> ACT: 새 Revision, initial-scale 1
+  ACT --> AP: 파드 준비
+  AP --> AS: want 0 초과, EBC 0 이상
+  AS --> AP: EBC 음수 (폭주)
+  AP --> IP: stable window 동안 요청 0
+  AS --> IP: stable window 동안 요청 0
+  IP --> IP: grace period 기다림 후 replicas 0
+  IP --> ACT: activator 가 요청 받음
+  ACT --> IP: progress-deadline 넘도록 못 뜸
+  </pre>
+  <figcaption><b>그림 5-14.</b> PodAutoscaler 의 Active 조건과 SKS 모드의 조합. 파드가 0 인 동안은 항상 proxy 다. 기본 설정(target-burst-capacity 211)에서는 파드가 적을 때도 proxy 에 머무는 일이 많다 (KPA 절 3단계).</figcaption>
+  </figure>
+  <p>scale-to-zero 의 정확한 조건은 <code>handleScaleToZero</code> 에 있다. (a) <code>enable-scale-to-zero</code> 가 true, (b) PodAutoscaler 가 최소 stable window 동안 Active 였다가 inactive 로 바뀜, (c) activator 가 경로에 있음이 확인되고, inactive 상태로 <code>max(scale-to-zero-grace-period, scale-to-zero-pod-retention-period)</code> 가 지났거나 SKS 가 proxy 모드로 grace period 이상 있었음. 또 0 → 1 이 <code>progress-deadline</code>(config-deployment 기본 600s) + 여유 시간 안에 안 되면 "활성화 실패" 로 보고 다시 0 으로 내린다.</p>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>coldstart.sh</code> 가 재는 시간이 정확히 그림 5-12 의 1~11 이다. 스크립트가 파드 0개를 본 뒤 <code>sleep 2</code> 를 더 두는 이유는 그림 5-13 의 마지막 단계(파드 종료) 뒤에 요청을 보내야 "진짜 0 에서 출발" 이기 때문이다. 응답 JSON 의 <code>cold: true</code> 는 user-container 프로세스의 첫 요청이었다는 뜻이다(<code>functions/hello-src/main.go</code> 의 <code>n == 1</code>).</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: 0 인 함수에 curl 하면 오래 기다리다 503 이나 타임아웃. 파드가 하나 떴다가 Ready 가 안 된다. <strong>볼 곳</strong>: <code>kubectl -n &lt;ns&gt; get podautoscaler,sks</code> (MODE 열), <code>kubectl -n knative-serving logs deploy/activator | grep &lt;revision&gt;</code>. <strong>고치는 법</strong>: activator → 파드 길(NetworkPolicy, <a href="#break">깨지면 절</a>)과 파드 준비 확인 실패 원인을 먼저 본다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이런 구조인가 (대안)</p><p>대안은 Envoy 설정 자체를 "파드 있음 / 없음" 에 따라 바꾸는 것이다. 그러면 0 경계마다 xDS 갱신이 Envoy 전체에 퍼져야 하고 반영 지연이 생긴다. Knative 는 Envoy 는 그대로 두고 Revision 마다 쿠버네티스 Service 의 endpoints 만 바꾼다. 경계가 Revision 단위로 좁아지고, 바꾸는 주체도 SKS 하나로 모인다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/request-flow/">HTTP 요청 흐름</a> · <a href="https://knative.dev/docs/serving/autoscaling/scale-to-zero/">Configuring scale to zero</a> · <a href="https://github.com/knative/serving/blob/main/pkg/reconciler/autoscaling/kpa/scaler.go">kpa/scaler.go (handleScaleToZero)</a> · <a href="https://github.com/knative/serving/blob/main/pkg/reconciler/autoscaling/kpa/kpa.go">kpa/kpa.go (SKS 모드)</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="autoscaling">KPA 오토스케일링 알고리즘</h2>
+
+<div class="tier" data-tier="1">
+  <h3>"파드 하나에 동시 요청 몇 개" 를 맞추는 온도 조절기</h3>
+  <p>Knative Pod Autoscaler(KPA)는 HPA 처럼 CPU 를 보지 않고 <strong>동시에 처리 중인 요청 수</strong>(concurrency)를 본다. 목표가 "파드 하나당 동시 요청 7개" 이고 지금 전체 동시 요청이 21개면 파드 3개가 필요하다. 이 나눗셈을 2초마다 한다. 다만 순간 숫자가 아니라 지난 60초 평균(stable window)을 쓰고, 갑자기 몰리면 지난 6초 평균(panic window)으로 빨리 반응한다. HPA 와 달리 0 까지 내려갈 수 있다는 점이 가장 큰 차이다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 260" role="img" aria-labelledby="win-t">
+        <title id="win-t">stable window 60초와 panic window 6초, 1초 단위 지표 버킷</title>
+        <path d="M80 150 L900 150" class="d-e"/>
+        <path d="M80 144 L80 156 M93 144 L93 156 M106 144 L106 156 M119 144 L119 156 M132 144 L132 156 M145 144 L145 156 M158 144 L158 156 M171 144 L171 156 M184 144 L184 156 M197 144 L197 156 M210 144 L210 156 M223 144 L223 156 M236 144 L236 156 M249 144 L249 156 M262 144 L262 156 M275 144 L275 156 M288 144 L288 156 M301 144 L301 156 M314 144 L314 156 M327 144 L327 156 M340 144 L340 156 M353 144 L353 156 M366 144 L366 156 M379 144 L379 156 M392 144 L392 156 M405 144 L405 156 M418 144 L418 156 M431 144 L431 156 M444 144 L444 156 M457 144 L457 156 M470 144 L470 156 M483 144 L483 156 M496 144 L496 156 M509 144 L509 156 M522 144 L522 156 M535 144 L535 156 M548 144 L548 156 M561 144 L561 156 M574 144 L574 156 M587 144 L587 156 M600 144 L600 156 M613 144 L613 156 M626 144 L626 156 M639 144 L639 156 M652 144 L652 156 M665 144 L665 156 M678 144 L678 156 M691 144 L691 156 M704 144 L704 156 M717 144 L717 156 M730 144 L730 156 M743 144 L743 156 M756 144 L756 156 M769 144 L769 156 M782 144 L782 156 M795 144 L795 156 M808 144 L808 156 M821 144 L821 156 M834 144 L834 156 M847 144 L847 156 M860 144 L860 156" class="d-e"/>
+        <rect x="80" y="70" width="780" height="40" rx="8" class="d-cp-box"/>
+        <text x="96" y="96" class="d-subd">stable window: 기본 60초 (우리 04 ksvc 는 window 6s 로 줄임)</text>
+        <rect x="782" y="170" width="78" height="40" rx="8" class="d-fail-box"/>
+        <text x="620" y="196" class="d-subd">panic window = 10%</text>
+        <text x="844" y="240" class="d-lbl">지금</text>
+        <path d="M860 120 L860 222" class="d-e-fail"/>
+        <text x="80" y="240" class="d-lbl">60초 전</text>
+        <text x="300" y="134" class="d-mono">1초마다 버킷 하나 (queue-proxy 긁기)</text>
+        <text x="80" y="40" class="d-lbl">2초마다 결정: 두 창의 평균으로 각각 필요한 파드 수를 계산</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-15.</b> 두 개의 창. 지표는 초 단위 버킷에 쌓이고, 결정은 2초마다 한다. stable window 평균은 흔들림 없는 기준, panic window(기본 stable 의 10%, 즉 6초) 평균은 급증 감지용이다. 우리 04 ksvc 는 <code>window: 6s</code> 라 panic window 가 1초(최소값)가 된다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>지표, 목표, 두 가지 모드</h3>
+  <h4>지표: concurrency 와 rps</h4>
+  <p>주석 <code>autoscaling.knative.dev/metric</code> 으로 고른다. 기본은 <code>concurrency</code>(동시 처리 중인 요청 수), 다른 하나는 <code>rps</code>(초당 요청 수)다. KPA 는 이 둘만 쓴다. <code>cpu</code>·<code>memory</code> 는 HPA 클래스(<code>autoscaling.knative.dev/class: hpa.autoscaling.knative.dev</code>)에서만 되고, 그 경우 0 까지 줄이기가 안 된다. 요청 하나가 오래 걸리는 함수는 concurrency 가 정확하고, 아주 짧은 요청이 쏟아지는 함수는 rps 가 더 안정적이다.</p>
+  <h4>목표: target 과 70%</h4>
+  <p>목표값은 <code>ResolveMetricTarget</code> 이 정한다. 순서는 이렇다.</p>
+  <ol>
+    <li>기본 total = <code>containerConcurrency</code> (0 이면 config-autoscaler 의 <code>container-concurrency-target-default</code>, 기본 100).</li>
+    <li>주석 <code>autoscaling.knative.dev/target</code> 이 있으면 total = 그 값. 단 containerConcurrency 가 0 이 아니면 둘 중 작은 값.</li>
+    <li>실제 목표 = total × 사용률. 사용률은 <code>container-concurrency-target-percentage</code>(기본 70) 또는 주석 <code>autoscaling.knative.dev/target-utilization-percentage</code>.</li>
+  </ol>
+  <p>그래서 우리 04 ksvc(target 10, containerConcurrency 0)는 파드당 7, 05 템플릿(target 주석 없음, containerConcurrency 10)도 파드당 7 을 목표로 한다. 70% 는 "꽉 차기 전에 미리 늘려서 대기를 피하는" 여유다. target 은 <strong>부드러운 상한</strong>(soft limit, 평균을 맞출 뿐 넘을 수 있다), containerConcurrency 는 <strong>단단한 상한</strong>(hard limit, queue-proxy 가 넘는 요청을 줄 세운다)이다.</p>
+  <h4>stable 모드와 panic 모드</h4>
+  <figure>
+  <pre class="mermaid">
+flowchart TD
+  T["2초마다 tick"] --> M["stable 평균, panic 평균 읽기"]
+  M --> D1["dspc = ceil(stable 평균 / 목표)<br/>dppc = ceil(panic 평균 / 목표)"]
+  D1 --> CL["둘 다 증가 한도, 감소 한도 안으로 자르기"]
+  CL --> P{"dppc / 준비된 파드 수 가<br/>panic 기준 이상인가"}
+  P -->|예| PM["panic 시작 또는 연장<br/>panicTime = 지금"]
+  P -->|아니오| PS{"panic 중이고 마지막 연장 뒤<br/>stable window 가 지났나"}
+  PS -->|예| UN["panic 해제"]
+  PS -->|아니오| KEEP["상태 유지"]
+  PM --> PD["원하는 수 = max(dspc, dppc)<br/>단 지금까지 최대보다 줄이지 않음"]
+  KEEP --> MODE{"panic 중인가"}
+  UN --> SD["원하는 수 = dspc"]
+  MODE -->|예| PD
+  MODE -->|아니오| SD
+  PD --> DL["scale-down-delay 창 적용"]
+  SD --> DL
+  DL --> EBC["여유 용량 EBC 계산"]
+  EBC --> OUT["desiredScale, EBC 를 PodAutoscaler 로"]
+  </pre>
+  <figcaption><b>그림 5-16.</b> autoscaler 한 번의 판단 (<code>pkg/autoscaler/scaling/autoscaler.go</code> 의 <code>Scale</code> 을 그대로 옮김). panic 중에는 늘리기만 하고 줄이지 않는다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>의사코드, 0 의 경계, 그리고 activator 가 경로에 남는 조건</h3>
+  <pre class="pseudo"><code><span class="k">함수</span> Scale(지금):
+  ready = max(1, 준비된 파드 수)             <span class="c">// 0 이어도 1 로 놓고 나눈다</span>
+  stable, panic = 지표(concurrency 또는 rps) 의 두 창 평균
+  maxUp   = ceil(max-scale-up-rate × ready)    <span class="c">// 기본 1000 → 사실상 무제한</span>
+  maxDown = floor(ready / max-scale-down-rate)  <span class="c">// 기본 2 → 2초에 절반까지만 줄임</span>
+  dspc = ceil(stable / 목표);  dppc = ceil(panic / 목표)
+  stablePods = clamp(dspc, maxDown, maxUp);  panicPods = clamp(dppc, maxDown, maxUp)
+  <span class="k">만약</span> activation-scale &gt; 1 <span class="k">그리고</span> 수요 &gt; 0: 두 값을 최소 activation-scale 로
+  <span class="k">만약</span> dppc / ready &gt;= panic-threshold (기본 200% = 2.0):
+      panicTime = 지금                          <span class="c">// 시작 또는 연장</span>
+  <span class="k">아니고 만약</span> panicTime 있음 <span class="k">그리고</span> panicTime + stableWindow &lt; 지금:
+      panicTime 없앰;  maxPanicPods = 0
+  want = stablePods
+  <span class="k">만약</span> panicTime 있음:
+      want = max(want, panicPods)
+      maxPanicPods = max(maxPanicPods, want);  want = maxPanicPods   <span class="c">// 줄이지 않음</span>
+  <span class="k">만약</span> scale-down-delay 설정됨: want = 지난 delay 기간의 최댓값
+  <span class="c">// 여유 용량 (Excess Burst Capacity)</span>
+  <span class="k">만약</span> TBC == 0:   EBC = 0
+  <span class="k">아니고 만약</span> TBC &gt; 0: EBC = floor(준비된 파드 수 × total − TBC − panic)
+  <span class="k">아니면</span>(TBC == -1): EBC = -1                  <span class="c">// 항상 activator 경로</span>
+  반환 want, EBC
+<span class="c">// 그다음 KPA 재조정기: want 를 min-scale·max-scale 로 자르고, 0 이면 handleScaleToZero 조건 확인</span></code></pre>
+
+  <h4>target-burst-capacity(TBC): activator 가 언제 경로에 남나</h4>
+  <p>EBC 가 음수면 SKS 는 proxy 모드로 남는다. 즉 activator 가 계속 요청을 받는다. 기본 TBC 211 은 "갑자기 211 개 요청이 몰려도 파드 앞에서 줄 서지 않게 하겠다" 는 뜻이다. 파드 몇 개의 총 용량이 211 보다 작으면 activator 가 계속 앞에 서서, 바쁜 파드를 피해 여유 있는 파드로 나눠 주고 넘치는 요청은 자기가 잡아 둔다. 값을 바꾸는 법: config-autoscaler <code>target-burst-capacity</code> 또는 주석 <code>autoscaling.knative.dev/target-burst-capacity</code>. <code>0</code> = 0개일 때만 activator, <code>-1</code> = 항상 activator.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 300" role="img" aria-labelledby="ebc-t">
+        <title id="ebc-t">여유 용량 EBC 계산과 activator 경로 여부</title>
+        <text x="20" y="36" class="d-lbl">EBC = 준비된 파드 수 × 파드당 total − TBC − 지금 처리 중(panic 평균)</text>
+        <text x="20" y="104" class="d-ttl-s">경우 1</text>
+        <rect x="120" y="60" width="300" height="34" rx="6" class="d-user-box"/>
+        <text x="132" y="83" class="d-sub">총 용량 (파드 적음)</text>
+        <rect x="120" y="100" width="560" height="34" rx="6" class="d-warn-box"/>
+        <text x="132" y="123" class="d-sub">TBC (기본 211) + 처리 중</text>
+        <rect x="700" y="78" width="240" height="40" rx="10" class="d-agent"/>
+        <text x="716" y="104" class="d-subd">음수 → proxy 모드</text>
+        <text x="20" y="224" class="d-ttl-s">경우 2</text>
+        <rect x="120" y="180" width="560" height="34" rx="6" class="d-user-box"/>
+        <text x="132" y="203" class="d-sub">총 용량 (파드 많음)</text>
+        <rect x="120" y="220" width="420" height="34" rx="6" class="d-warn-box"/>
+        <text x="132" y="243" class="d-sub">TBC + 처리 중</text>
+        <rect x="700" y="198" width="240" height="40" rx="10" class="d-cp-box"/>
+        <text x="716" y="224" class="d-subd">0 이상 → serve 모드</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-17.</b> EBC 는 "총 용량에서 예상 폭주분(TBC)과 지금 처리 중인 양을 뺀 나머지" 다. 파란 막대가 노란 막대보다 짧으면 activator 가 경로에 남는다. 우리처럼 파드당 total 이 10 인 함수는 max-scale 5 로 다 떠도 총 용량이 50 이라 기본 TBC 211 을 넘지 못한다. 즉 우리 함수는 기본 설정에서 사실상 항상 activator 를 거친다 【확인 필요: 실제 SKS MODE 열로 확인】.</figcaption>
+  </figure>
+
+  <h4>모든 손잡이 한 표</h4>
+  <div class="table-wrap"><table><thead><tr><th>Revision 주석 (autoscaling.knative.dev/…)</th><th>전역 키 (config-autoscaler)</th><th>기본값</th><th>뜻</th></tr></thead><tbody>
+  <tr><td><code>class</code></td><td><code>pod-autoscaler-class</code></td><td><code>kpa.autoscaling.knative.dev</code></td><td>KPA 또는 HPA</td></tr>
+  <tr><td><code>metric</code></td><td>(없음)</td><td><code>concurrency</code></td><td>concurrency / rps (KPA)</td></tr>
+  <tr><td><code>target</code></td><td><code>container-concurrency-target-default</code> / <code>requests-per-second-target-default</code></td><td>100 / 200</td><td>파드당 목표 (soft)</td></tr>
+  <tr><td><code>target-utilization-percentage</code></td><td><code>container-concurrency-target-percentage</code></td><td>70</td><td>목표 중 실제로 맞출 비율</td></tr>
+  <tr><td><code>window</code></td><td><code>stable-window</code></td><td>60s (최소 6s)</td><td>stable 평균 창</td></tr>
+  <tr><td><code>panic-window-percentage</code></td><td><code>panic-window-percentage</code></td><td>10.0</td><td>panic 창 = stable × 이 비율 (최소 1초)</td></tr>
+  <tr><td><code>panic-threshold-percentage</code></td><td><code>panic-threshold-percentage</code></td><td>200.0</td><td>panic 시작 기준</td></tr>
+  <tr><td>(없음)</td><td><code>max-scale-up-rate</code> / <code>max-scale-down-rate</code></td><td>1000.0 / 2.0</td><td>2초당 늘이기·줄이기 배율 한도</td></tr>
+  <tr><td><code>target-burst-capacity</code></td><td><code>target-burst-capacity</code></td><td>211</td><td>activator 경로 유지 기준</td></tr>
+  <tr><td><code>min-scale</code> / <code>max-scale</code></td><td><code>min-scale</code> / <code>max-scale</code></td><td>0 / 0(무제한)</td><td>파드 수 하한·상한. 상한은 <code>max-scale-limit</code> 로 전역 제한 가능</td></tr>
+  <tr><td><code>initial-scale</code></td><td><code>initial-scale</code>, <code>allow-zero-initial-scale</code></td><td>1, false</td><td>새 Revision 이 처음 띄울 파드 수</td></tr>
+  <tr><td><code>activation-scale</code></td><td>(없음)</td><td>1</td><td>0 에서 깨어날 때 최소 몇 개로</td></tr>
+  <tr><td><code>scale-down-delay</code></td><td><code>scale-down-delay</code></td><td>0s</td><td>줄이는 결정을 이 시간만큼 미룸 (콜드 스타트 완화)</td></tr>
+  <tr><td><code>scale-to-zero-pod-retention-period</code></td><td><code>scale-to-zero-pod-retention-period</code></td><td>0s</td><td>0 결정 뒤 마지막 파드 최소 유지</td></tr>
+  <tr><td>(없음)</td><td><code>scale-to-zero-grace-period</code></td><td>30s</td><td>activator 경로 반영을 기다리는 상한</td></tr>
+  <tr><td>(없음)</td><td><code>enable-scale-to-zero</code></td><td>true</td><td>false 면 최소 1</td></tr>
+  </tbody></table></div>
+  <aside class="callout warn"><p class="callout-title">주의: 주석 이름의 옛 표기</p><p>옛 문서와 config 설명에는 <code>autoscaling.knative.dev/minScale</code>, <code>maxScale</code>, <code>initialScale</code> 처럼 낙타 표기가 남아 있다. 지금 공식 표기는 <code>min-scale</code>, <code>max-scale</code>, <code>initial-scale</code> 이고 우리 코드도 이 표기를 쓴다. 둘 다 받아 주는지는 버전마다 다를 수 있다 【확인 필요】.</p></aside>
+  <p>edge case 셋. (1) 새 Revision 은 <code>initial-scale</code> 1 로 파드 하나를 띄우고 Ready 를 확인한다. 그래서 0 인 함수라도 배포 직후 잠깐 파드가 보이고, stable window 뒤 다시 0 이 된다(04 README 6단계 "처음 만들 때 잠깐 뜨고"). (2) min-scale 은 Revision 이 트래픽을 받을 때(reachable)만 지켜진다. 트래픽 0% 인 예비 Revision 은 min-scale 이 있어도 0 으로 내려간다 【확인 필요: 공식 문서 scale-bounds 설명 기준】. 그래서 05 MCP scale 은 traffic 이 고정돼 있으면 거절한다. (3) <code>window</code> 를 짧게 하면 0 으로 빨리 가지만 지표가 흔들려서 파드 수가 출렁인다. 측정 편의를 위한 값이지 운영값이 아니다.</p>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>04 ksvc 는 <code>target: "10"</code>, <code>window: "6s"</code>, <code>max-scale: "5"</code>. 05 템플릿은 <code>containerConcurrency: 10</code>, <code>max-scale: "5"</code>, target 없음. 둘 다 파드당 실제 목표 7. 전역 config-autoscaler 는 건드리지 않았다(설치 기본값). 그래서 04 함수가 0 으로 가는 시간은 대략 window(6s) + grace(30s 상한) + 파드 종료이고, 05 함수는 window 기본 60s 라 더 오래 남는다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상 1</strong>: 부하를 줘도 파드가 5개에서 안 늘어난다 → max-scale. <strong>증상 2</strong>: 부하가 끝났는데 오래 안 줄어든다 → 60초 stable window, panic 중 줄이지 않음, scale-down-delay. <strong>증상 3</strong>: 05 함수 파드가 늘다가 멈추고 Pending → 테넌트 ResourceQuota(pods 10, limits.memory 2Gi). <strong>볼 곳</strong>: <code>kubectl get podautoscaler</code> 의 DESIREDSCALE/ACTUALSCALE, <code>kubectl -n knative-serving logs deploy/autoscaler | grep &lt;revision&gt;</code> (PANICKING 줄).</p></aside>
+<aside class="callout why"><p class="callout-title">왜 KPA (대안)</p><p>HPA 클래스는 CPU·메모리로 늘리는 익숙한 방식이지만 0 까지 못 내리고, 지표 반영이 metrics-server 주기에 묶여 느리다. 함수는 "요청이 몇 개 걸려 있나" 가 부하를 가장 직접 보여 주는 숫자라 concurrency 기반 KPA 가 맞다. 대가는 지표가 queue-proxy 에서만 나온다는 점(사이드카 필수)이다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/autoscaling/">Autoscaling 개요</a> · <a href="https://knative.dev/docs/serving/autoscaling/kpa-specific/">KPA 전용 설정 (window, panic)</a> · <a href="https://knative.dev/docs/serving/autoscaling/autoscaling-metrics/">Metrics</a> · <a href="https://knative.dev/docs/serving/autoscaling/autoscaling-targets/">Targets</a> · <a href="https://knative.dev/docs/serving/autoscaling/scale-bounds/">Scale bounds</a> · <a href="https://knative.dev/docs/serving/load-balancing/target-burst-capacity/">Target burst capacity</a> · <a href="https://github.com/knative/serving/blob/main/config/core/configmaps/autoscaler.yaml">config-autoscaler 원본(기본값과 설명)</a> · <a href="https://github.com/knative/serving/blob/main/pkg/autoscaler/scaling/autoscaler.go">autoscaler.go</a></p></aside>
+
+
+<!-- ============================================================ -->
+<h2 id="queue-proxy">queue-proxy: 파드 안의 문지기</h2>
+
+<div class="tier" data-tier="1">
+  <h3>함수 코드 앞에 서는 작은 프록시</h3>
+  <p>Knative 는 Revision 의 Deployment 를 만들 때 우리 컨테이너(<code>user-container</code>) 옆에 <code>queue-proxy</code> 컨테이너를 끼워 넣는다. 04 README 6단계 확인 질문의 답이 이것이다: 파드가 <code>2/2</code> 로 보이는 이유. 파드로 들어오는 요청은 전부 queue-proxy 를 먼저 지난다. 그래서 queue-proxy 는 (1) 지금 몇 개를 처리 중인지 세고, (2) 상한을 넘는 요청을 줄 세우고, (3) 함수가 준비됐는지 확인하고, (4) 파드가 꺼질 때 처리 중인 요청을 끝까지 마무리한다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 360" role="img" aria-labelledby="qp-t">
+        <title id="qp-t">함수 파드 안의 queue-proxy 와 user-container, 포트와 바깥 상대</title>
+        <defs>
+          <marker id="qp-m-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+          <marker id="qp-m-obs" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-obs"/></marker>
+          <marker id="qp-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <rect x="20" y="80" width="150" height="56" rx="10" class="d-user-box"/>
+        <text x="34" y="104" class="d-ttl-s">Envoy</text>
+        <text x="34" y="124" class="d-mono">또는 activator</text>
+        <rect x="20" y="170" width="150" height="56" rx="10" class="d-obs-box"/>
+        <text x="34" y="204" class="d-ttl-s">autoscaler</text>
+        <rect x="20" y="260" width="150" height="56" rx="10" class="d-plain-box"/>
+        <text x="34" y="294" class="d-ttl-s">kubelet</text>
+
+        <rect x="200" y="20" width="740" height="320" rx="14" class="d-card"/>
+        <text x="220" y="50" class="d-ttl">함수 파드 (Revision 의 Deployment)</text>
+        <rect x="230" y="70" width="380" height="250" rx="12" class="d-cp-box"/>
+        <text x="250" y="98" class="d-ttl-s">queue-proxy (Knative 가 주입)</text>
+        <text x="250" y="126" class="d-mono">:8012  요청 받기 (HTTP/1)</text>
+        <text x="250" y="150" class="d-mono">:8013  요청 받기 (h2c)</text>
+        <text x="250" y="174" class="d-mono">:8022  관리 (drain)</text>
+        <text x="250" y="202" class="d-mono">:9090  autoscaler 지표</text>
+        <text x="250" y="226" class="d-mono">:9091  사용자 지표 (Prometheus)</text>
+        <text x="250" y="262" class="d-mono">breaker: containerConcurrency</text>
+        <text x="250" y="292" class="d-mono">준비 확인을 대신 수행</text>
+        <rect x="660" y="70" width="250" height="250" rx="12" class="d-user-box"/>
+        <text x="680" y="98" class="d-ttl-s">user-container</text>
+        <text x="680" y="126" class="d-mono">:8080 = env PORT</text>
+        <text x="680" y="150" class="d-mono">우리 함수 (main.go)</text>
+        <text x="680" y="174" class="d-mono">이 포트는 파드 밖에</text>
+        <text x="680" y="194" class="d-mono">공개되지 않음</text>
+
+        <path d="M170 108 L230 108" class="d-e-user" marker-end="url(#qp-m-user)"/>
+        <path d="M230 198 L170 198" class="d-e-obs" marker-end="url(#qp-m-obs)"/>
+        <path d="M170 288 L230 288" class="d-e-api" marker-end="url(#qp-m-api)"/>
+        <path d="M610 230 L660 230" class="d-e-user" marker-end="url(#qp-m-user)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-18.</b> 파드 해부도. 요청(파랑)은 queue-proxy :8012 로 들어와 localhost:8080 의 함수로 간다. autoscaler 는 :9090 에서 지표를 긁어 간다(청록). kubelet 의 준비 확인(회색)도 queue-proxy 가 받아, 함수에 대신 물어본다. 포트 번호는 Knative 소스의 상수(<code>pkg/networking</code>)다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>네 가지 역할</h3>
+  <dl class="terms">
+    <dt>동시성 상한 (breaker)</dt><dd><code>containerConcurrency</code> 가 0 이 아니면 그 수만큼만 user-container 로 동시에 보낸다. 넘치는 요청은 queue-proxy 안에서 줄을 선다(이름이 queue-proxy 인 이유). 0 이면 상한 없이 다 통과시킨다. activator 도 같은 값을 알고 있어서, proxy 모드에서는 이미 꽉 찬 파드에 요청을 보내지 않는다.</dd>
+    <dt>지표</dt><dd>처리 중 요청 수(동시성)와 요청 수를 집계해 :9090 에 내놓는다. autoscaler 가 이것을 긁어 stable/panic 평균을 만든다. 사용자용 Prometheus 지표는 :9091.</dd>
+    <dt>준비 확인 (readiness)</dt><dd>kubelet 의 readinessProbe 는 queue-proxy 를 향한다. queue-proxy 는 user-container 의 TCP 포트(또는 ksvc 에 적은 프로브)를 촘촘히 확인하고, 통과하면 준비됐다고 답한다. kubelet 의 최소 주기(1초)보다 촘촘하게 확인해서 콜드 스타트를 줄이는 장치다.</dd>
+    <dt>타임아웃과 우아한 종료</dt><dd><code>timeoutSeconds</code> 를 넘는 요청을 끊는다. 파드가 종료될 때는 새 요청을 거절하고(준비 확인 실패로 전환), 처리 중인 요청이 끝날 때까지 기다린 뒤 끝난다.</dd>
+  </dl>
+  <figure>
+  <pre class="mermaid">
+sequenceDiagram
+  participant K as kubelet
+  participant Q as queue-proxy
+  participant U as user-container
+  participant E as Envoy 또는 activator
+  Note over K: scale-down 으로 파드 삭제 결정
+  K->>Q: preStop 훅 :8022 drain 호출
+  Q->>Q: 준비 확인을 실패로 전환
+  Note over E: endpoints 에서 이 파드가 빠짐
+  E->>Q: 늦게 도착한 요청
+  Q->>U: 처리 중 요청은 계속 전달
+  U-->>Q: 응답
+  Q-->>E: 응답
+  Note over Q: 처리 중 0 이 될 때까지 대기
+  K->>U: SIGTERM
+  K->>Q: SIGTERM
+  </pre>
+  <figcaption><b>그림 5-19.</b> 우아한 종료(graceful drain). preStop 에서 queue-proxy 가 먼저 "준비 안 됨" 으로 바뀌어 새 요청 유입을 끊고, 남은 요청을 끝낸다. 세부 대기 시간은 <code>timeoutSeconds</code> 와 terminationGracePeriodSeconds 에 묶인다 【확인 필요: 버전별 drain 대기 시간】.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>세부: 자원, 상한과 목표의 관계</h3>
+  <pre class="pseudo"><code><span class="k">요청 하나가 queue-proxy 에 도착:</span>
+  <span class="k">만약</span> 종료 중: 503 반환 (이미 endpoints 에서 빠졌어야 정상)
+  inFlight += 1                          <span class="c">// :9090 지표의 원천</span>
+  <span class="k">만약</span> containerConcurrency &gt; 0:
+      breaker 슬롯이 빌 때까지 줄 서기  <span class="c">// 줄 길이에도 상한이 있다 → 넘으면 503 【확인 필요】</span>
+  timeoutSeconds 타이머 시작
+  localhost:PORT 로 전달, 응답을 그대로 돌려줌
+  inFlight -= 1</code></pre>
+  <ul>
+    <li><strong>자원</strong>: queue-proxy 자원은 config-deployment 의 <code>queue-sidecar-cpu-request</code>(기본 25m) 로 정해지고, 메모리·CPU limit 기본값은 <code>queueproxy.resource-defaults</code> 플래그가 켜졌을 때만 붙는다. 우리 테넌트 namespace 에는 LimitRange 가 있어서, 값이 비어 있는 컨테이너에는 LimitRange 기본값(03 차트: limits cpu 200m / memory 128Mi, requests memory 64Mi)이 붙을 것이다 【확인 필요: 실제 파드의 queue-proxy resources 로 확인】. 05 README 의 max-scale 계산(결정 2)에서 "queue-proxy 도 메모리를 쓴다" 가 이 이야기다.</li>
+    <li><strong>containerConcurrency 와 target</strong>: containerConcurrency 는 파드 하나의 실제 상한(hard), target 은 오토스케일러가 맞추려는 평균(soft)이다. 둘 다 주면 target 은 둘 중 작은 값이 되고, 거기에 70% 가 곱해진다. containerConcurrency 1 은 Lambda 와 같은 "인스턴스당 요청 하나" 모델이 된다.</li>
+    <li><strong>containerConcurrency 의 한도</strong>: config-defaults 의 <code>container-concurrency</code>(기본 0)와 <code>container-concurrency-max-limit</code>(기본 1000). timeoutSeconds 는 <code>revision-timeout-seconds</code>(기본 300)이 기본, <code>max-revision-timeout-seconds</code>(기본 600)이 상한이다.</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>04 함수는 containerConcurrency 를 안 적었다(기본 0 = 상한 없음). 05 템플릿은 <code>containerConcurrency: 10</code>. 04 README 8단계 측정에서 <code>cpu 10ms</code> 를 동시 4개로 보내면 느려진 원인은 queue-proxy 가 아니라 user-container 의 CPU limit 500m(CFS quota) 였다. queue-proxy 의 줄 서기와 CPU throttling 은 둘 다 "지연이 늘어남" 으로 보이니, <code>kubectl top pod --containers</code> 로 어느 컨테이너인지 먼저 가른다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: 파드가 <code>1/2</code> 에서 멈춘다. <strong>볼 곳</strong>: <code>kubectl describe pod</code> 의 queue-proxy Readiness probe failed, <code>kubectl logs &lt;pod&gt; -c user-container</code>. <strong>원인</strong>: 함수가 <code>PORT</code>(8080) 가 아닌 포트를 듣거나, 시작이 progress-deadline 안에 안 끝남. <code>main.go</code> 가 <code>os.Getenv("PORT")</code> 를 읽는 이유다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/autoscaling/concurrency/">Concurrency (soft/hard limit)</a> · <a href="https://knative.dev/docs/serving/services/configure-probing/">Probing 설정</a> · <a href="https://knative.dev/docs/serving/configuration/deployment/">config-deployment (queue-proxy 자원)</a> · <a href="https://github.com/knative/serving/tree/main/pkg/queue">pkg/queue 소스</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="networking">네트워크 층: KIngress 와 Kourier</h2>
+
+<div class="tier" data-tier="1">
+  <h3>Knative 는 입구를 갈아 끼울 수 있게 만들었다</h3>
+  <p>Route 는 "이 주소는 이 Revision 들로 이 비율" 이라는 뜻만 담고, 실제 프록시 설정은 모른다. Route controller 는 그 뜻을 <strong>KIngress</strong>(Knative 내부 Ingress 객체)로 적고, 설치된 네트워크 층(net-istio, net-kourier, net-contour, net-gateway-api)이 KIngress 를 자기 프록시 설정으로 번역한다. 어느 층이 맡을지는 config-network 의 <code>ingress-class</code> 가 정한다. 우리는 <strong>Kourier</strong> 다: Envoy 프록시 하나 + Envoy 에 설정을 밀어 주는 xDS 컨트롤 플레인(net-kourier-controller) 조합. 서비스 메시 없이 Knative 에 필요한 것만 한다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 280" role="img" aria-labelledby="ki-t">
+        <title id="ki-t">Route 에서 KIngress, net-kourier-controller, xDS, Envoy 로 이어지는 설정 흐름</title>
+        <defs>
+          <marker id="ki-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="ki-m-async" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-async"/></marker>
+        </defs>
+        <text x="210" y="48" class="d-lbl">주석 networking.knative.dev/ingress.class 로 담당 표시</text>
+        <rect x="20" y="70" width="150" height="80" rx="12" class="d-card"/>
+        <text x="38" y="104" class="d-ttl-s">Route</text>
+        <text x="38" y="128" class="d-mono">traffic, tag</text>
+        <rect x="210" y="70" width="170" height="80" rx="12" class="d-card"/>
+        <text x="228" y="104" class="d-ttl-s">KIngress</text>
+        <text x="228" y="128" class="d-mono">호스트·경로·비율</text>
+        <rect x="420" y="70" width="230" height="80" rx="12" class="d-cp-box"/>
+        <text x="438" y="100" class="d-ttl-s">net-kourier-controller</text>
+        <text x="438" y="126" class="d-mono">xDS 서버 :18000</text>
+        <rect x="690" y="70" width="250" height="80" rx="12" class="d-user-box"/>
+        <text x="708" y="100" class="d-ttl-s">Envoy (게이트웨이)</text>
+        <text x="708" y="126" class="d-mono">kourier-system</text>
+        <rect x="560" y="190" width="380" height="70" rx="12" class="d-plain-box"/>
+        <text x="578" y="218" class="d-mono">가상 호스트 hello.tenant-a.faas.local</text>
+        <text x="578" y="242" class="d-mono">→ 클러스터 = Revision 공개 Service</text>
+        <path d="M170 110 L210 110" class="d-e-api" marker-end="url(#ki-m-api)"/>
+        <path d="M380 110 L420 110" class="d-e-api" marker-end="url(#ki-m-api)"/>
+        <path d="M650 110 L690 110" class="d-e-async" marker-end="url(#ki-m-async)"/>
+        <path d="M815 150 L815 190" class="d-e-api"/>
+        <text x="20" y="200" class="d-sub">설정만 흐른다. 요청은 Envoy 에서</text>
+        <text x="20" y="224" class="d-sub">바로 Revision 쪽으로 간다.</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-20.</b> 설정 흐름. Route controller 가 KIngress 를 만들고, net-kourier-controller 가 그것을 Envoy 의 리스너·가상 호스트·클러스터로 번역해 xDS(Envoy 의 동적 설정 API)로 밀어 준다(보라 점선). Envoy 는 재시작 없이 새 함수 주소를 받는다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>Host 헤더 라우팅과 kind 에서의 입구</h3>
+  <p>모든 함수가 같은 IP·포트(Envoy)를 공유한다. 무엇으로 고르나: HTTP 요청의 <code>Host</code> 헤더다. 함수 주소는 config-network 의 <code>domain-template</code>(기본 <code>{{.Name}}.{{.Namespace}}.{{.Domain}}</code>) 으로 만들어지고, <code>{{.Domain}}</code> 은 config-domain 이 정한다. 우리는 setup.sh 가 config-domain 에 <code>faas.local: ""</code> 를 넣어서 모든 함수가 <code>&lt;함수&gt;.&lt;namespace&gt;.faas.local</code> 이 된다. 진짜 DNS 는 없으니 <code>curl -H "Host: hello-runc.fn-runtime.faas.local" localhost:8081</code> 처럼 헤더를 직접 넣는다(lib.sh 의 <code>fn_host</code>).</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 220" role="img" aria-labelledby="port-t">
+        <title id="port-t">맥 8081 에서 함수 컨테이너 8080 까지의 포트 사슬</title>
+        <defs>
+          <marker id="port-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+        </defs>
+        <rect x="20" y="50" width="135" height="110" rx="12" class="d-plain-box"/>
+        <text x="34" y="80" class="d-ttl-s">맥</text>
+        <text x="34" y="106" class="d-mono">localhost</text>
+        <text x="34" y="126" class="d-mono">:8081</text>
+        <rect x="175" y="50" width="135" height="110" rx="12" class="d-card"/>
+        <text x="189" y="80" class="d-ttl-s">kind 포트</text>
+        <text x="189" y="106" class="d-mono">hostPort 8081</text>
+        <text x="189" y="126" class="d-mono">→ cont. 31080</text>
+        <rect x="330" y="50" width="135" height="110" rx="12" class="d-card"/>
+        <text x="344" y="80" class="d-ttl-s">노드</text>
+        <text x="344" y="106" class="d-mono">NodePort</text>
+        <text x="344" y="126" class="d-mono">31080</text>
+        <rect x="485" y="50" width="135" height="110" rx="12" class="d-card"/>
+        <text x="499" y="80" class="d-ttl-s">Svc kourier</text>
+        <text x="499" y="106" class="d-mono">port 80</text>
+        <text x="499" y="126" class="d-mono">name http2</text>
+        <rect x="640" y="50" width="135" height="110" rx="12" class="d-user-box"/>
+        <text x="654" y="80" class="d-ttl-s">Envoy</text>
+        <text x="654" y="106" class="d-mono">:8080</text>
+        <text x="654" y="126" class="d-mono">Host 로 고름</text>
+        <rect x="795" y="50" width="145" height="110" rx="12" class="d-cp-box"/>
+        <text x="809" y="80" class="d-ttl-s">함수 파드</text>
+        <text x="809" y="106" class="d-mono">qp :8012</text>
+        <text x="809" y="126" class="d-mono">→ fn :8080</text>
+        <path d="M155 105 L175 105" class="d-e-user" marker-end="url(#port-m)"/>
+        <path d="M310 105 L330 105" class="d-e-user" marker-end="url(#port-m)"/>
+        <path d="M465 105 L485 105" class="d-e-user" marker-end="url(#port-m)"/>
+        <path d="M620 105 L640 105" class="d-e-user" marker-end="url(#port-m)"/>
+        <path d="M775 105 L795 105" class="d-e-user" marker-end="url(#port-m)"/>
+        <text x="20" y="196" class="d-sub">1·2: cluster/kind-config.yaml extraPortMappings · 3·4: setup.sh 3/5 의 patch service kourier</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-21.</b> 포트 사슬. kind 에는 LoadBalancer 가 없어서 Kourier Service 를 NodePort 31080 으로 바꾸고, kind 의 extraPortMappings 로 맥 8081 을 control-plane 노드 컨테이너의 31080 에 잇는다. 8080 은 Argo CD port-forward 가 쓰고 있어서 8081 이다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>세부: 코드와 설정 키</h3>
+  <div class="code-head"><span>poc/04-faas-runtime/scripts/setup.sh</span><span>3/5, 4/5 발췌</span></div>
+  <pre><code>kubectl apply -f "$KOURIER"
+kubectl -n kourier-system rollout status deploy --timeout=300s
+kubectl -n knative-serving rollout status deploy net-kourier-controller --timeout=300s
+<span class="c"># Knative 에게 "입구는 Kourier 다"</span>
+kubectl -n knative-serving patch configmap config-network --type merge \
+  -p '{"data":{"ingress-class":"kourier.ingress.networking.knative.dev"}}'
+<span class="c"># Kourier 입구 Service 를 LoadBalancer → NodePort 31080 으로 (kind 엔 LoadBalancer 가 없다)</span>
+kubectl -n kourier-system patch service kourier --type merge \
+  -p '{"spec":{"type":"NodePort","ports":[{"name":"http2","port":80,"protocol":"TCP","targetPort":8080,"nodePort":31080}]}}'
+<span class="c"># 함수 주소 = &lt;함수&gt;.&lt;namespace&gt;.faas.local</span>
+kubectl -n knative-serving patch configmap config-domain --type merge -p "{\"data\":{\"$DOMAIN\":\"\"}}"</code></pre>
+  <ul>
+    <li><code>rollout status deploy</code> 두 번: Kourier 는 두 namespace 에 나뉘어 뜬다. 게이트웨이 Envoy(<code>3scale-kourier-gateway</code>)는 kourier-system, 번역기(<code>net-kourier-controller</code>)는 knative-serving.</li>
+    <li><code>ingress-class</code>: KIngress 의 담당자를 고르는 키. 비우면 기본값(Istio)이라 아무도 KIngress 를 처리하지 않고 Route 가 Ready 가 안 된다.</li>
+    <li><code>patch service kourier</code>: 포트 이름 <code>http2</code>, port 80, targetPort 8080(Envoy 리스너), nodePort 31080. merge patch 는 ports 목록을 통째로 바꾸므로 원래 있던 https 포트는 사라진다 【확인 필요: 원본 Service 포트 목록】. 우리는 http 만 쓰니 괜찮다.</li>
+    <li><code>config-domain</code>: 키가 도메인, 값이 라벨 셀렉터. 값이 빈 문자열이면 "모든 Service 의 기본 도메인". 키를 여러 개 두면 라벨로 도메인을 다르게 줄 수 있다. 라벨 <code>networking.knative.dev/visibility: cluster-local</code> 을 단 ksvc 는 외부 도메인 없이 <code>svc.cluster.local</code> 로만 열린다.</li>
+    <li>클러스터 안 호출은 <code>kourier-internal</code> Service 를 거친다. 외부 입구와 내부 입구가 따로다.</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>입구가 하나(Envoy)이고 모든 테넌트 함수가 같은 입구를 쓴다. 그래서 테넌트 격리는 입구에서가 아니라 함수 파드 쪽 NetworkPolicy 에서 한다(03장). tenant-a 의 NetworkPolicy 가 <code>kourier-system</code> 과 <code>knative-serving</code> 을 허용해야 하는 이유가 그림 5-11 의 두 경로다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: <code>curl localhost:8081</code> 이 연결 거부 → 사슬 1~3 (kind-config 포트, NodePort patch). <strong>증상</strong>: 404 와 빈 응답 → Host 헤더 오타, 또는 Route 가 Ready 아님. <strong>볼 곳</strong>: <code>kubectl get ksvc</code> 의 URL 열, <code>kubectl get king -A</code>(KIngress 축약어), <code>kubectl -n kourier-system get svc kourier</code>. <strong>고치는 법</strong>: Host 를 ksvc URL 그대로 복사한다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 Kourier (대안)</p><p>Istio 는 mTLS, 정교한 트래픽 정책, 관측을 주지만 istiod 와 Envoy 사이드카(net-istio 기본 구성 기준)로 메모리를 많이 쓴다. 우리 system 풀은 노드 하나에 Argo CD·Prometheus·자바 컨트롤 플레인까지 몰려 있다. Knative 가 입구에 바라는 것(Host 라우팅, 비율 분할, 태그, 타임아웃)은 Kourier 로 충분하다. 네트워크 정책은 Cilium(04장)이 따로 한다. Contour·Gateway API 는 선택지지만 Knative 빠른 시작이 Kourier 를 기본으로 안내한다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/install/yaml-install/serving/install-serving-with-yaml/">YAML 설치 (네트워크 층 고르기)</a> · <a href="https://knative.dev/docs/serving/using-a-custom-domain/">config-domain</a> · <a href="https://knative.dev/docs/serving/services/private-services/">cluster-local 서비스</a> · <a href="https://github.com/knative-extensions/net-kourier">net-kourier</a> · <a href="https://kind.sigs.k8s.io/docs/user/configuration/#extra-port-mappings">kind extraPortMappings</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="configmaps">설정 맵</h2>
+
+<div class="tier" data-tier="1">
+  <h3>Knative 의 손잡이는 knative-serving 의 ConfigMap 에 있다</h3>
+  <p>Knative 는 설정을 CRD 가 아니라 <code>knative-serving</code> namespace 의 ConfigMap 여러 장에 둔다. controller·webhook·autoscaler 가 이 ConfigMap 들을 지켜보고 있다가 바뀌면 재시작 없이 다시 읽는다. 우리 PoC 가 바꾼 것은 넷: config-network(입구), config-domain(도메인), config-deployment(태그 해석 건너뛰기), config-features(Pod 스펙 칸 허용). config-autoscaler 는 기본값 그대로다.</p>
+  <div class="table-wrap"><table><thead><tr><th>ConfigMap</th><th>우리가 바꾼 키</th><th>어디서</th><th>이유</th></tr></thead><tbody>
+  <tr><td>config-network</td><td><code>ingress-class: kourier.ingress.networking.knative.dev</code></td><td>setup.sh 3/5</td><td>입구 = Kourier</td></tr>
+  <tr><td>config-domain</td><td><code>faas.local: ""</code></td><td>setup.sh 4/5</td><td>함수 주소 도메인</td></tr>
+  <tr><td>config-deployment</td><td><code>registries-skipping-tag-resolving: kind.local,ko.local,dev.local,kind-registry:5000,localhost:5001</code></td><td>setup.sh 4/5</td><td>http 레지스트리라 digest 질의 실패</td></tr>
+  <tr><td>config-features</td><td><code>kubernetes.podspec-nodeselector</code>, <code>-tolerations</code>, <code>-runtimeclassname</code> = enabled</td><td>platform/knative/config-features-patch.yaml (rebuild-cluster.sh 6/6)</td><td>exec 풀 고정, gVisor</td></tr>
+  <tr><td>config-autoscaler</td><td>(안 바꿈)</td><td>-</td><td>함수별 주석으로 충분</td></tr>
+  </tbody></table></div>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>기능 플래그: 왜 nodeSelector 하나 쓰는 데 허락이 필요한가</h3>
+  <p>Knative 는 ksvc 의 Pod 스펙 중 "어떤 노드에서든 같은 방식으로 돌 수 있는" 칸만 기본 허용한다. nodeSelector·tolerations·runtimeClassName·affinity 같은 칸은 함수를 특정 노드에 묶거나 실행 방식을 바꾸므로 운영자가 명시적으로 켜야 한다. 플래그가 꺼져 있으면 webhook 이 저장 전에 거절한다. 거절은 "그 apply 한 번" 만 실패시키고, 이미 떠 있는 Revision 은 건드리지 않는다.</p>
+  <figure>
+  <pre class="mermaid">
+flowchart TD
+  A["kubectl apply 또는 server-side apply<br/>ksvc 에 nodeSelector, tolerations"] --> B["API 서버"]
+  B --> C["Knative webhook<br/>webhook.serving.knative.dev"]
+  C --> D{"config-features 에서<br/>해당 플래그가 enabled 인가"}
+  D -->|아니오| E["거절: must not set the field(s)<br/>spec.template.spec.tolerations"]
+  D -->|예| F["기본값 채우기<br/>containerConcurrency, timeoutSeconds"]
+  F --> G["etcd 에 저장"]
+  G --> H["controller 가 새 Revision 생성"]
+  E --> I["기존 Revision 은 그대로 응답<br/>Argo CD 는 SYNC FAILED"]
+  </pre>
+  <figcaption><b>그림 5-22.</b> 기능 플래그 검사. 플래그 값은 <code>enabled</code>, <code>disabled</code>, <code>allowed</code> 가 있다 (allowed 는 "쓰면 허용, 기본은 안 씀" 의 뜻으로 일부 플래그에서 쓰인다 【확인 필요】).</figcaption>
+  </figure>
+  <div class="code-head"><span>poc/04-faas-runtime/platform/knative/config-features-patch.yaml</span><span>전체</span></div>
+  <pre><code><span class="k">data</span>:
+  <span class="c"># ksvc 에서 nodeSelector 쓰기 → 함수를 exec 풀에 고정</span>
+  <span class="k">kubernetes.podspec-nodeselector</span>: <span class="s">"enabled"</span>
+  <span class="c"># ksvc 에서 tolerations 쓰기 → exec 풀의 taint 통과</span>
+  <span class="k">kubernetes.podspec-tolerations</span>: <span class="s">"enabled"</span>
+  <span class="c"># ksvc 에서 runtimeClassName 쓰기 → gVisor 로 실행</span>
+  <span class="k">kubernetes.podspec-runtimeclassname</span>: <span class="s">"enabled"</span></code></pre>
+  <p>적용은 <code>kubectl patch --type merge --patch-file</code> 이다. apply 로 ConfigMap 을 통째로 바꾸면 <code>_example</code> 블록과 다른 키가 사라질 수 있어서 merge patch 로 이 세 키만 덧씌운다. 이 ConfigMap 은 GitOps 대상이 아니다. 클러스터를 다시 만들면 <code>rebuild-cluster.sh</code> 6/6 이 다시 넣는다.</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>태그를 digest 로: config-deployment 와 http 레지스트리</h3>
+  <p>Revision 이 만들어질 때 controller 는 컨테이너 이미지가 태그(<code>:v1</code>)면 레지스트리에 물어 digest 로 바꾸고 Revision status 에 적는다. Deployment 는 이 digest 로 만들어진다. 그래서 나중에 누가 같은 태그에 다른 이미지를 올려도, 이미 있는 Revision 의 새 파드는 원래 이미지를 받는다. 불변 Revision 을 지키는 장치다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 320" role="img" aria-labelledby="tr-t">
+        <title id="tr-t">Revision 생성 시 태그를 digest 로 해석하는 흐름과 건너뛰기 목록</title>
+        <defs>
+          <marker id="tr-m" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="tr-m-f" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+        </defs>
+        <rect x="20" y="110" width="200" height="80" rx="12" class="d-card"/>
+        <text x="38" y="142" class="d-ttl-s">controller</text>
+        <text x="38" y="166" class="d-mono">Revision 재조정</text>
+        <rect x="270" y="100" width="260" height="100" rx="12" class="d-warn-box"/>
+        <text x="288" y="132" class="d-ttl-s">이미지가 digest 인가,</text>
+        <text x="288" y="156" class="d-ttl-s">또는 건너뛰기 목록에</text>
+        <text x="288" y="180" class="d-ttl-s">있는 레지스트리인가</text>
+        <rect x="600" y="20" width="340" height="90" rx="12" class="d-plain-box"/>
+        <text x="618" y="52" class="d-ttl-s">예: 그대로 사용</text>
+        <text x="618" y="78" class="d-mono">04: kind-registry:5000/fn/hello:v1</text>
+        <text x="618" y="98" class="d-mono">05: localhost:5001/..@sha256:..</text>
+        <rect x="600" y="140" width="340" height="80" rx="12" class="d-cp-box"/>
+        <text x="618" y="172" class="d-ttl-s">아니오: 레지스트리에 질의</text>
+        <text x="618" y="198" class="d-mono">digest-resolution-timeout 10s</text>
+        <rect x="600" y="240" width="340" height="66" rx="12" class="d-fail-box"/>
+        <text x="618" y="268" class="d-ttl-s">http 레지스트리면 실패</text>
+        <text x="618" y="292" class="d-mono">Revision Ready=False</text>
+        <path d="M220 150 L270 150" class="d-e-api" marker-end="url(#tr-m)"/>
+        <path d="M530 130 L565 130 L565 65 L600 65" class="d-e-api" marker-end="url(#tr-m)"/>
+        <path d="M530 170 L565 170 L565 180 L600 180" class="d-e-api" marker-end="url(#tr-m)"/>
+        <path d="M770 220 L770 240" class="d-e-fail" marker-end="url(#tr-m-f)"/>
+        <text x="20" y="260" class="d-sub">기본 건너뛰기 목록:</text>
+        <text x="20" y="284" class="d-mono">kind.local,ko.local,dev.local</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-23.</b> 태그 해석. 레지스트리 질의는 HTTPS 를 전제로 하므로 TLS 없는 kind-registry 는 실패한다. 그래서 setup.sh 가 <code>kind-registry:5000</code> 과 <code>localhost:5001</code> 을 건너뛰기 목록에 더했다. 05 는 처음부터 digest 를 넣으니 이 단계가 필요 없다.</figcaption>
+  </figure>
+  <p>건너뛰기의 대가는 04 의 함수 3개에 그대로 남는다. <code>kind-registry:5000/fn/hello:v1</code> 은 태그 그대로 Revision 에 들어가므로, 누군가 같은 <code>v1</code> 태그로 다시 빌드해 올리면, 다음에 0 → 1 로 뜨는 파드는 새 이미지를 받을 수 있다(노드에 옛 이미지가 캐시돼 있으면 옛 것을 쓸 수도 있다. imagePullPolicy 기본값은 태그가 latest 가 아니면 IfNotPresent). 같은 Revision 인데 파드마다 다른 코드가 돌 수 있다는 뜻이다. 그래서 04 README 는 "빌드마다 새 태그" 를 규칙으로 정했고, 05 는 kaniko 의 digest 를 받아 <code>@sha256</code> 으로 고정한다(<a href="ch06-build-runtime.html">06장</a>).</p>
+  <p>config-deployment 의 다른 키도 알아 둔다: <code>progress-deadline</code>(기본 600s, Revision 의 파드가 이 시간 안에 준비 안 되면 실패), <code>queue-sidecar-cpu-request</code>(기본 25m), <code>runtime-class-name</code>(라벨 셀렉터로 Revision 들에 RuntimeClass 를 일괄 지정하는 키 【확인 필요: 값 형식】).</p>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>config-features 를 켠 건 04 이고, 그걸 05 템플릿이 그대로 쓴다(RUN-ALL "이음새" 표: 04 patch 가 셋을 켜고 05 ksvc 가 앞의 둘을 씀). runtimeClassName 은 05 템플릿에서 주석 처리돼 있어 지금은 04 의 hello-gvisor 두 개만 쓴다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p>04 README 7단계 실험. <code>kubernetes.podspec-tolerations</code> 를 disabled 로 바꾸고 ksvc 를 바꿔 push 하면 Argo CD Application <code>faas-functions</code> 가 <code>Failed ... must not set the field(s): spec.template.spec.tolerations</code>. 기존 함수는 계속 응답한다. <strong>고치는 법</strong>: patch 를 다시 넣고 동기화를 다시 시킨다(같은 커밋에서 실패한 자동 동기화는 저절로 재시도하지 않을 수 있다).</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/configuration/feature-flags/">Feature and extension flags</a> · <a href="https://knative.dev/docs/serving/configuration/deployment/">config-deployment</a> · <a href="https://knative.dev/docs/serving/tag-resolution/">Tag resolution</a> · <a href="https://knative.dev/docs/serving/configuration/config-defaults/">config-defaults</a> · <a href="https://github.com/knative/serving/tree/main/config/core/configmaps">ConfigMap 원본 (기본값)</a></p></aside>
+
+
+<!-- ============================================================ -->
+<h2 id="coldstart">콜드 스타트 해부</h2>
+
+<div class="tier" data-tier="1">
+  <h3>콜드 스타트 = 여러 구간의 합</h3>
+  <p>0 에서 첫 요청이 응답을 받기까지의 시간은 하나의 덩어리가 아니라 구간의 합이다. 어느 구간이 긴지에 따라 처방이 다르다. 이미지 받기가 길면 이미지를 줄이고, 앱 초기화가 길면 언어·프레임워크를 바꾸고, 전부 없애려면 웜 파드를 둔다. 이 장은 숫자를 다루지 않는다. 우리 측정값은 <code>poc/04-faas-runtime/results/coldstart.csv</code> 에 있다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 330" role="img" aria-labelledby="cs-t">
+        <title id="cs-t">콜드 스타트 구간 시간축 (길이는 개념, 실측 아님)</title>
+        <text x="20" y="66" class="d-sub">1 요청 보관</text>
+        <rect x="240" y="50" width="660" height="22" rx="6" class="d-agent"/>
+        <text x="20" y="98" class="d-sub">2 확장 결정</text>
+        <rect x="250" y="82" width="50" height="22" rx="6" class="d-plain-box"/>
+        <text x="20" y="130" class="d-sub">3 파드 생성·스케줄</text>
+        <rect x="300" y="114" width="60" height="22" rx="6" class="d-plain-box"/>
+        <text x="20" y="162" class="d-sub">4 이미지 받기</text>
+        <rect x="360" y="146" width="160" height="22" rx="6" class="d-prov-box"/>
+        <text x="20" y="194" class="d-sub">5 샌드박스·컨테이너</text>
+        <rect x="520" y="178" width="90" height="22" rx="6" class="d-warn-box"/>
+        <text x="20" y="226" class="d-sub">6 앱 시작·초기화</text>
+        <rect x="610" y="210" width="80" height="22" rx="6" class="d-user-box"/>
+        <text x="20" y="258" class="d-sub">7 준비 확인 통과</text>
+        <rect x="690" y="242" width="50" height="22" rx="6" class="d-cp-box"/>
+        <text x="20" y="290" class="d-sub">8 전달·처리·응답</text>
+        <rect x="740" y="274" width="160" height="22" rx="6" class="d-user-box"/>
+        <text x="372" y="140" class="d-lbl">노드에 있으면 0</text>
+        <text x="522" y="172" class="d-lbl">gVisor 면 길어짐</text>
+        <path d="M240 36 L240 310" class="d-e-fail"/>
+        <text x="246" y="30" class="d-lbl">요청 도착</text>
+        <path d="M900 36 L900 310" class="d-e-fail"/>
+        <text x="820" y="30" class="d-lbl">응답 끝</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-24.</b> 콜드 스타트 시간축 (막대 길이는 개념일 뿐 실측 비율이 아니다). 1 은 전 구간 동안 activator 가 요청을 쥐고 있는 시간이다. 4(이미지)는 노드에 이미지가 이미 있으면 사라지고, 5(샌드박스)는 gVisor 면 Sentry 시작이 더해진다(06장). 6 은 언어에 따라 크게 다르다(Go 정적 바이너리는 짧고, JVM 은 길다).</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>구간마다 줄이는 수단</h3>
+  <div class="table-wrap"><table><thead><tr><th>구간</th><th>무엇이 하나</th><th>줄이는 수단</th><th>대가</th></tr></thead><tbody>
+  <tr><td>1·2 수요 감지</td><td>activator → autoscaler 신호, 2초 tick</td><td>신호는 즉시 "poke" 로 간다 【확인 필요: tick 을 기다리지 않는 경로】</td><td>-</td></tr>
+  <tr><td>3 스케줄</td><td>Deployment → ReplicaSet → 스케줄러</td><td>exec 풀에 자리가 남아 있게 (max-scale·quota)</td><td>노드 여유분 비용</td></tr>
+  <tr><td>4 이미지</td><td>노드 containerd 가 레지스트리에서 받기</td><td>scratch 정적 이미지(우리 hello), 이미지를 노드에 미리 받아 두기</td><td>디버깅 도구 없음, 노드 디스크</td></tr>
+  <tr><td>5 샌드박스</td><td>런타임이 컨테이너 생성 (runc / runsc)</td><td>runc 사용, 또는 미리 만든 샌드박스(웜 풀)</td><td>격리 약화 / 구현 복잡</td></tr>
+  <tr><td>6 앱 초기화</td><td>프로세스 시작, 의존성 로딩</td><td>Go·네이티브 이미지, 지연 초기화</td><td>언어 제약</td></tr>
+  <tr><td>7 준비 확인</td><td>queue-proxy 의 촘촘한 확인</td><td>앱이 포트를 빨리 열게</td><td>-</td></tr>
+  <tr><td>전체</td><td>-</td><td><code>min-scale: 1</code> 웜 파드, <code>scale-down-delay</code>, <code>scale-to-zero-pod-retention-period</code></td><td>쉬는 동안에도 파드 1개 몫 자원</td></tr>
+  </tbody></table></div>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>"진짜 콜드" 인지 판단하는 법</h3>
+  <p>함수 쪽에서 판단하는 법: <code>main.go</code> 는 프로세스가 받은 요청 수를 <code>atomic.Int64</code> 로 세서 첫 요청이면 <code>"cold": true</code> 를 돌려준다. 쿠버네티스 쪽에서 판단하는 법: 요청 직전 <code>serving.knative.dev/service=&lt;함수&gt;</code> 라벨 파드가 0개였나. coldstart.sh 는 둘 다 쓴다(앞에서 0개를 기다리고, 뒤에서 cold 칸을 기록).</p>
+  <div class="code-head"><span>poc/04-faas-runtime/functions/hello-src/main.go</span><span>발췌</span></div>
+  <pre><code><span class="k">var</span> (
+	started = time.Now()
+	served  atomic.Int64
+)
+...
+	n := served.Add(1)
+...
+		<span class="s">"cold"</span>:      n == 1,
+		<span class="s">"uptime_ms"</span>: time.Since(started).Milliseconds(),
+...
+	port := os.Getenv(<span class="s">"PORT"</span>) <span class="c">// Knative 가 넣어 주는 값 (기본 8080)</span></code></pre>
+  <ul>
+    <li><code>started</code>: 패키지 초기화 시각 = 프로세스 시작 시각. <code>uptime_ms</code> 가 작으면 방금 뜬 파드다.</li>
+    <li><code>served.Add(1)</code>: 동시 요청에도 안전한 증가. 첫 요청만 1 이다.</li>
+    <li>주의: 콜드 스타트 중 activator 가 여러 요청을 보관하고 있었다면, 그중 하나만 <code>cold: true</code> 를 받는다. coldstart.sh 는 요청을 한 번만 보내므로 문제없다.</li>
+    <li><code>PORT</code>: Knative 런타임 계약(runtime contract)은 컨테이너가 <code>PORT</code> 환경 변수의 포트를 들어야 한다고 정한다. ksvc 의 <code>containerPort: 8080</code> 이 그 값을 정한다.</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>hello 함수 이미지는 <code>FROM scratch</code> + 정적 Go 바이너리라 4·6 구간이 작다(Dockerfile 주석: "이미지가 작을수록 콜드 스타트 때 이미지 받는 시간이 준다"). 그래서 runc 와 gVisor 의 차이는 주로 5 구간에서 나온다. 05 의 파이썬 함수는 베이스 이미지가 커서 4·6 이 더 길 것이다. 빌드는 <a href="ch06-build-runtime.html">06장</a>.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: 콜드 스타트가 갑자기 몇 배 길어졌다. <strong>볼 곳</strong>: <code>kubectl describe pod</code> 의 Events 시각(Scheduled → Pulling → Pulled → Created → Started) 간격. Pulling 이 길면 이미지, Created 와 Started 사이가 길면 런타임, Started 뒤 Ready 까지가 길면 앱. <strong>고치는 법</strong>: 해당 구간의 수단(표)을 쓴다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/autoscaling/scale-bounds/">Scale bounds (min-scale, scale-down-delay)</a> · <a href="https://github.com/knative/specs/blob/main/specs/serving/runtime-contract.md">Runtime contract (PORT)</a> · <a href="https://knative.dev/docs/serving/services/configure-probing/">Probing</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="our-ksvc">우리 함수 3개 (04): hello-runc, hello-gvisor, hello-gvisor-warm</h2>
+
+<div class="tier" data-tier="1">
+  <h3>한 장을 기준으로, 한 줄씩만 다르다</h3>
+  <p>세 파일은 실험 설계다. hello-runc 가 기준이고, hello-gvisor 는 <code>runtimeClassName</code> 한 줄, hello-gvisor-warm 은 거기에 <code>min-scale: "1"</code> 한 줄이 다르다. 한 번에 한 변수만 바꿔야 측정 차이를 그 변수 탓으로 돌릴 수 있다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 310" role="img" aria-labelledby="ks3-t">
+        <title id="ks3-t">세 Knative Service 의 차이</title>
+        <rect x="20" y="20" width="290" height="270" rx="12" class="d-card"/>
+        <text x="38" y="52" class="d-ttl">hello-runc</text>
+        <text x="38" y="80" class="d-sub">기준</text>
+        <text x="38" y="116" class="d-mono">min-scale "0"</text>
+        <text x="38" y="140" class="d-mono">runtimeClassName 없음</text>
+        <text x="38" y="164" class="d-mono">= 노드 기본 runc</text>
+        <text x="38" y="200" class="d-mono">max-scale 5, target 10</text>
+        <text x="38" y="224" class="d-mono">window 6s</text>
+        <text x="38" y="260" class="d-sub">재는 것: runc 콜드 스타트</text>
+
+        <rect x="335" y="20" width="290" height="270" rx="12" class="d-card"/>
+        <text x="353" y="52" class="d-ttl">hello-gvisor</text>
+        <text x="353" y="80" class="d-sub">+ 한 줄</text>
+        <text x="353" y="116" class="d-mono">min-scale "0"</text>
+        <rect x="345" y="126" width="270" height="48" rx="8" class="d-agent"/>
+        <text x="353" y="146" class="d-mono">runtimeClassName: gvisor</text>
+        <text x="353" y="166" class="d-mono">= runsc (Sentry)</text>
+        <text x="353" y="200" class="d-mono">max-scale 5, target 10</text>
+        <text x="353" y="224" class="d-mono">window 6s</text>
+        <text x="353" y="260" class="d-sub">재는 것: gVisor 콜드 비용</text>
+
+        <rect x="650" y="20" width="290" height="270" rx="12" class="d-card"/>
+        <text x="668" y="52" class="d-ttl">hello-gvisor-warm</text>
+        <text x="668" y="80" class="d-sub">+ 한 줄 더</text>
+        <rect x="660" y="98" width="270" height="28" rx="8" class="d-cp-box"/>
+        <text x="668" y="117" class="d-mono">min-scale "1"</text>
+        <text x="668" y="146" class="d-mono">runtimeClassName: gvisor</text>
+        <text x="668" y="166" class="d-mono">= runsc (Sentry)</text>
+        <text x="668" y="200" class="d-mono">max-scale 5, target 10</text>
+        <text x="668" y="224" class="d-mono">window 6s</text>
+        <text x="668" y="260" class="d-sub">재는 것: 웜 지연, 빌드 소음</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-25.</b> 세 ksvc 의 차이(색칠한 줄). 나머지(nodeSelector, toleration, securityContext, resources, 이미지 <code>kind-registry:5000/fn/hello:v1</code>)는 셋이 같다. 셋 다 namespace <code>fn-runtime</code>, Argo CD Application <code>faas-functions</code> 가 Git 에서 적용한다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>hello-runc 한 줄씩</h3>
+  <div class="code-head"><span>poc/04-faas-runtime/functions/ksvc/hello-runc.yaml</span><span>주석 일부 생략</span></div>
+  <pre><code><span class="k">apiVersion</span>: serving.knative.dev/v1
+<span class="k">kind</span>: Service
+<span class="k">metadata</span>:
+  <span class="k">name</span>: hello-runc
+  <span class="k">namespace</span>: fn-runtime
+<span class="k">spec</span>:
+  <span class="k">template</span>:
+    <span class="k">metadata</span>:
+      <span class="k">annotations</span>:
+        <span class="k">autoscaling.knative.dev/min-scale</span>: <span class="s">"0"</span>
+        <span class="k">autoscaling.knative.dev/max-scale</span>: <span class="s">"5"</span>
+        <span class="k">autoscaling.knative.dev/target</span>: <span class="s">"10"</span>
+        <span class="c"># 측정 편의: 요청이 끊기고 이 시간이 지나면 0 으로 가는 판단을 시작한다 (기본 60s, 최소 6s)</span>
+        <span class="k">autoscaling.knative.dev/window</span>: <span class="s">"6s"</span>
+    <span class="k">spec</span>:
+      <span class="k">nodeSelector</span>:
+        <span class="k">pool</span>: exec
+      <span class="k">tolerations</span>:
+        - <span class="k">key</span>: pool
+          <span class="k">operator</span>: Equal
+          <span class="k">value</span>: exec
+          <span class="k">effect</span>: NoSchedule
+      <span class="k">containers</span>:
+        - <span class="k">image</span>: kind-registry:5000/fn/hello:v1
+          <span class="k">ports</span>:
+            - <span class="k">containerPort</span>: 8080
+          <span class="k">env</span>:
+            - <span class="k">name</span>: FN_NAME
+              <span class="k">value</span>: hello-runc
+          <span class="k">securityContext</span>:
+            <span class="k">runAsNonRoot</span>: true
+            <span class="k">allowPrivilegeEscalation</span>: false
+            <span class="k">capabilities</span>:
+              <span class="k">drop</span>: [<span class="s">"ALL"</span>]
+            <span class="k">seccompProfile</span>:
+              <span class="k">type</span>: RuntimeDefault
+          <span class="k">resources</span>:
+            <span class="k">requests</span>: { <span class="k">cpu</span>: 50m, <span class="k">memory</span>: 32Mi }
+            <span class="k">limits</span>:   { <span class="k">cpu</span>: 500m, <span class="k">memory</span>: 128Mi }</code></pre>
+  <div class="table-wrap"><table><thead><tr><th>줄</th><th>뜻</th><th>Knative 안에서 어디로 가나</th></tr></thead><tbody>
+  <tr><td><code>spec.template.metadata.annotations</code></td><td>오토스케일링 손잡이. template 안이라서 바꾸면 새 Revision</td><td>Revision 주석 → PodAutoscaler spec</td></tr>
+  <tr><td><code>min-scale: "0"</code></td><td>0 까지 내려감. 기본값이지만 결정을 보이게 적음</td><td>KPA 하한</td></tr>
+  <tr><td><code>max-scale: "5"</code></td><td>exec 풀을 한 함수가 다 먹지 않게 (노이지 네이버)</td><td>KPA 상한</td></tr>
+  <tr><td><code>target: "10"</code></td><td>파드당 동시 요청 목표 10 × 70% = 7</td><td>decider 목표값</td></tr>
+  <tr><td><code>window: "6s"</code></td><td>stable window 를 최소값으로. 측정 1회 기다림을 줄임</td><td>decider, scale-to-zero 판단</td></tr>
+  <tr><td><code>nodeSelector</code>, <code>tolerations</code></td><td>exec 풀에만 가고(nodeSelector), exec 의 taint 를 통과(toleration). 기능 플래그가 켜져 있어야 webhook 통과</td><td>Deployment 의 파드 스펙 그대로</td></tr>
+  <tr><td><code>image: ...:v1</code></td><td>태그. 건너뛰기 목록에 있어 digest 로 안 바뀜</td><td>Revision status, Deployment</td></tr>
+  <tr><td><code>containerPort: 8080</code></td><td>queue-proxy 가 보낼 포트이자 <code>PORT</code> 값. 하나만 허용</td><td>user-container 포트, env PORT</td></tr>
+  <tr><td><code>env FN_NAME</code></td><td>응답 JSON 의 <code>fn</code> 칸. 어느 함수가 응답했는지 구분</td><td>user-container env</td></tr>
+  <tr><td><code>securityContext</code></td><td>Pod Security restricted 수준을 미리 맞춤. 03 테넌트 namespace 는 enforce baseline, warn restricted 라 안 쓰면 경고</td><td>user-container</td></tr>
+  <tr><td><code>resources</code></td><td>requests 는 자리 계산, limits 는 상한. CPU limit 500m 가 동시 요청 때 throttling 원인(04 README 8단계)</td><td>user-container (queue-proxy 는 따로)</td></tr>
+  </tbody></table></div>
+  <p>트래픽 칸이 없으므로 기본값 "최신 Ready Revision 100%" 다. 이 파일을 Git 에서 바꾸면(예: max-scale 5 → 4) Argo CD 가 apply 하고, template 이 바뀌었으니 <code>hello-runc-00002</code> 가 생기며 트래픽이 옮겨 간다.</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>hello-gvisor, hello-gvisor-warm 의 다른 줄</h3>
+  <div class="code-head"><span>poc/04-faas-runtime/functions/ksvc/hello-gvisor-warm.yaml</span><span>다른 줄만</span></div>
+  <pre><code>      <span class="k">annotations</span>:
+        <span class="c"># 0 으로 안 내려간다. 이 값만큼은 요청이 없어도 켜 둔다 = 웜 풀의 가장 단순한 형태</span>
+        <span class="k">autoscaling.knative.dev/min-scale</span>: <span class="s">"1"</span>
+    <span class="k">spec</span>:
+      <span class="c"># ---- 무엇으로 돌까: gVisor (platform/runtimeclass-gvisor.yaml 의 metadata.name) ----</span>
+      <span class="k">runtimeClassName</span>: gvisor</code></pre>
+  <ul>
+    <li><code>runtimeClassName: gvisor</code> 는 Knative 가 Deployment 로 그대로 넘기고, 파드가 만들어질 때 쿠버네티스 RuntimeClass 승인 단계가 RuntimeClass <code>gvisor</code> 의 <code>scheduling</code>(nodeSelector pool=exec, toleration)과 <code>overhead</code>(cpu 50m, memory 64Mi)를 파드에 붙인다. 그래서 hello-gvisor 파일 주석은 "nodeSelector·toleration 은 RuntimeClass 가 붙여 주지만 둘 다 써 둔다" 고 말한다. 빠뜨렸을 때를 위한 이중 장치다.</li>
+    <li>RuntimeClass 가 붙이는 nodeSelector·toleration 은 Knative webhook 을 지난 뒤(파드 생성 때) 붙으므로 Knative 기능 플래그와 상관이 없다. 반면 ksvc 에 직접 쓴 nodeSelector·toleration 은 플래그가 필요하다.</li>
+    <li><code>min-scale: "1"</code>: 트래픽을 받는 Revision 은 요청이 없어도 파드 1개 유지. coldstart.sh 는 이 값을 읽어 "0개 기다리기" 대신 <code>IDLE</code>(기본 30초) 쉬고 요청한다. 그래서 이 함수의 숫자는 "오래 쉰 웜 파드의 첫 요청" 이다.</li>
+    <li>gVisor 자체(Sentry, runsc 설치, overhead 값 근거)는 <a href="ch06-build-runtime.html">06장</a>.</li>
+  </ul>
+  <div class="code-head"><span>poc/04-faas-runtime/gitops/faas-functions.yaml</span><span>발췌</span></div>
+  <pre><code>  <span class="k">source</span>:
+    <span class="k">repoURL</span>: https://github.com/Pionia5375/Softbank_Study_1
+    <span class="k">targetRevision</span>: main
+    <span class="c"># Chart.yaml 이 없는 폴더 → YAML 파일 묶음으로 읽는다</span>
+    <span class="k">path</span>: poc/04-faas-runtime/functions/ksvc
+  <span class="k">destination</span>:
+    <span class="k">namespace</span>: fn-runtime
+  <span class="k">syncPolicy</span>:
+    <span class="k">automated</span>: { <span class="k">prune</span>: true, <span class="k">selfHeal</span>: true }
+    <span class="k">syncOptions</span>: [ CreateNamespace=true ]</code></pre>
+  <p>selfHeal 이 켜져 있으므로, 측정 중에 <code>kubectl edit ksvc</code> 로 min-scale 을 바꾸면 Argo CD 가 Git 값으로 되돌린다. 04 함수를 실험적으로 바꾸려면 Git 을 고쳐 push 하는 게 정석이다. 05 사용자 함수는 반대로 Git 밖(컨트롤 플레인의 API 직접 적용)에 있다.</p>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>확인 명령: <code>kubectl -n fn-runtime get ksvc</code> (세 개 READY True), <code>kubectl -n fn-runtime get pods -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,RUNTIME:.spec.runtimeClassName</code> (요청 없이 1분 뒤 warm 하나만, 노드 exec, RUNTIME gvisor).</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p>hello-gvisor 만 READY 가 안 되고 Argo CD 가 Degraded 면 거의 늘 gVisor 쪽(<code>FailedCreatePodSandBox</code>)이다. Knative 문제와 가르는 법: 같은 설정의 hello-runc 가 READY 면 Knative·노드 풀·이미지는 정상이다. 대처는 04 README 9절 보충과 06장.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이렇게 나눴나 (대안)</p><p>대안은 함수 하나에 주석만 바꿔 가며 재는 것이다. 그러면 Revision 이 바뀔 때마다 이미지 캐시·노드 상태가 달라져 비교가 흐려진다. 세 함수를 동시에 두면 같은 노드·같은 이미지로 한 변수만 다르게 잴 수 있다. 대가는 웜 함수 하나가 늘 자리를 차지한다는 점이다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/services/creating-services/">Creating a Service</a> · <a href="https://knative.dev/docs/serving/autoscaling/scale-bounds/">Scale bounds</a> · <a href="https://kubernetes.io/docs/concepts/containers/runtime-class/#scheduling">RuntimeClass scheduling</a> · <a href="https://argo-cd.readthedocs.io/en/stable/user-guide/directory/">Argo CD directory 앱</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="template-05">05 Knative Service 템플릿</h2>
+
+<div class="tier" data-tier="1">
+  <h3>사람이 아니라 컨트롤 플레인이 채우는 ksvc</h3>
+  <p>05 에서는 사용자가 코드를 POST 하면 컨트롤 플레인(<code>FunctionDeployer</code>)이 빌드를 시키고, 끝나면 이 템플릿의 <code>${TENANT}</code>, <code>${NAME}</code>, <code>${BUILD_ID}</code>, <code>${IMAGE}</code> 를 채워 테넌트 namespace 에 server-side apply 한다. 04 와 같은 Knative Service 지만 세 가지가 다르다: 이미지가 digest 로 고정되고, 빌드 ID 주석이 새 Revision 을 강제하고, traffic 과 동시성 상한을 명시한다.</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>템플릿 한 줄씩</h3>
+  <div class="code-head"><span>poc/05-control-plane-mcp/control-plane/src/main/resources/templates/ksvc.yaml</span><span>주석 일부 생략</span></div>
+  <pre><code><span class="k">apiVersion</span>: serving.knative.dev/v1
+<span class="k">kind</span>: Service
+<span class="k">metadata</span>:
+  <span class="k">name</span>: ${NAME}
+  <span class="k">namespace</span>: ${TENANT}
+  <span class="k">labels</span>:
+    <span class="k">faas.poc/tenant</span>: ${TENANT}
+    <span class="k">faas.poc/function</span>: ${NAME}
+    <span class="k">app.kubernetes.io/managed-by</span>: faas-control-plane
+<span class="k">spec</span>:
+  <span class="k">template</span>:
+    <span class="k">metadata</span>:
+      <span class="k">annotations</span>:
+        <span class="k">faas.poc/build-id</span>: ${BUILD_ID}
+        <span class="k">autoscaling.knative.dev/max-scale</span>: <span class="s">"5"</span>
+        <span class="c"># min-scale 은 일부러 안 쓴다. 운영 에이전트(MCP scale)의 몫이다.</span>
+    <span class="k">spec</span>:
+      <span class="k">containerConcurrency</span>: 10
+      <span class="k">timeoutSeconds</span>: 30
+      <span class="k">nodeSelector</span>:
+        <span class="k">pool</span>: exec
+      <span class="k">tolerations</span>:
+        - <span class="k">key</span>: pool
+          <span class="k">operator</span>: Equal
+          <span class="k">value</span>: exec
+          <span class="k">effect</span>: NoSchedule
+      <span class="c"># runtimeClassName: gvisor</span>
+      <span class="k">containers</span>:
+        - <span class="k">image</span>: ${IMAGE}
+          <span class="k">ports</span>:
+            - <span class="k">containerPort</span>: 8080
+          <span class="k">resources</span>:
+            <span class="k">requests</span>: { <span class="k">cpu</span>: 100m, <span class="k">memory</span>: 64Mi }
+            <span class="k">limits</span>:   { <span class="k">memory</span>: 128Mi }
+          <span class="k">securityContext</span>: ...  <span class="c"># 04 와 같음</span>
+  <span class="k">traffic</span>:
+    - <span class="k">latestRevision</span>: true
+      <span class="k">percent</span>: 100</code></pre>
+  <div class="table-wrap"><table><thead><tr><th>줄</th><th>뜻과 이유</th></tr></thead><tbody>
+  <tr><td><code>labels faas.poc/*</code></td><td>컨트롤 플레인이 자기 함수를 찾는 이름표. Knative 는 ksvc 라벨을 Revision·파드에 전파한다 【확인 필요: 전파 범위】</td></tr>
+  <tr><td><code>faas.poc/build-id: ${BUILD_ID}</code></td><td>코드 해시로 만든 빌드 ID. template 안이므로 코드가 바뀌면 이 값이 바뀌어 반드시 새 Revision. 상태 조회가 "지금 서빙 중인 빌드" 를 이걸로 비교한다 (<code>FunctionDeployer.ANNOTATION_BUILD_ID</code>)</td></tr>
+  <tr><td><code>max-scale: "5"</code></td><td>테넌트 ResourceQuota 안에 들어가게 (05 결정 2). MCP scale 의 min-scale 상한도 이 값을 못 넘는다</td></tr>
+  <tr><td>min-scale 없음</td><td>server-side apply 에서 이 필드의 주인이 되지 않으려고. 주인이 되면 다음 배포가 에이전트 값을 지운다</td></tr>
+  <tr><td><code>containerConcurrency: 10</code></td><td>단단한 상한. 파드 하나에 동시에 10개까지만 들어가고, 넘으면 queue-proxy·activator 가 줄 세운다. target 주석이 없으니 오토스케일러 목표는 10 × 70% = 7. 주석 "넘으면 Knative 가 파드를 늘린다" 는 정확히는 "평균 7 을 넘으면 늘린다" 다</td></tr>
+  <tr><td><code>timeoutSeconds: 30</code></td><td>요청 하나 최대 30초. 넘으면 끊긴다(504 계열). 기본 300 보다 짧게 잡아 멈춘 함수가 자리를 오래 쥐지 않게</td></tr>
+  <tr><td><code>nodeSelector</code>, <code>tolerations</code></td><td>04 와 같은 exec 풀 고정. config-features 플래그 의존</td></tr>
+  <tr><td><code># runtimeClassName</code></td><td>주석 처리. 풀면 gVisor. 플래그는 이미 켜져 있다</td></tr>
+  <tr><td><code>image: ${IMAGE}</code></td><td><code>localhost:5001/&lt;테넌트&gt;/&lt;함수&gt;@sha256:…</code>. digest 라 Knative 태그 해석을 건너뛴다. 노드 containerd 가 localhost:5001 을 kind-registry:5000 으로 바꿔 받는다(06장)</td></tr>
+  <tr><td><code>limits</code> 에 cpu 없음</td><td>CPU throttling 을 피하려는 선택. 대신 테넌트 LimitRange 기본 limits.cpu(200m)가 붙을 수 있다 【확인 필요: 실제 파드 스펙】</td></tr>
+  <tr><td><code>traffic: latestRevision 100</code></td><td>새 배포는 언제나 최신 Ready 로. rollback 이 고정해 둔 traffic 을 다음 배포가 force 로 되돌린다</td></tr>
+  </tbody></table></div>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>배포 한 번이 Knative 에 일으키는 일, 그리고 필드 주인</h3>
+  <figure>
+  <pre class="mermaid">
+sequenceDiagram
+  participant CP as 컨트롤 플레인
+  participant API as API 서버
+  participant WH as Knative webhook
+  participant KC as Knative controller
+  participant R as Route
+  CP->>API: server-side apply ksvc hello, fieldManager faas-control-plane, force
+  API->>WH: 검사 (플래그, 스키마)
+  WH-->>API: 통과, 기본값 채움
+  API-->>CP: 200
+  KC->>API: Configuration template 갱신
+  KC->>API: Revision hello-0000N 생성 (build-id 주석 포함)
+  KC->>API: Deployment, PodAutoscaler, SKS 생성
+  Note over KC: initial-scale 1 로 파드 하나 띄워 Ready 확인
+  KC->>R: latestReadyRevisionName 갱신
+  R->>R: latestRevision 100 퍼센트를 새 Revision 으로
+  CP->>API: 상태 조회 반복, build-id 일치와 Ready 확인
+  Note over CP: READY 반환, 이전 Revision 은 예비로 남음
+  </pre>
+  <figcaption><b>그림 5-26.</b> 05 배포의 Knative 쪽 시퀀스. 컨트롤 플레인은 "Ready" 와 "서빙 중인 build-id == 이번 build-id" 둘 다 확인해야 READY 를 돌려준다 (<code>FunctionDeployer</code> 의 상태 조회).</figcaption>
+  </figure>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 330" role="img" aria-labelledby="own-t">
+        <title id="own-t">ksvc 필드의 주인: 컨트롤 플레인과 운영 에이전트</title>
+        <defs>
+          <marker id="own-m-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+          <marker id="own-m-async" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-async"/></marker>
+        </defs>
+        <rect x="20" y="110" width="240" height="110" rx="12" class="d-prov-box"/>
+        <text x="38" y="142" class="d-ttl-s">faas-control-plane</text>
+        <text x="38" y="168" class="d-mono">server-side apply</text>
+        <text x="38" y="188" class="d-mono">forceConflicts</text>
+        <rect x="700" y="110" width="240" height="110" rx="12" class="d-agent"/>
+        <text x="718" y="142" class="d-ttl-s">ops-agent (MCP)</text>
+        <text x="718" y="168" class="d-mono">JSON merge patch</text>
+        <text x="718" y="188" class="d-mono">field_manager ops-agent</text>
+
+        <rect x="330" y="20" width="300" height="46" rx="8" class="d-card"/>
+        <text x="346" y="48" class="d-mono">annotations faas.poc/build-id</text>
+        <rect x="330" y="82" width="300" height="46" rx="8" class="d-card"/>
+        <text x="346" y="110" class="d-mono">annotations .../max-scale</text>
+        <rect x="330" y="144" width="300" height="46" rx="8" class="d-card"/>
+        <text x="346" y="172" class="d-mono">annotations .../min-scale</text>
+        <rect x="330" y="206" width="300" height="46" rx="8" class="d-card"/>
+        <text x="346" y="234" class="d-mono">template.spec (이미지, 자원, 노드)</text>
+        <rect x="330" y="268" width="300" height="46" rx="8" class="d-warn-box"/>
+        <text x="346" y="296" class="d-mono">spec.traffic (둘 다 씀)</text>
+
+        <path d="M260 165 L295 165" class="d-e-prov"/>
+        <path d="M295 43 L295 291" class="d-e-prov"/>
+        <path d="M295 43 L330 43" class="d-e-prov" marker-end="url(#own-m-prov)"/>
+        <path d="M295 105 L330 105" class="d-e-prov" marker-end="url(#own-m-prov)"/>
+        <path d="M295 229 L330 229" class="d-e-prov" marker-end="url(#own-m-prov)"/>
+        <path d="M295 291 L330 291" class="d-e-prov" marker-end="url(#own-m-prov)"/>
+        <path d="M700 165 L665 165" class="d-e-async"/>
+        <path d="M665 165 L665 291" class="d-e-async"/>
+        <path d="M665 167 L630 167" class="d-e-async" marker-end="url(#own-m-async)"/>
+        <path d="M665 291 L630 291" class="d-e-async" marker-end="url(#own-m-async)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-27.</b> 같은 ksvc 를 두 주체가 고친다. 컨트롤 플레인(주황)은 template 과 traffic, 에이전트(보라)는 min-scale 과 rollback 때의 traffic. traffic 은 둘 다 쓰는 유일한 칸이고, 컨트롤 플레인의 forceConflicts 가 이긴다. 그래서 "새 배포 = 롤백 해제" 가 된다.</figcaption>
+  </figure>
+  <pre class="pseudo"><code><span class="k">server-side apply 규칙 (요약):</span>
+  apply 한 YAML 에 적힌 필드 = 그 fieldManager 의 소유
+  다른 매니저가 소유한 필드를 다른 값으로 적으면 → 충돌(409)
+    force 면 → 소유권을 빼앗고 덮어씀
+  내가 전에 적었는데 이번 YAML 에서 빠진 필드 → 삭제
+  내가 적은 적 없는 필드(min-scale) → 건드리지 않음
+<span class="k">결과:</span>
+  배포(apply, force) 는 traffic 을 latestRevision 100 으로 되돌리고 min-scale 은 유지
+  min-scale 변경(merge patch) 은 template 을 바꾸므로 새 Revision 이 생긴다 (이미지는 같음)</code></pre>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>확인: <code>kubectl -n tenant-a get ksvc hello -o yaml --show-managed-fields</code> 에서 manager 가 <code>faas-control-plane</code> 과 <code>ops-agent</code> 둘 보이고, <code>kubectl -n tenant-a get revisions</code> 에서 배포 횟수 + scale 횟수만큼 Revision 이 쌓인다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: 같은 코드를 다시 POST 했는데 Revision 이 안 늘어난다 → 정상이다. buildId 가 코드 해시라 template 이 똑같고, apply 가 아무것도 바꾸지 않는다(05 멱등). <strong>증상</strong>: 상태가 DEPLOYING 에서 안 넘어간다 → 새 Revision 이 Ready 가 안 됨(toleration·quota·이미지). <code>kubectl -n tenant-a describe revision</code>.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이렇게 했나 (대안)</p><p>(가) 태그로 배포: 같은 태그가 다른 이미지를 가리키면 롤백이 거짓말이 된다. (나) min-scale 을 템플릿에 넣기: 배포마다 에이전트 결정이 지워진다. (다) traffic 을 생략: 롤백 후 다음 배포가 고정을 못 풀어, 새 코드가 트래픽 0% 로 남는다. 05 README 결정 2 와 3절.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/reference/serving-api/#serving.knative.dev/v1.Service">Service 스펙</a> · <a href="https://knative.dev/docs/serving/autoscaling/concurrency/">Concurrency</a> · <a href="https://knative.dev/docs/serving/traffic-management/">Traffic management</a> · <a href="https://kubernetes.io/docs/reference/using-api/server-side-apply/">Server-Side Apply</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="measure">측정 스크립트의 논리</h2>
+
+<div class="tier" data-tier="1">
+  <h3>무엇을 재고, 무엇을 빼려고 하나</h3>
+  <p>04 의 측정 스크립트 셋은 숫자보다 "조건을 어떻게 맞췄나" 가 중요하다. <code>coldstart.sh</code> 는 진짜 0 에서 출발하는 첫 요청만, <code>latency.sh</code> 는 이미 켜진 파드의 반복 요청만, <code>build-noise.sh</code> 는 같은 웜 파드에 빌드 위치만 바꿔서 잰다. 공통 값(namespace, 도메인, 8081)은 <code>scripts/lib.sh</code> 에 있다.</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>coldstart.sh</h3>
+  <div class="code-head"><span>poc/04-faas-runtime/scripts/coldstart.sh</span><span>핵심 루프</span></div>
+  <pre><code>minscale=$(kubectl -n "$NS" get ksvc "$svc" -o jsonpath='{.spec.template.metadata.annotations.autoscaling\.knative\.dev/min-scale}')
+pods() { kubectl -n "$NS" get pods -l "serving.knative.dev/service=$svc" --no-headers 2&gt;/dev/null | wc -l | tr -d ' '; }
+<span class="k">for</span> i <span class="k">in</span> $(seq 1 "$N"); <span class="k">do</span>
+  <span class="k">if</span> [ "${minscale:-0}" -ge 1 ] 2&gt;/dev/null; <span class="k">then</span>
+    sleep "$IDLE"
+  <span class="k">else</span>
+    waited=0
+    <span class="k">until</span> [ "$(pods)" = "0" ]; <span class="k">do</span>
+      sleep 2; waited=$((waited+2))
+      [ $waited -lt 300 ] || { echo "5분이 지나도 0개가 안 된다"; exit 1; }
+    <span class="k">done</span>
+    sleep 2   <span class="c"># Kourier·activator 가 "0개" 를 알아챌 틈</span>
+  <span class="k">fi</span>
+  out=$(curl -s -o "$tmp" -w '%{http_code} %{time_total}' -H "Host: $host" --max-time 120 "$GATEWAY/")
+  ...
+  echo "$(date +%FT%T),$svc,$i,$ms,$cold,$code,$node" &gt;&gt; "$csv"
+<span class="k">done</span></code></pre>
+  <figure>
+  <pre class="mermaid">
+flowchart TD
+  S["시작: 함수 이름, 회수 N"] --> MS["ksvc 의 min-scale 주석 읽기"]
+  MS --> L{"i 가 N 이하인가"}
+  L -->|아니오| SUM["CSV 마지막 N 줄 중 HTTP 200 만<br/>p50, p95 요약"]
+  L -->|예| W{"min-scale 1 이상인가"}
+  W -->|예| IDLE["IDLE 초 쉬기<br/>웜 파드 상태"]
+  W -->|아니오| P0{"함수 파드 수가 0 인가"}
+  P0 -->|아니오| WAIT["2초 기다림<br/>300초 넘으면 실패 종료"]
+  WAIT --> P0
+  P0 -->|예| G["2초 더 기다림<br/>종료 마무리"]
+  IDLE --> REQ["curl 한 번<br/>Host 헤더, 최대 120초"]
+  G --> REQ
+  REQ --> REC["시간, HTTP 코드, cold 칸,<br/>응답한 파드의 노드 기록"]
+  REC --> L
+  </pre>
+  <figcaption><b>그림 5-28.</b> coldstart.sh 순서도. 파드 수는 라벨 <code>serving.knative.dev/service=&lt;함수&gt;</code> 로 센다. Knative 가 함수 파드에 붙이는 라벨이다. 노드 기록은 "정말 exec 풀에서 떴나" 를 함께 증명한다.</figcaption>
+  </figure>
+  <p>읽을 때 주의: 기다리는 시간(0개가 될 때까지)은 측정값에 들어가지 않는다. 측정값은 <code>curl</code> 의 <code>time_total</code> 뿐이고, 여기에 맥 → Docker → Kourier 구간이 포함된다. 1회에 window + grace + 종료만큼 기다리므로 회수가 많으면 오래 걸린다.</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>latency.sh 와 build-noise.sh</h3>
+  <pre class="pseudo"><code><span class="k">latency.sh</span>(함수, C=4, REQ=200, QUERY, WHILE_PID):
+  첫 요청 한 번 보내고 버린다           <span class="c">// 혹시 콜드였으면 섞이지 않게</span>
+  C 개 worker 를 동시에:
+    <span class="k">만약</span> WHILE_PID: 그 프로세스가 살아 있는 동안 20개씩 반복
+    <span class="k">아니면</span>: REQ 개를 curl --config 한 번으로 (연결 재사용)
+    요청마다 "코드 시간" 한 줄
+  200 이 아닌 줄 수 = errors
+  200 인 줄의 시간 → p50, p95, min, max (nearest-rank)</code></pre>
+  <figure>
+  <pre class="mermaid">
+flowchart LR
+  B0["baseline<br/>빌드 없음, 2000 요청"] --> B1["build 풀에서 캐시 없는 빌드 시작"]
+  B1 --> R1["빌드 파드 Running 까지 대기"]
+  R1 --> M1["빌드가 끝날 때까지<br/>latency.sh WHILE_PID"]
+  M1 --> B2["exec 풀에서 같은 빌드 시작"]
+  B2 --> R2["Running 까지 대기"]
+  R2 --> M2["끝날 때까지 latency.sh"]
+  M2 --> CSV["build-noise.csv 에 3줄<br/>p50, p95, n, errors, 빌드 초"]
+  </pre>
+  <figcaption><b>그림 5-29.</b> build-noise.sh 순서. 대상은 min-scale 1 인 hello-gvisor-warm 이다(콜드 스타트가 섞이지 않게). 빈 요청(QUERY 없음)을 쓰는 이유는 함수 자신의 CPU limit throttling 을 빼고 "옆 빌드의 영향" 만 보려는 것이다.</figcaption>
+  </figure>
+  <ul>
+    <li>build-noise 는 Knative 보다 노드 풀의 실험이다. kind 에서는 노드가 같은 맥 CPU 를 나눠 써서 "스케줄링 분리" 효과만 보인다(스크립트 주석). Knative 쪽에서 볼 점은, 대상이 웜 파드라 요청이 activator 를 거치는지(SKS 모드)가 결과에 섞일 수 있다는 것이다 【확인 필요: 측정 중 SKS MODE】.</li>
+    <li>latency.sh 의 <code>curl --config</code> 는 연결을 재사용한다. 그래서 TCP 연결 비용이 빠지고 Envoy → (activator) → queue-proxy → 함수 경로의 비용이 주로 남는다.</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>결과는 <code>poc/04-faas-runtime/results/coldstart.csv</code>(time,fn,run,ms,cold,http,pod_node), <code>build-noise.csv</code>. 요약 줄은 <code>lib.sh</code> 의 <code>summarize</code> 가 만든다. p95 는 20회 이상일 때 의미가 있다(10회면 사실상 최댓값, 스크립트 주석).</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: "5분이 지나도 0개가 안 된다" → 누가 계속 요청 중(다른 터미널의 latency.sh), min-scale 이 실제로는 1, 또는 이전 Revision 파드가 종료 중. <strong>증상</strong>: <code>cold=false</code> 가 섞임 → 0 이 되기 전에 요청했거나 sleep 2 동안 다른 요청이 파드를 깨움. <strong>증상</strong>: http=000 → 120초 안에 응답 없음. 그 함수 namespace 의 NetworkPolicy(깨지면 절).</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/autoscaling/scale-to-zero/">Scale to zero</a> · <a href="https://everything.curl.dev/usingcurl/verbose/writeout">curl --write-out</a> · <a href="https://knative.dev/docs/serving/observability/metrics/serving-metrics/">Serving metrics</a></p></aside>
+
+
+<!-- ============================================================ -->
+<h2 id="mcp">MCP scale·rollback 과 Knative 필드</h2>
+
+<div class="tier" data-tier="1">
+  <h3>에이전트의 두 손잡이는 Knative 의 두 칸이다</h3>
+  <p>05 의 운영 MCP 서버(<code>poc/05-control-plane-mcp/mcp-server/ops_mcp</code>)는 AI 에이전트에게 도구 세 개를 준다. 그중 바꾸는 도구 둘이 Knative 의 두 칸에 정확히 대응한다. <strong>scale</strong> = Revision template 의 <code>min-scale</code> 주석, <strong>rollback</strong> = ksvc 의 <code>spec.traffic</code>. 에이전트가 파드 수를 직접 바꾸는 게 아니라 Knative 에게 "하한" 과 "트래픽 대상" 만 말하고, 나머지(파드 생성, 라우팅)는 Knative 가 한다. 권한도 그래서 "ksvc patch" 하나로 충분하다(07장의 RBAC).</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 330" role="img" aria-labelledby="mcp-t">
+        <title id="mcp-t">MCP 도구, 바꾸는 ksvc 필드, Knative 에서 일어나는 일</title>
+        <defs>
+          <marker id="mcp-m-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-async"/></marker>
+          <marker id="mcp-m-o" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-obs"/></marker>
+        </defs>
+        <text x="20" y="28" class="d-lbl">MCP 도구</text>
+        <text x="300" y="28" class="d-lbl">ksvc 의 칸</text>
+        <text x="660" y="28" class="d-lbl">Knative 에서 일어나는 일</text>
+        <rect x="20" y="40" width="230" height="80" rx="12" class="d-agent"/>
+        <text x="38" y="72" class="d-ttl-s">scale(delta)</text>
+        <text x="38" y="98" class="d-mono">자동 허용, ±2, 0~5</text>
+        <rect x="300" y="40" width="310" height="80" rx="12" class="d-card"/>
+        <text x="318" y="72" class="d-mono">spec.template.metadata.</text>
+        <text x="318" y="94" class="d-mono">annotations min-scale</text>
+        <rect x="660" y="40" width="280" height="80" rx="12" class="d-cp-box"/>
+        <text x="678" y="72" class="d-sub">새 Revision (이미지 같음)</text>
+        <text x="678" y="96" class="d-sub">KPA 하한이 바뀜</text>
+
+        <rect x="20" y="140" width="230" height="80" rx="12" class="d-agent"/>
+        <text x="38" y="172" class="d-ttl-s">rollback</text>
+        <text x="38" y="198" class="d-mono">사람 승인 필요</text>
+        <rect x="300" y="140" width="310" height="80" rx="12" class="d-card"/>
+        <text x="318" y="172" class="d-mono">spec.traffic =</text>
+        <text x="318" y="194" class="d-mono">[revisionName X, 100]</text>
+        <rect x="660" y="140" width="280" height="80" rx="12" class="d-cp-box"/>
+        <text x="678" y="172" class="d-sub">Route 가 X 로 고정</text>
+        <text x="678" y="196" class="d-sub">새 Revision 은 안 생김</text>
+
+        <rect x="20" y="240" width="230" height="80" rx="12" class="d-obs-box"/>
+        <text x="38" y="272" class="d-ttl-s">get_metrics</text>
+        <text x="38" y="298" class="d-mono">읽기 전용</text>
+        <rect x="300" y="240" width="310" height="80" rx="12" class="d-card"/>
+        <text x="318" y="272" class="d-mono">status.traffic, url,</text>
+        <text x="318" y="294" class="d-mono">PodAutoscaler desired/actual</text>
+        <rect x="660" y="240" width="280" height="80" rx="12" class="d-plain-box"/>
+        <text x="678" y="272" class="d-sub">변화 없음</text>
+        <text x="678" y="296" class="d-sub">합성 요청 5번으로 확인</text>
+
+        <path d="M250 80 L300 80" class="d-e-async" marker-end="url(#mcp-m-a)"/>
+        <path d="M610 80 L660 80" class="d-e-async" marker-end="url(#mcp-m-a)"/>
+        <path d="M250 180 L300 180" class="d-e-async" marker-end="url(#mcp-m-a)"/>
+        <path d="M610 180 L660 180" class="d-e-async" marker-end="url(#mcp-m-a)"/>
+        <path d="M300 280 L250 280" class="d-e-obs" marker-end="url(#mcp-m-o)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-30.</b> 도구와 Knative 필드의 대응. scale 은 template 을 바꾸므로 새 Revision 이 생기고, rollback 은 template 이 아니라 traffic 만 바꾸므로 Revision 이 생기지 않는다. 이 차이가 아래 가드레일 하나("traffic 이 고정돼 있으면 scale 거절")의 이유다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>코드에서 Knative 필드가 다뤄지는 곳</h3>
+  <div class="code-head"><span>poc/05-control-plane-mcp/mcp-server/ops_mcp/tools.py</span><span>scale 발췌</span></div>
+  <pre><code>MIN_SCALE = <span class="s">"autoscaling.knative.dev/min-scale"</span>
+MAX_SCALE = <span class="s">"autoscaling.knative.dev/max-scale"</span>
+...
+<span class="k">def</span> _traffic_pinned(svc):
+    <span class="s">"""spec.traffic 에 latestRevision: true 가 없으면 = 누가(rollback) 특정 Revision 에 고정해 둔 상태"""</span>
+    traffic = svc.get(<span class="s">"spec"</span>, {}).get(<span class="s">"traffic"</span>) <span class="k">or</span> []
+    <span class="k">return</span> bool(traffic) <span class="k">and not</span> any(t.get(<span class="s">"latestRevision"</span>) <span class="k">for</span> t <span class="k">in</span> traffic)
+...
+            <span class="k">if</span> _traffic_pinned(svc):
+                <span class="k">raise</span> GuardrailError(<span class="s">"... 지금 scale 하면 트래픽 0% 인 새 Revision 만 데워진다"</span>)
+            current = int(ann.get(MIN_SCALE, <span class="s">"0"</span>))
+            max_scale = int(ann.get(MAX_SCALE, str(self.s.min_scale_cap)))
+            ceiling = min(self.s.min_scale_cap, max_scale)
+            target = current + delta
+            ...
+            patch = {<span class="s">"spec"</span>: {<span class="s">"template"</span>: {<span class="s">"metadata"</span>: {<span class="s">"annotations"</span>: {MIN_SCALE: str(target)}}}}}
+            self.kn.patch_service(name, patch, dry_run=dry_run)</code></pre>
+  <ul>
+    <li><code>_traffic_pinned</code>: rollback 뒤에는 traffic 이 특정 Revision 고정이다. 이때 min-scale 을 바꾸면 template 변경 → 새 Revision 이 생기지만 트래픽은 고정된 옛 Revision 으로 간다. 새 Revision 은 트래픽 0% 라 min-scale 이 적용되지도 않는다(KPA 절 edge case). 즉 "아무것도 데우지 못하는 scale" 이라 막는다.</li>
+    <li><code>ceiling = min(min_scale_cap, max_scale)</code>: Knative 는 min-scale 이 max-scale 보다 크면 거절하거나 혼란스럽게 동작하므로 【확인 필요: webhook 검증 여부】, 템플릿의 max-scale(5) 과 설정 상한(5) 중 작은 값으로 막는다.</li>
+    <li>merge patch 는 annotations 맵의 한 키만 바꾼다. 컨트롤 플레인이 적은 build-id·max-scale 은 그대로다.</li>
+  </ul>
+  <div class="code-head"><span>poc/05-control-plane-mcp/mcp-server/ops_mcp/tools.py</span><span>rollback 발췌</span></div>
+  <pre><code>            current_image = _image(svc.get(<span class="s">"spec"</span>, {}).get(<span class="s">"template"</span>, {}).get(<span class="s">"spec"</span>, {}))
+            revisions = sorted(self.kn.list_revisions(name), key=_generation, reverse=True)
+            target = next((r <span class="k">for</span> r <span class="k">in</span> revisions
+                           <span class="k">if</span> _is_ready(r) <span class="k">and</span> _image(r.get(<span class="s">"spec"</span>, {})) != current_image), None)
+            ...
+            patch = {<span class="s">"spec"</span>: {<span class="s">"traffic"</span>: [{<span class="s">"revisionName"</span>: plan[<span class="s">"to_revision"</span>], <span class="s">"percent"</span>: 100}]}}</code></pre>
+  <ul>
+    <li><code>_generation</code>: Revision 라벨 <code>serving.knative.dev/configurationGeneration</code> 으로 최신순 정렬.</li>
+    <li>"지금과 다른 이미지" 조건: scale 이 같은 이미지의 Revision 을 여러 개 만들기 때문이다. 바로 전 Revision 이 그저 min-scale 만 다른 같은 코드일 수 있으니, 이미지(digest)가 다른 첫 Ready Revision 을 찾는다. digest 고정이 여기서 다시 쓰인다.</li>
+    <li>traffic 목록을 통째로 한 항목으로 바꾼다. JSON merge patch 에서 목록은 부분 병합이 아니라 교체다.</li>
+  </ul>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>rollback 시퀀스와 되돌리기</h3>
+  <figure>
+  <pre class="mermaid">
+sequenceDiagram
+  participant AG as 에이전트
+  participant M as ops_mcp
+  participant H as 사람
+  participant API as API 서버
+  participant R as Knative Route
+  AG->>M: rollback hello
+  M->>API: Revision 목록, 현재 image 읽기
+  M->>M: 이미지가 다른 최신 Ready Revision X 선택
+  M-->>AG: approval_required, approval_id
+  AG->>H: 승인 요청 전달
+  H->>M: python -m ops_mcp.approve id
+  AG->>M: rollback hello, approval_id
+  M->>API: merge patch spec.traffic X 100, field_manager ops-agent
+  API-->>M: 200 (RBAC patch 허용)
+  R->>R: KIngress 갱신, X 로 100 퍼센트
+  M-->>AG: rolled_back, undo 안내
+  Note over R: 다음 배포의 force apply 가 latestRevision 100 으로 복귀
+  </pre>
+  <figcaption><b>그림 5-31.</b> rollback 의 Knative 쪽 결과는 Route 재조정 한 번이다. 파드가 0 인 옛 Revision 으로 고정하면 첫 요청은 콜드 스타트가 된다. 승인·가드레일 설계는 <a href="ch07-control-plane.html">07장</a>.</figcaption>
+  </figure>
+  <div class="table-wrap"><table><thead><tr><th>상황</th><th>Knative 상태</th><th>에이전트 도구 결과</th></tr></thead><tbody>
+  <tr><td>평소</td><td>traffic latestRevision 100</td><td>scale 가능, rollback 은 이미지 다른 Revision 이 있으면 계획 생성</td></tr>
+  <tr><td>rollback 직후</td><td>traffic X 고정</td><td>scale 거절 (pinned), get_metrics 의 <code>traffic_pinned: true</code></td></tr>
+  <tr><td>새 배포 직후</td><td>force apply 로 latestRevision 100 복귀</td><td>다시 평소</td></tr>
+  <tr><td>Revision 이 GC 됨</td><td>옛 Revision 객체 없음</td><td>rollback: "되돌아갈 곳이 없다"</td></tr>
+  </tbody></table></div>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>knative.py</code> 의 메서드 목록이 곧 필요한 권한 목록이다: services get/patch, revisions list, podautoscalers get(없으면 403 을 None 으로), pods list, metrics.k8s.io pods list. <code>patch_service(dry_run=True)</code> 는 <code>dry_run="All"</code> 로 API 서버(RBAC + Knative webhook)에 검사만 받는다. 그래서 dry-run 으로도 "기능 플래그 위반" 이나 "max-scale 위반" 을 미리 알 수 있다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: scale 이 "executed" 인데 파드가 안 는다 → 새 Revision 이 Ready 가 안 됨(quota) 이거나 traffic 이 고정 상태. <strong>볼 곳</strong>: get_metrics 의 <code>latest_ready_revision</code>, <code>autoscaler.desired/actual</code>, <code>traffic</code>. <strong>증상</strong>: scale 이 error 403 → ops-agent Role 에 patch 가 없다(ANALYSIS B11).</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/rolling-back/">Rolling back to a previous Revision</a> · <a href="https://knative.dev/docs/serving/traffic-management/">Traffic management</a> · <a href="https://kubernetes.io/docs/tasks/manage-kubernetes-objects/update-api-object-kubectl-patch/">kubectl patch (merge patch)</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="break">깨지면</h2>
+
+<div class="tier" data-tier="1">
+  <h3>"READY" 와 "응답이 온다" 는 다르다</h3>
+  <p>Knative 장애의 대부분은 "겉보기 정상" 이다. 새 Revision 이 망가져도 옛 Revision 이 응답하고, ksvc 가 READY 여도 네트워크가 막혀 있으면 요청은 닿지 않는다. 그래서 확인은 언제나 세 층으로 한다: (1) 객체 상태(<code>get ksvc,revisions</code>), (2) 파드 상태(<code>get pods -o wide</code>, describe), (3) 실제 요청(<code>curl -H Host</code>, Hubble).</p>
+  <div class="table-wrap"><table><thead><tr><th>시나리오</th><th>증상</th><th>볼 곳</th><th>고치는 법</th></tr></thead><tbody>
+  <tr><td>1. 기능 플래그 꺼짐</td><td>apply 실패 <code>must not set the field(s): spec.template.spec.tolerations</code>. Argo CD SYNC FAILED. 기존 함수는 응답</td><td><code>kubectl -n knative-serving get cm config-features -o yaml | grep podspec-</code></td><td>patch 다시, 동기화 다시</td></tr>
+  <tr><td>2. toleration 빠짐</td><td>ksvc LATESTCREATED ≠ LATESTREADY. 새 파드 Pending <code>untolerated taint {pool: exec}</code>. 옛 Revision 이 계속 응답</td><td><code>kubectl get revisions</code>, <code>kubectl describe pod</code> Events</td><td>toleration 복구 후 다시 apply. progress-deadline 뒤 Revision 은 Failed 로 남음</td></tr>
+  <tr><td>3. NetworkPolicy 가 activator·Kourier 를 막음</td><td>ksvc READY True, curl 은 타임아웃(HTTP 000). 0 인 함수는 깨어나지도 못함</td><td><code>kubectl -n tenant-a get networkpolicy</code>, <code>hubble observe --namespace tenant-a --verdict DROPPED</code></td><td>tenant values 에 <code>allowFromNamespaces: [knative-serving, kourier-system]</code></td></tr>
+  <tr><td>4. http 레지스트리 태그 해석</td><td>Revision Ready False, 메시지에 digest 해석 실패(https 질의 실패)</td><td><code>kubectl describe revision</code>, controller 로그</td><td>config-deployment 건너뛰기 목록에 레지스트리 추가, 또는 digest 로 배포</td></tr>
+  </tbody></table></div>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>시나리오 3 자세히: 왜 READY 인데 안 닿나</h3>
+  <p>ksvc 의 Ready 는 "Revision 파드가 준비 확인을 통과했고 Route·KIngress 가 설정됐다" 는 뜻이다. 그런데 준비 확인은 kubelet → queue-proxy (같은 노드, 노드에서 파드로) 이라 NetworkPolicy 의 ingress 규칙에 걸리지 않는 경우가 많다 【확인 필요: Cilium 의 host 출발 트래픽 기본 허용】. 반면 실제 요청은 다른 namespace(kourier-system 의 Envoy, knative-serving 의 activator)에서 출발한다. 03 의 default-deny 는 같은 namespace 와 DNS 만 열어 두므로 이 요청들이 떨어진다. autoscaler 의 지표 긁기(:9090)도 knative-serving 에서 출발하므로 같이 막힌다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 340" role="img" aria-labelledby="np-t">
+        <title id="np-t">allow-from-namespaces 가 없을 때 Kourier, activator, autoscaler 의 트래픽이 tenant-a 경계에서 떨어지는 모습</title>
+        <defs>
+          <marker id="np-m-f" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+        </defs>
+        <rect x="20" y="30" width="220" height="70" rx="12" class="d-user-box"/>
+        <text x="38" y="60" class="d-ttl-s">Kourier Envoy</text>
+        <text x="38" y="84" class="d-mono">kourier-system</text>
+        <rect x="20" y="135" width="220" height="70" rx="12" class="d-agent"/>
+        <text x="38" y="165" class="d-ttl-s">activator</text>
+        <text x="38" y="189" class="d-mono">knative-serving</text>
+        <rect x="20" y="240" width="220" height="70" rx="12" class="d-obs-box"/>
+        <text x="38" y="270" class="d-ttl-s">autoscaler</text>
+        <text x="38" y="294" class="d-mono">knative-serving :9090</text>
+
+        <rect x="420" y="40" width="24" height="280" rx="4" class="d-fail-box"/>
+        <text x="330" y="30" class="d-lbl">default-deny-all</text>
+
+        <rect x="470" y="20" width="470" height="300" rx="14" class="d-pool"/>
+        <text x="486" y="44" class="d-lbl">tenant-a (exec 풀 파드)</text>
+        <rect x="600" y="120" width="300" height="110" rx="12" class="d-user-box"/>
+        <text x="618" y="152" class="d-ttl-s">hello 파드</text>
+        <text x="618" y="178" class="d-mono">queue-proxy :8012</text>
+        <text x="618" y="200" class="d-mono">ksvc READY True</text>
+        <text x="486" y="280" class="d-sub">열려 있는 것: 같은 namespace, DNS</text>
+        <text x="486" y="304" class="d-sub">필요한 것: allow-from-namespaces</text>
+
+        <path d="M240 65 L560 65 L560 140 L600 140" class="d-e-fail" marker-end="url(#np-m-f)"/>
+        <path d="M240 170 L600 170" class="d-e-fail" marker-end="url(#np-m-f)"/>
+        <path d="M240 275 L560 275 L560 210 L600 210" class="d-e-fail" marker-end="url(#np-m-f)"/>
+        <text x="256" y="124" class="d-lbl">DROPPED (Hubble 에 보임)</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 5-32.</b> tenant-a 에 allow-from-namespaces 가 없을 때. 빨간 점선 세 개가 모두 다른 namespace 에서 출발해 default-deny 에 떨어진다. 10/20 에 고친 이음새(RUN-ALL 0절)가 이것이다. 03 의 <code>tenants/tenant-a.yaml</code> 의 <code>network.allowFromNamespaces</code> 두 줄이 차트의 네 번째 NetworkPolicy 를 만든다.</figcaption>
+  </figure>
+  <div class="code-head"><span>poc/03-tenant-isolation/tenants/tenant-a.yaml</span><span>발췌</span></div>
+  <pre><code><span class="c"># 5단계 Knative 함수(tenant-a/hello)가 이 namespace 에 뜬다. 요청은 kourier-system(입구)이나</span>
+<span class="c"># knative-serving(activator: 파드가 0개일 때 요청을 잡아 두는 곳)을 거쳐 들어오고, autoscaler(knative-serving)가</span>
+<span class="c"># queue-proxy 지표를 긁으러 들어온다. 이 둘을 안 열면 default-deny 에 막혀 ksvc 가 READY 여도 curl 이 응답을 못 받는다.</span>
+<span class="k">network</span>:
+  <span class="k">allowFromNamespaces</span>: [knative-serving, kourier-system]</code></pre>
+  <p>이 규칙은 namespace 단위로 연다(<code>namespaceSelector</code> 의 <code>kubernetes.io/metadata.name</code>). 더 좁히려면 podSelector 를 붙여 activator·autoscaler·Envoy 파드만 열 수 있다. 다만 Knative 업그레이드로 라벨이 바뀌면 같이 깨진다는 대가가 있다.</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>진단 순서도와 나머지 시나리오의 세부</h3>
+  <figure>
+  <pre class="mermaid">
+flowchart TD
+  A["curl 이 실패한다"] --> B{"연결 거부인가"}
+  B -->|예| B1["kind 포트, NodePort 31080,<br/>Kourier Envoy 파드 확인"]
+  B -->|아니오| C{"404 인가"}
+  C -->|예| C1["Host 헤더와 ksvc URL 비교,<br/>Route Ready 확인"]
+  C -->|아니오| D{"ksvc READY 인가"}
+  D -->|아니오| D1{"LATESTCREATED 와<br/>LATESTREADY 가 다른가"}
+  D1 -->|예| D2["새 Revision describe<br/>Pending, 이미지, 태그 해석"]
+  D1 -->|아니오| D3["webhook 거절, 플래그 확인"]
+  D -->|예| E{"파드가 0 에서 안 깨어나나"}
+  E -->|예| E1["activator 로그, PA 와 SKS,<br/>NetworkPolicy, Hubble DROPPED"]
+  E -->|아니오| F{"파드는 있는데 타임아웃"}
+  F -->|예| F1["NetworkPolicy, Hubble DROPPED<br/>kourier-system 출발 패킷"]
+  F -->|아니오| G["함수 로그, timeoutSeconds,<br/>containerConcurrency 줄 서기"]
+  </pre>
+  <figcaption><b>그림 5-33.</b> 함수 호출 실패 진단 순서도. 입구 → 라우트 → Revision → 스케일 → 네트워크 → 함수 순서로 좁힌다.</figcaption>
+  </figure>
+  <h4>시나리오 1: 기능 플래그 (04 README 7단계, ANALYSIS B6)</h4>
+  <pre class="pseudo"><code>kubectl -n knative-serving patch cm config-features --type merge -p '{"data":{"kubernetes.podspec-tolerations":"disabled"}}'
+hello-runc.yaml 의 max-scale 5 → 4, push
+<span class="k">기대</span>: Argo CD operationState = Failed, message 에 must not set the field(s)
+      기존 hello-runc-0000N 은 계속 응답 (webhook 은 저장을 막을 뿐 기존 객체를 안 건드림)
+<span class="k">05 에서 같은 일이 나면</span>: 컨트롤 플레인의 server-side apply 가 400/422 계열로 실패
+      → AUDIT 줄 deploy.apply error, 상태는 이전 Revision 그대로</code></pre>
+  <h4>시나리오 2: toleration 빠짐 (ANALYSIS B7)</h4>
+  <p>ksvc 에서 tolerations 를 지우면 webhook 은 통과한다(칸이 없는 것은 위반이 아니다). 새 Revision 의 파드는 nodeSelector 로 exec 노드만 고르는데 그 노드의 taint 를 못 넘으니 Pending 이다. Revision 은 <code>progress-deadline</code>(기본 600s) 동안 Ready 를 기다리다 실패로 표시된다. 그동안 Route 의 latestRevision 은 옛 Ready Revision 을 가리키므로 트래픽은 끊기지 않는다. 단, 옛 Revision 이 0 으로 내려가 있으면 그 Revision 의 콜드 스타트는 정상 동작한다(옛 Revision 의 스펙엔 toleration 이 있다).</p>
+  <h4>시나리오 4: http 레지스트리와 태그 해석</h4>
+  <p>setup.sh 4/5 의 patch 가 빠지면, 04 의 <code>kind-registry:5000/fn/hello:v1</code> 은 태그라서 controller 가 digest 를 물으러 간다. kind-registry 는 TLS 가 없으므로 질의가 실패하고 Revision 이 Ready 가 되지 못한다 【확인 필요: 실제 메시지 문구】. 05 는 digest(<code>@sha256</code>) 로 주므로 이 문제를 겪지 않는다. 같은 문제가 본선 환경(사설 레지스트리, 자체 서명 인증서)에서도 날 수 있다: 해결은 건너뛰기 목록, controller 에 CA 넣기, 또는 처음부터 digest 배포.</p>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>시나리오 1·2 는 04 함수로, 3 은 05 함수(tenant-a/hello)로 재현한다(ANALYSIS B4, B6, B7). 4 는 setup.sh 의 config-deployment patch 를 빼고 클러스터를 다시 만들어야 재현된다.</p></aside>
+<aside class="callout warn"><p class="callout-title">주의</p><p>시나리오 3 을 재현할 때 03 의 tenant values 를 Git 에서 지우면 Argo CD(ApplicationSet)가 prune 으로 NetworkPolicy 를 지운다. 되돌릴 때도 push 가 필요하고 폴링 때문에 몇 분 걸릴 수 있다. 데모 중이라면 <code>argocd.argoproj.io/refresh</code> 주석으로 당긴다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/troubleshooting/debugging-application-issues/">Debugging application issues</a> · <a href="https://knative.dev/docs/serving/configuration/feature-flags/">Feature flags</a> · <a href="https://knative.dev/docs/serving/tag-resolution/">Tag resolution</a> · <a href="https://kubernetes.io/docs/concepts/services-networking/network-policies/">NetworkPolicy</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="decisions">결정 표</h2>
+
+<div class="table-wrap"><table><thead><tr><th>결정</th><th>선택</th><th>대안</th><th>버린 이유</th></tr></thead><tbody>
+<tr><td>0↔N 플랫폼</td><td><strong>Knative Serving</strong></td><td>KEDA + HTTP add-on</td><td>기존 Deployment 를 그대로 쓰는 장점은 있지만 Revision(불변 버전)·트래픽 분할·태그가 없어 롤백을 따로 만들어야 한다. 0 일 때 요청 보관은 interceptor 가 하지만 Knative activator 처럼 동시성 상한을 아는 부하 분산은 아니다 【확인 필요】</td></tr>
+<tr><td></td><td></td><td>직접 만든 컨트롤러 + 프록시</td><td>요청 보관, 준비 확인, 0 경계의 경쟁 조건(그림 5-13 의 순서)을 다 다시 풀어야 한다. 본선 시간 안에 불가</td></tr>
+<tr><td></td><td></td><td>OpenFaaS</td><td>함수 템플릿·CLI 는 편하지만 Revision·비율 분할이 약하고, 0 까지 줄이기가 상용판 쪽 【확인 필요】. 작년 상위 팀 구성과도 다름</td></tr>
+<tr><td>입구 (네트워크 층)</td><td><strong>Kourier</strong></td><td>Istio (net-istio)</td><td>mTLS·정책은 강력하지만 system 풀 메모리를 많이 쓴다 【추정】. 네트워크 정책은 Cilium 이 맡으므로 중복</td></tr>
+<tr><td></td><td></td><td>Contour, Gateway API</td><td>가능하지만 Knative 빠른 시작 기본이 Kourier, 설정이 가장 짧다</td></tr>
+<tr><td>오토스케일러 클래스</td><td><strong>KPA (concurrency)</strong></td><td>HPA 클래스 (cpu)</td><td>0 까지 못 줄인다. 함수 부하는 요청 수가 더 직접적</td></tr>
+<tr><td>0 까지 줄이기</td><td><strong>함수별 선택</strong> (기본 0, 웜이 필요하면 min-scale)</td><td>전부 min-scale 1</td><td>함수 수만큼 노드 메모리가 묶인다. 대신 MCP scale 로 필요할 때만 올림</td></tr>
+<tr><td>stable window</td><td>04 측정 함수 <strong>6s</strong>, 05 는 기본 60s</td><td>전부 6s</td><td>짧은 창은 파드 수가 출렁인다. 측정 편의로만</td></tr>
+<tr><td>동시성 상한</td><td>05 <strong>containerConcurrency 10</strong>, 04 는 0</td><td>1 (Lambda 식)</td><td>파드 수가 크게 늘어 quota(pods 10)를 금방 채운다</td></tr>
+<tr><td>이미지 고정</td><td>05 <strong>digest</strong>, 04 태그 + 건너뛰기</td><td>전부 태그</td><td>불변 Revision 이 깨진다. 04 는 학습 단순화를 위해 태그 유지, "빌드마다 새 태그" 규칙</td></tr>
+<tr><td>Knative 설정 관리</td><td><strong>스크립트 patch</strong> (setup.sh, rebuild-cluster.sh)</td><td>Argo CD 로 ConfigMap 관리</td><td>설치 YAML 이 같은 ConfigMap 을 갖고 있어 소유 충돌. 본선 전 정리 후보</td></tr>
+</tbody></table></div>
+
+<!-- ============================================================ -->
+<h2 id="recap">정리</h2>
+
+<h3>핵심 개념 체크리스트</h3>
+<ul class="checklist">
+  <li>ksvc 한 장이 Configuration·Route 로 갈라지고, template 변경마다 바뀌지 않는 Revision 이 생긴다는 것을 그림으로 그릴 수 있다.</li>
+  <li>latestCreated 와 latestReady 가 갈라질 때 트래픽이 어디로 가는지 말할 수 있다.</li>
+  <li>트래픽 분할, 태그 주소, percent 0 다크 런치를 설명할 수 있다.</li>
+  <li>controller, webhook, autoscaler, activator, net-kourier-controller, queue-proxy, Envoy 가 각각 무엇을 하는지 한 줄씩 말할 수 있다.</li>
+  <li>SKS 의 serve/proxy 모드가 "공개 Service 의 endpoints 내용" 이라는 것을 안다.</li>
+  <li>scale-to-zero 순서(activator 를 먼저 넣고, 확인하고, 그다음 0)를 설명할 수 있다.</li>
+  <li>KPA 목표 = target(또는 containerConcurrency) × 70% 를 계산할 수 있다.</li>
+  <li>stable 60초, panic 6초, panic 기준 200%, panic 중 줄이지 않음을 안다.</li>
+  <li>target-burst-capacity 와 EBC 로 activator 가 경로에 남는 조건을 설명할 수 있다.</li>
+  <li>queue-proxy 의 네 역할(상한, 지표, 준비 확인, 종료)과 포트를 안다.</li>
+  <li>KIngress → net-kourier-controller → xDS → Envoy, Host 헤더 라우팅, config-domain 을 설명할 수 있다.</li>
+  <li>기능 플래그가 webhook 에서 막는다는 것, 태그 해석이 http 레지스트리에서 실패한다는 것을 안다.</li>
+  <li>콜드 스타트 구간과 각 구간을 줄이는 수단을 말할 수 있다.</li>
+  <li>MCP scale = min-scale 주석(새 Revision), rollback = traffic 고정(새 Revision 없음)을 구분한다.</li>
+  <li>"READY 인데 안 닿음" 을 NetworkPolicy 로 설명할 수 있다.</li>
+</ul>
+
+<h3>이 장의 핵심 결정</h3>
+<div class="table-wrap"><table><thead><tr><th>선택</th><th>대안</th><th>버린 이유</th></tr></thead><tbody>
+<tr><td>Knative Serving + Kourier</td><td>KEDA HTTP add-on / 직접 / OpenFaaS</td><td>Revision·트래픽 분할·activator 를 한 번에. 직접 만들기는 시간 불가</td></tr>
+<tr><td>KPA concurrency, 함수별 min-scale</td><td>HPA, 전부 웜</td><td>0 까지 줄이기가 멀티테넌트 비용의 핵심</td></tr>
+<tr><td>05 템플릿: digest + build-id + traffic 명시 + min-scale 비움</td><td>태그, min-scale 포함, traffic 생략</td><td>불변 Revision, 에이전트와 필드 공존, 롤백 해제</td></tr>
+<tr><td>기능 플래그 3개만 켬</td><td>secure-pod-defaults 등 더 켜기, affinity 허용</td><td>필요한 것만 허용해야 사용자가 노드를 고르지 못한다</td></tr>
+</tbody></table></div>
+
+<h3>본선에서 떠올릴 패턴</h3>
+<ul>
+  <li><strong>불변 버전 + 포인터</strong>: Revision(불변) 과 Route(가중치 포인터)를 나누면 배포·롤백·카나리가 전부 "포인터 바꾸기" 가 된다. 모델 서빙(모델 버전), 설정 배포, DB 스키마 마이그레이션 뷰 전환에도 같은 모양을 쓴다.</li>
+  <li><strong>0 경계에는 버퍼가 필요하다</strong>: 대상이 없을 때 요청을 잡아 둘 무언가(activator, 큐, 대기열)를 두고, 대상을 없애기 전에 버퍼를 먼저 경로에 넣는다. 배치 워커를 0 으로 줄이는 설계(KEDA + 큐)에 그대로 옮겨진다.</li>
+  <li><strong>사이드카로 계측·상한</strong>: 사용자 코드를 고치지 않고 앞에 작은 프록시를 둬서 세고, 막고, 준비를 확인한다. AI 에이전트 도구 호출 앞의 가드레일 프록시도 같은 구조다.</li>
+  <li><strong>두 창 오토스케일링</strong>: 느린 평균(안정)과 빠른 평균(급증)을 따로 보고, 급증 중엔 줄이지 않는다. 비용 경보, 레이트 리미터 설계에도 쓴다.</li>
+  <li><strong>필드 주인 나누기</strong>: 한 객체를 두 주체가 고치면 필드 단위로 주인을 정하고(server-side apply), 겹치는 칸은 누가 이기는지 명시한다.</li>
+  <li><strong>READY ≠ 닿음</strong>: 상태 객체가 아니라 실제 요청으로 검증하는 합성 프로브(get_metrics 의 probe)를 둔다.</li>
+</ul>
+
+<h3>스스로 답해 볼 질문</h3>
+<ol>
+  <li>ksvc 의 template 에 주석 한 줄만 추가해도 새 Revision 이 생기는 이유는? 이것이 MCP scale 에 주는 영향은?</li>
+  <li>05 템플릿에서 traffic 블록을 지우면 rollback 이후 다음 배포는 어떻게 되나?</li>
+  <li>containerConcurrency 10, target 주석 없음일 때 파드당 목표 동시성은? target "20" 을 추가하면?</li>
+  <li>함수 파드가 0개일 때 첫 요청이 실패하지 않고 느려지기만 하는 이유를 부품 이름 셋으로 말하라.</li>
+  <li>scale-to-zero 에서 activator 를 경로에 넣는 일과 마지막 파드를 지우는 일의 순서가 바뀌면 무슨 일이 생기나?</li>
+  <li>우리 함수(max-scale 5, 파드당 total 10)는 기본 target-burst-capacity 211 에서 serve 모드로 갈 수 있나? 그 결과 요청 경로는?</li>
+  <li>panic 모드에 들어가는 조건과 빠져나오는 조건은? panic 중에 파드를 줄이지 않는 이유는?</li>
+  <li>queue-proxy 가 없다면 Knative 가 잃는 능력 세 가지는?</li>
+  <li>Kourier 를 Istio 로 바꾸면 우리 ksvc YAML 중 바뀌는 줄은? 바뀌는 설정 맵 키는?</li>
+  <li>kubernetes.podspec-tolerations 를 끈 상태에서 RuntimeClass gvisor 만 쓰는 ksvc 는 exec 풀에 갈 수 있나? 왜?</li>
+  <li>04 함수가 태그(:v1)를 쓰는 것의 위험을 한 문장으로, 05 가 그걸 어떻게 피했는지 한 문장으로.</li>
+  <li>tenant-a 함수가 READY 인데 curl 이 타임아웃이다. 확인할 명령 세 개를 순서대로.</li>
+</ol>
+
+<nav class="pager" aria-label="이전 다음 장"></nav>
+</article>
+</main>
+</div>
+</body>
+</html>

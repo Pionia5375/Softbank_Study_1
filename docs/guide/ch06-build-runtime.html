@@ -1,0 +1,2620 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>06 이미지 빌드와 gVisor · FaaS PoC 가이드</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="guide.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="guide.js" defer></script>
+</head>
+<body>
+<div class="shell">
+<nav class="nav" aria-label="장 목록"></nav>
+<main>
+<article class="page">
+
+<header class="chapter-head">
+  <p class="eyebrow">06장 · 관련 폴더 poc/04-faas-runtime, poc/05-control-plane-mcp, poc/07-ec2-k3s</p>
+  <h1>이미지 빌드와 gVisor</h1>
+  <p class="lede">사용자가 올린 코드가 "이미지"라는 상자가 되어 레지스트리에 들어가고, 노드가 그 상자를 받아 "샌드박스" 안에서 돌리기까지를 바이트 단위로 따라간다. 다 읽고 나면 OCI 이미지·레지스트리 프로토콜·Kaniko·digest 고정·CRI와 containerd·RuntimeClass·gVisor 를 한 장의 그림으로 설명하고, 어디가 깨졌는지 증상만 보고 짚을 수 있다.</p>
+  <div class="chapter-meta">
+    <span class="chip">PoC 폴더 <b>poc/04-faas-runtime · poc/05-control-plane-mcp · poc/07-ec2-k3s</b></span>
+    <span class="chip">핵심 기술 <b>OCI 이미지 · Registry v2 · Kaniko · containerd · RuntimeClass · gVisor</b></span>
+  </div>
+</header>
+
+<h2 id="map">이 장의 지도</h2>
+<p>FaaS 플랫폼이 하는 일 네 가지(빌드, 배포, 스케일, 격리) 중에서 이 장은 <strong>빌드</strong>와 <strong>격리</strong>를 맡는다. 배포·스케일(Knative)은 05장, 테넌트 울타리(네트워크·RBAC)는 03·04장, 컨트롤 플레인 코드는 07장이 다룬다. 아래 그림에서 점선 초록 영역이 이 장의 범위다.</p>
+
+<figure>
+  <div class="fig scroll">
+    <svg viewBox="0 0 960 340" role="img" aria-labelledby="f61-t">
+      <title id="f61-t">이 장의 범위: 빌드 풀, 레지스트리, exec 풀의 컨테이너 런타임</title>
+      <defs>
+        <marker id="f61-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        <marker id="f61-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+        <marker id="f61-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+      </defs>
+      <rect x="400" y="20" width="545" height="305" rx="12" class="d-cp"/>
+      <text x="420" y="46" class="d-lbl">이 장의 범위 (06)</text>
+      <rect x="20" y="120" width="150" height="90" rx="12" class="d-user-box"/>
+      <text x="38" y="155" class="d-ttl">사용자 코드</text>
+      <text x="38" y="182" class="d-mono">POST name, code</text>
+      <rect x="205" y="120" width="170" height="90" rx="12" class="d-card"/>
+      <text x="222" y="155" class="d-ttl">컨트롤 플레인</text>
+      <text x="222" y="182" class="d-mono">faas-system (07장)</text>
+      <rect x="420" y="65" width="230" height="110" rx="12" class="d-prov-box"/>
+      <text x="438" y="98" class="d-ttl">build 풀</text>
+      <text x="438" y="124" class="d-sub">kaniko Job 이 이미지를 만든다</text>
+      <text x="438" y="152" class="d-mono">faas-build · fn-build</text>
+      <rect x="695" y="65" width="230" height="110" rx="12" class="d-obs-box"/>
+      <text x="713" y="98" class="d-ttl">kind-registry</text>
+      <text x="713" y="124" class="d-sub">registry:2, http</text>
+      <text x="713" y="152" class="d-mono">맥 5001 = 안 5000</text>
+      <rect x="420" y="215" width="505" height="95" rx="12" class="d-user-box"/>
+      <text x="438" y="248" class="d-ttl">exec 풀 노드</text>
+      <text x="438" y="274" class="d-sub">kubelet → CRI → containerd → shim → runc 또는 runsc</text>
+      <text x="438" y="296" class="d-mono">RuntimeClass gvisor → Sentry 샌드박스</text>
+      <path d="M170 165 L200 165" class="d-e-user" marker-end="url(#f61-user)"/>
+      <path d="M375 150 L415 125" class="d-e-api" marker-end="url(#f61-api)"/>
+      <path d="M375 185 L415 245" class="d-e-api" marker-end="url(#f61-api)"/>
+      <path d="M650 120 L690 120" class="d-e-prov" marker-end="url(#f61-prov)"/>
+      <text x="652" y="110" class="d-lbl">push</text>
+      <path d="M810 175 L810 210" class="d-e-prov" marker-end="url(#f61-prov)"/>
+      <text x="818" y="198" class="d-lbl">pull</text>
+    </svg>
+  </div>
+  <figcaption><b>그림 6-1.</b> 전체 아키텍처에서 이 장이 맡는 부분. 컨트롤 플레인이 빌드 Job 을 만들고(회색), kaniko 가 레지스트리에 이미지를 올리고(주황), exec 풀 노드의 런타임이 그 이미지를 받아 runc 또는 gVisor 로 띄운다.</figcaption>
+</figure>
+
+<div class="table-wrap"><table><thead><tr><th>절</th><th>한 줄 요약</th></tr></thead><tbody>
+<tr><td><a href="#image">1. 컨테이너 이미지란</a></td><td>OCI 매니페스트·설정·레이어, 이미지 인덱스, digest 는 내용의 sha256, 태그는 움직이는 이름표</td></tr>
+<tr><td><a href="#registry">2. 레지스트리 프로토콜</a></td><td>push = blob 업로드 후 매니페스트 PUT, pull = 매니페스트 GET 후 blob GET</td></tr>
+<tr><td><a href="#topology">3. 우리 레지스트리 배치</a></td><td>kind-registry 하나를 <code>localhost:5001</code> 과 <code>kind-registry:5000</code> 두 이름으로 부르는 이유, hosts.toml, Knative 태그 해석 건너뛰기</td></tr>
+<tr><td><a href="#dockerfile">4. Dockerfile 과 멀티 스테이지</a></td><td>Go hello(빌드 단계 + scratch)와 Python 런타임 이미지를 줄 단위로</td></tr>
+<tr><td><a href="#kaniko">5. Kaniko</a></td><td>Docker 데몬 없이 컨테이너 안에서 베이스 FS 를 풀고, RUN 하고, 스냅샷을 레이어로 만들어 push</td></tr>
+<tr><td><a href="#context">6. 빌드 재료(ConfigMap)</a></td><td>04 는 tar.gz, 05 는 initContainer <code>cp -L</code>. ConfigMap 볼륨의 심볼릭 링크가 왜 문제인가</td></tr>
+<tr><td><a href="#job">7. 빌드 Job 설계</a></td><td>namespace, build 풀, backoffLimit, activeDeadlineSeconds, ttlSecondsAfterFinished, resources</td></tr>
+<tr><td><a href="#digest">8. digest 고정</a></td><td>termination-log → 컨트롤 플레인 → <code>image@sha256</code>. 태그가 거짓말하는 경우</td></tr>
+<tr><td><a href="#build-alt">9. 빌드 방식의 대안</a></td><td>BuildKit rootless, Buildpacks, 외부 CI, Docker 소켓(왜 위험한가)</td></tr>
+<tr><td><a href="#runtime">10. 컨테이너 런타임 스택</a></td><td>kubelet → CRI → containerd → shim v2 → runc/runsc, OCI 런타임 스펙, 리눅스 격리 기본 기능</td></tr>
+<tr><td><a href="#runtimeclass">11. RuntimeClass</a></td><td>handler, scheduling, overhead 와 containerd 가 <code>runsc</code> 를 찾는 길</td></tr>
+<tr><td><a href="#gvisor">12. gVisor</a></td><td>Sentry, Gofer/directfs, 플랫폼(systrap·ptrace·KVM), netstack, 보안 모델과 비용</td></tr>
+<tr><td><a href="#install">13. gVisor 설치 (kind 와 EC2)</a></td><td>install-gvisor.sh 한 줄씩, 07 의 user_data 판</td></tr>
+<tr><td><a href="#sandbox-alt">14. 다른 샌드박스</a></td><td>Kata·Firecracker 가 kind 에서 안 되는 이유(중첩 가상화), WASM 의 득실</td></tr>
+<tr><td><a href="#break">15. 깨지면</a></td><td>Docker Hub 429, FailedCreatePodSandBox, aarch64, runsc 없는 노드, 같은 태그 덮어쓰기</td></tr>
+<tr><td><a href="#recap">정리</a></td><td>체크리스트, 결정 표, 본선에서 옮겨 쓸 패턴, 스스로 답할 질문</td></tr>
+</tbody></table></div>
+
+<!-- ============================================================ 1. 이미지 -->
+<h2 id="image">1. 컨테이너 이미지란 무엇인가 (OCI)</h2>
+
+<div class="tier" data-tier="1">
+  <h3>이미지 = "파일 묶음 몇 개 + 실행 방법 메모 + 목차"</h3>
+  <p>컨테이너 이미지(container image)는 마법 같은 것이 아니다. 세 종류의 파일을 레지스트리에 올려 둔 것이다.</p>
+  <ul>
+    <li><strong>레이어(layer)</strong>: 파일 시스템 조각. 각각 하나의 tar 묶음(보통 gzip 압축)이다. "이 레이어에서 추가·변경·삭제된 파일"만 들어 있다.</li>
+    <li><strong>설정(config)</strong>: JSON 한 장. 어떤 CPU 종류(architecture)·OS 용인지, 실행할 명령(Entrypoint/Cmd), 환경 변수, 실행 사용자(User), 레이어 순서(diff_ids).</li>
+    <li><strong>매니페스트(manifest)</strong>: JSON 한 장. "이 이미지는 이 설정 + 이 레이어들" 이라는 목차. 각 항목을 이름이 아니라 <strong>digest</strong>(내용의 sha256 해시)로 가리킨다.</li>
+  </ul>
+  <p>이 형식은 OCI(Open Container Initiative)의 <em>Image Format Specification</em> 이 표준으로 정했다. Docker 이미지 형식(Docker Image Manifest V2 Schema 2)과 거의 같고, containerd·Docker·kaniko·레지스트리가 모두 이 형식을 주고받는다.</p>
+  <p>Java 개발자에게 익숙한 비유: 레이어는 jar 안의 파일 묶음, 설정은 <code>MANIFEST.MF</code> 의 <code>Main-Class</code>, 매니페스트는 "이 버전은 이 체크섬의 jar 들로 이루어진다"는 Maven 의 lock 파일과 비슷하다. 단 하나 다른 점은, 이미지의 모든 연결이 <strong>체크섬 자체가 주소</strong>라는 것이다(내용 주소 지정, content-addressable).</p>
+  <dl class="terms">
+    <dt>digest</dt><dd><code>sha256:</code> + 바이트의 SHA-256 해시 16진수 64자. 내용이 1비트라도 바뀌면 다른 값. 그래서 "이름"이자 "무결성 검사"다.</dd>
+    <dt>태그(tag)</dt><dd><code>v1</code>, <code>latest</code> 같은 사람용 이름. 레지스트리 안에서 "태그 → 매니페스트 digest" 를 가리키는 포인터일 뿐이고, 언제든 다른 매니페스트로 옮길 수 있다.</dd>
+    <dt>저장소(repository)</dt><dd><code>fn/hello</code>, <code>tenant-a/hello</code> 처럼 이미지들을 묶는 이름. 레지스트리 주소 + 저장소 + 태그 또는 digest 가 이미지 참조(reference)다.</dd>
+  </dl>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>세 객체가 서로를 가리키는 법</h3>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 420" role="img" aria-labelledby="f62-t">
+        <title id="f62-t">OCI 이미지의 구조: 태그가 매니페스트를, 매니페스트가 설정과 레이어를 digest 로 가리킨다</title>
+        <defs>
+          <marker id="f62-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f62-fail" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+        </defs>
+        <rect x="20" y="40" width="180" height="70" rx="12" class="d-warn-box"/>
+        <text x="38" y="68" class="d-ttl">태그</text>
+        <text x="38" y="94" class="d-mono">fn/hello:v1</text>
+        <path d="M200 75 L245 75" class="d-e-fail" marker-end="url(#f62-fail)"/>
+        <text x="40" y="135" class="d-lbl">이름표. 옮겨질 수 있다</text>
+        <rect x="250" y="30" width="310" height="180" rx="12" class="d-card"/>
+        <text x="268" y="60" class="d-ttl">매니페스트 (manifest)</text>
+        <text x="268" y="88" class="d-mono">mediaType: ...manifest.v1+json</text>
+        <text x="268" y="112" class="d-mono">config: digest, size</text>
+        <text x="268" y="136" class="d-mono">layers: [ digest, size ] x N</text>
+        <text x="268" y="160" class="d-mono">annotations (선택)</text>
+        <text x="268" y="192" class="d-sub">이 JSON 의 sha256 = 이미지 digest</text>
+        <rect x="620" y="20" width="320" height="150" rx="12" class="d-obs-box"/>
+        <text x="638" y="50" class="d-ttl">설정 (config)</text>
+        <text x="638" y="78" class="d-mono">architecture, os</text>
+        <text x="638" y="102" class="d-mono">config: Env, Cmd, User, Entrypoint</text>
+        <text x="638" y="126" class="d-mono">rootfs.diff_ids: [ ... ]</text>
+        <text x="638" y="150" class="d-mono">history: [ ... ]</text>
+        <rect x="620" y="200" width="320" height="56" rx="12" class="d-prov-box"/>
+        <text x="638" y="224" class="d-ttl-s">레이어 1 · tar+gzip</text>
+        <text x="638" y="245" class="d-mono">sha256:aa... (압축본 해시)</text>
+        <rect x="620" y="266" width="320" height="56" rx="12" class="d-prov-box"/>
+        <text x="638" y="290" class="d-ttl-s">레이어 2 · tar+gzip</text>
+        <text x="638" y="311" class="d-mono">sha256:bb...</text>
+        <rect x="620" y="332" width="320" height="56" rx="12" class="d-prov-box"/>
+        <text x="638" y="356" class="d-ttl-s">레이어 3 · tar+gzip</text>
+        <text x="638" y="377" class="d-mono">sha256:cc...</text>
+        <path d="M560 95 L615 95" class="d-e-api" marker-end="url(#f62-api)"/>
+        <path d="M560 160 C590 160 590 228 615 228" class="d-e-api" marker-end="url(#f62-api)"/>
+        <path d="M560 170 C595 170 595 294 615 294" class="d-e-api" marker-end="url(#f62-api)"/>
+        <path d="M560 180 C600 180 600 360 615 360" class="d-e-api" marker-end="url(#f62-api)"/>
+        <rect x="20" y="250" width="540" height="150" rx="12" class="d-plain-box"/>
+        <text x="38" y="278" class="d-ttl-s">핵심 규칙</text>
+        <text x="38" y="304" class="d-sub">회색 화살표는 전부 digest 로 건다 (내용 주소 지정)</text>
+        <text x="38" y="328" class="d-sub">레이어 digest = 압축된 tar 바이트의 sha256</text>
+        <text x="38" y="352" class="d-sub">diff_id = 압축을 푼 tar 의 sha256 (설정 안에 기록)</text>
+        <text x="38" y="376" class="d-sub">빨간 점선(태그)만 바뀔 수 있는 연결이다</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-2.</b> OCI 이미지의 세 객체. 매니페스트가 설정과 레이어를 digest 로 가리키고, 매니페스트 자신의 digest 가 이미지의 진짜 이름이 된다. 태그는 그 위에 얹힌 이름표다.</figcaption>
+  </figure>
+
+  <p>레이어는 "전체 파일 시스템"이 아니라 <strong>차이(diff)</strong> 다. 컨테이너를 띄울 때 노드의 containerd 는 레이어들을 아래에서 위로 겹쳐(overlayfs 같은 스냅샷 도구, snapshotter) 하나의 루트 파일 시스템으로 보여 준다. 아래 레이어의 파일을 지우려면, 위 레이어에 <code>.wh.</code> 로 시작하는 빈 파일(whiteout, 삭제 표시)을 넣는다.</p>
+
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 380" role="img" aria-labelledby="f63-t">
+        <title id="f63-t">레이어를 아래에서 위로 겹쳐 하나의 파일 시스템으로 보이는 과정과 whiteout</title>
+        <defs>
+          <marker id="f63-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <rect x="30" y="30" width="440" height="50" rx="12" class="d-pool"/>
+        <text x="48" y="61" class="d-sub">쓰기 레이어: 컨테이너 실행 중 바뀐 것 (버려짐)</text>
+        <rect x="30" y="95" width="440" height="50" rx="12" class="d-fail-box"/>
+        <text x="48" y="126" class="d-mono">레이어 4: /tmp/.wh.cache  (삭제 표시)</text>
+        <rect x="30" y="160" width="440" height="50" rx="12" class="d-prov-box"/>
+        <text x="48" y="191" class="d-mono">레이어 3: /app/server.py, /app/handler.py</text>
+        <rect x="30" y="225" width="440" height="50" rx="12" class="d-prov-box"/>
+        <text x="48" y="256" class="d-mono">레이어 2: /app/  (빈 폴더, WORKDIR)</text>
+        <rect x="30" y="290" width="440" height="50" rx="12" class="d-prov-box"/>
+        <text x="48" y="321" class="d-mono">레이어 1: /bin /lib /etc /tmp/cache ...</text>
+        <text x="30" y="368" class="d-lbl">아래 → 위 순서로 적용. 같은 경로는 위가 이긴다</text>
+        <path d="M480 190 L555 190" class="d-e-api" marker-end="url(#f63-api)"/>
+        <text x="484" y="178" class="d-lbl">overlay</text>
+        <rect x="560" y="60" width="370" height="270" rx="12" class="d-card"/>
+        <text x="580" y="92" class="d-ttl">컨테이너가 보는 /</text>
+        <text x="580" y="124" class="d-mono">/bin  /lib  /etc        (레이어 1)</text>
+        <text x="580" y="150" class="d-mono">/app/server.py          (레이어 3)</text>
+        <text x="580" y="176" class="d-mono">/app/handler.py         (레이어 3)</text>
+        <text x="580" y="202" class="d-mono">/tmp/                   (레이어 1)</text>
+        <text x="580" y="228" class="d-mono">/tmp/cache  → 안 보임   (레이어 4)</text>
+        <text x="580" y="270" class="d-sub">레이어는 읽기 전용이고 여러 컨테이너가</text>
+        <text x="580" y="294" class="d-sub">같은 레이어를 디스크에 한 번만 둔다</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-3.</b> 레이어 = tar 로 된 변경분. 겹쳐 보이게 하는 건 노드의 snapshotter(overlayfs) 몫이고, 삭제는 whiteout 파일로 표현한다. 맨 위 쓰기 레이어는 컨테이너가 끝나면 사라진다.</figcaption>
+  </figure>
+
+  <h4>멀티 아키텍처: 이미지 인덱스</h4>
+  <p>같은 <code>python:3.12-slim</code> 이 인텔 맥에서도, 애플 실리콘 맥에서도 돈다. 비결은 <strong>이미지 인덱스(image index)</strong>, Docker 용어로는 manifest list 다. 태그가 매니페스트 대신 인덱스를 가리키고, 인덱스는 플랫폼(<code>os</code>/<code>architecture</code>/<code>variant</code>)마다 매니페스트 하나씩을 나열한다. pull 하는 쪽(containerd)이 자기 플랫폼에 맞는 항목을 고른다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 340" role="img" aria-labelledby="f64-t">
+        <title id="f64-t">이미지 인덱스가 플랫폼별 매니페스트를 가리키는 구조</title>
+        <defs>
+          <marker id="f64-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f64-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+        </defs>
+        <rect x="20" y="130" width="200" height="70" rx="12" class="d-warn-box"/>
+        <text x="38" y="160" class="d-ttl">태그</text>
+        <text x="38" y="184" class="d-mono">python:3.12-slim</text>
+        <rect x="270" y="110" width="270" height="110" rx="12" class="d-card"/>
+        <text x="288" y="140" class="d-ttl">이미지 인덱스</text>
+        <text x="288" y="166" class="d-mono">...image.index.v1+json</text>
+        <text x="288" y="190" class="d-mono">manifests: [ platform, digest ]</text>
+        <rect x="600" y="30" width="330" height="80" rx="12" class="d-card"/>
+        <text x="618" y="60" class="d-ttl-s">매니페스트 linux/amd64</text>
+        <text x="618" y="86" class="d-mono">→ 설정 + 레이어 (x86_64 바이너리)</text>
+        <rect x="600" y="130" width="330" height="80" rx="12" class="d-card"/>
+        <text x="618" y="160" class="d-ttl-s">매니페스트 linux/arm64</text>
+        <text x="618" y="186" class="d-mono">→ 설정 + 레이어 (aarch64 바이너리)</text>
+        <rect x="600" y="230" width="330" height="80" rx="12" class="d-plain-box"/>
+        <text x="618" y="260" class="d-ttl-s">기타 플랫폼</text>
+        <text x="618" y="286" class="d-mono">arm/v7, ppc64le, s390x ...</text>
+        <path d="M220 165 L265 165" class="d-e-api" marker-end="url(#f64-api)"/>
+        <path d="M540 150 C570 150 570 70 595 70" class="d-e-api" marker-end="url(#f64-api)"/>
+        <path d="M540 170 L595 170" class="d-e-user" marker-end="url(#f64-user)"/>
+        <path d="M540 190 C570 190 570 270 595 270" class="d-e-api" marker-end="url(#f64-api)"/>
+        <text x="20" y="250" class="d-sub">애플 실리콘 맥의 kind 노드는</text>
+        <text x="20" y="274" class="d-sub">arm64 항목(파란 선)을 고른다</text>
+        <text x="20" y="306" class="d-lbl">우리가 만든 이미지는 인덱스 없이 노드 arch 하나뿐</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-4.</b> 이미지 인덱스(멀티 아키텍처). 노드의 containerd 가 자기 os/arch 와 같은 항목을 골라 그 매니페스트만 받는다. kaniko 가 클러스터 안에서 만든 이미지는 빌드 노드의 arch 하나짜리 매니페스트다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>필드 단위로 보기</h3>
+  <p>OCI Image Spec 의 핵심 객체를 클래스도로 정리하면 다음과 같다. 모든 연결은 <strong>디스크립터(descriptor)</strong> 라는 작은 구조(mediaType + digest + size)로 이루어진다.</p>
+  <pre class="mermaid">
+classDiagram
+  class Descriptor
+  Descriptor : +string mediaType
+  Descriptor : +string digest
+  Descriptor : +int64 size
+  Descriptor : +map annotations
+  Descriptor : +Platform platform
+  class ImageIndex
+  ImageIndex : +int schemaVersion = 2
+  ImageIndex : +string mediaType
+  ImageIndex : +Descriptor[] manifests
+  class ImageManifest
+  ImageManifest : +int schemaVersion = 2
+  ImageManifest : +string mediaType
+  ImageManifest : +Descriptor config
+  ImageManifest : +Descriptor[] layers
+  ImageManifest : +Descriptor subject
+  class ImageConfig
+  ImageConfig : +string architecture
+  ImageConfig : +string os
+  ImageConfig : +ExecConfig config
+  ImageConfig : +RootFS rootfs
+  ImageConfig : +History[] history
+  class RootFS
+  RootFS : +string type = layers
+  RootFS : +string[] diff_ids
+  ImageIndex --> ImageManifest : manifests 가 가리킴
+  ImageManifest --> ImageConfig : config 가 가리킴
+  ImageManifest --> Descriptor : layers 각각
+  ImageConfig --> RootFS
+  </pre>
+  <p>미디어 타입(mediaType)으로 무엇인지 구분한다.</p>
+  <div class="table-wrap"><table><thead><tr><th>객체</th><th>OCI mediaType</th><th>Docker 쪽 이름</th></tr></thead><tbody>
+  <tr><td>인덱스</td><td><code>application/vnd.oci.image.index.v1+json</code></td><td><code>application/vnd.docker.distribution.manifest.list.v2+json</code></td></tr>
+  <tr><td>매니페스트</td><td><code>application/vnd.oci.image.manifest.v1+json</code></td><td><code>application/vnd.docker.distribution.manifest.v2+json</code></td></tr>
+  <tr><td>설정</td><td><code>application/vnd.oci.image.config.v1+json</code></td><td><code>application/vnd.docker.container.image.v1+json</code></td></tr>
+  <tr><td>레이어</td><td><code>application/vnd.oci.image.layer.v1.tar+gzip</code> (또는 <code>+zstd</code>, 압축 없는 <code>.tar</code>)</td><td><code>application/vnd.docker.image.rootfs.diff.tar.gzip</code></td></tr>
+  </tbody></table></div>
+  <h4>digest 규칙</h4>
+  <ul>
+    <li>형식은 <code>알고리즘:16진수</code>. 실무에서는 거의 <code>sha256</code>. 레지스트리와 클라이언트는 받은 바이트의 해시를 다시 계산해서 digest 와 다르면 버린다.</li>
+    <li>매니페스트 digest 는 <strong>매니페스트 JSON 바이트 그대로</strong>의 해시다. JSON 을 예쁘게 다시 쓰면(공백·키 순서) digest 가 바뀐다. 그래서 레지스트리는 받은 바이트를 손대지 않고 저장한다.</li>
+    <li>레이어 descriptor 의 digest 는 <strong>압축된</strong> tar 의 해시, 설정의 <code>rootfs.diff_ids</code> 는 <strong>압축을 푼</strong> tar 의 해시다. 압축 방식이 달라도 같은 파일 내용이면 diff_id 는 같다. 노드는 diff_id 로 "이미 풀어 둔 레이어"를 재사용한다.</li>
+    <li>설정의 digest 를 "이미지 ID" 라고 부르기도 한다(<code>docker images</code> 의 IMAGE ID). 매니페스트 digest(<code>RepoDigests</code>)와 다른 값이다.</li>
+  </ul>
+  <pre class="mermaid">
+flowchart LR
+  A["받은 바이트"] --> B["sha256 계산"]
+  B --> C{"요청한 digest 와 같나"}
+  C -- "같다" --> D["저장 또는 사용"]
+  C -- "다르다" --> E["버림<br/>DIGEST_INVALID"]
+  D --> F["매니페스트면<br/>config, layers 의 digest 를<br/>같은 방식으로 따라간다"]
+  </pre>
+  <h4>레이어 tar 의 세부</h4>
+  <ul>
+    <li>tar 안의 경로는 루트 기준 상대 경로(<code>app/server.py</code>). 파일 권한·소유자(uid/gid)·수정 시각이 tar 헤더에 들어간다. 그래서 같은 파일이라도 시각이 다르면 다른 레이어 digest 가 된다. 재현 가능한 빌드(reproducible build)를 원하면 시각을 고정해야 한다(kaniko <code>--reproducible</code>).</li>
+    <li>삭제: 위 레이어에 <code>경로/.wh.파일이름</code>. 폴더 안 전체를 지우고 새로 채우려면 불투명 표시 <code>폴더/.wh..wh..opq</code>.</li>
+    <li>매니페스트의 <code>layers</code> 배열 순서 = 적용 순서(첫 번째가 맨 아래). 설정의 <code>diff_ids</code> 순서와 같아야 한다.</li>
+    <li>컨테이너 실행 정보(<code>Cmd</code>, <code>Env</code>, <code>User</code>, <code>WorkingDir</code>, <code>ExposedPorts</code>)는 레이어가 아니라 설정에 들어간다. 그래서 Dockerfile 의 <code>ENV</code>, <code>USER</code>, <code>CMD</code> 는 레이어를 만들지 않는다(4절 그림 6-8).</li>
+  </ul>
+  <pre class="pseudo"><code><span class="k">함수</span> 이미지_digest(이미지):
+  설정_바이트 = JSON(arch, os, config, rootfs.diff_ids, history)
+  레이어들 = [gzip(tar(변경분_i)) <span class="k">for</span> i]
+  매니페스트 = JSON(config = 디스크립터(설정_바이트),
+                    layers = [디스크립터(l) <span class="k">for</span> l <span class="k">in</span> 레이어들])
+  <span class="k">반환</span> "sha256:" + hex(sha256(매니페스트_바이트))
+<span class="c">// 디스크립터(b) = { mediaType, digest: sha256(b), size: len(b) }</span>
+<span class="c">// 그래서 파일 1바이트 → 레이어 digest → 매니페스트 바이트 → 이미지 digest 가 연쇄로 바뀐다</span></code></pre>
+</div>
+
+<h3>태그는 움직이는 이름표다</h3>
+<figure>
+  <div class="fig scroll">
+    <svg viewBox="0 0 960 300" role="img" aria-labelledby="f65-t">
+      <title id="f65-t">같은 태그가 시간에 따라 다른 매니페스트를 가리키는 반면 digest 는 고정이다</title>
+      <defs>
+        <marker id="f65-fail" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+        <marker id="f65-git" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-git"/></marker>
+      </defs>
+      <path d="M40 40 L920 40" class="d-e-api"/>
+      <text x="40" y="28" class="d-lbl">시각 t1: 빌드 A 를 :v1 로 push</text>
+      <text x="520" y="28" class="d-lbl">시각 t2: 빌드 B 를 또 :v1 로 push</text>
+      <rect x="40" y="70" width="260" height="70" rx="12" class="d-card"/>
+      <text x="58" y="100" class="d-ttl-s">매니페스트 A</text>
+      <text x="58" y="124" class="d-mono">sha256:1a2b...</text>
+      <rect x="520" y="70" width="260" height="70" rx="12" class="d-card"/>
+      <text x="538" y="100" class="d-ttl-s">매니페스트 B</text>
+      <text x="538" y="124" class="d-mono">sha256:9f8e...</text>
+      <rect x="320" y="190" width="170" height="60" rx="12" class="d-warn-box"/>
+      <text x="338" y="226" class="d-mono">태그 fn/hello:v1</text>
+      <path d="M360 190 C330 160 230 160 200 145" class="d-e-fail" marker-end="url(#f65-fail)"/>
+      <path d="M450 190 C480 160 560 160 600 145" class="d-e-fail" marker-end="url(#f65-fail)"/>
+      <text x="200" y="182" class="d-lbl">t1 까지</text>
+      <text x="530" y="182" class="d-lbl">t2 부터</text>
+      <rect x="620" y="190" width="300" height="80" rx="12" class="d-cp-box"/>
+      <text x="638" y="220" class="d-ttl-s">image@sha256:1a2b...</text>
+      <text x="638" y="246" class="d-sub">언제 받아도 매니페스트 A</text>
+      <path d="M620 215 C560 230 260 230 175 145" class="d-e-git" marker-end="url(#f65-git)"/>
+    </svg>
+  </div>
+  <figcaption><b>그림 6-5.</b> 태그(빨간 점선)는 push 할 때마다 옮겨질 수 있다. digest 참조(초록)는 내용의 해시라서 언제나 같은 매니페스트를 가리킨다. 8절의 "digest 고정"이 이 그림 하나에서 나온다.</figcaption>
+</figure>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+<ul>
+<li>04: kaniko 가 <code>kind-registry:5000/fn/hello:&lt;태그&gt;</code> 로 올리고, ksvc 3개가 <strong>태그</strong> <code>:v1</code> 로 참조한다. 그래서 같은 태그를 다시 쓰면 위 그림의 함정에 빠질 수 있다 (15절).</li>
+<li>05: kaniko 가 <code>kind-registry:5000/tenant-a/hello:hello-3f2a9c01be</code> 로 올린 뒤 매니페스트 digest 를 내보내고, 컨트롤 플레인이 ksvc 에 <code>localhost:5001/tenant-a/hello@sha256:...</code> 로 넣는다 (8절).</li>
+<li>둘 다 인덱스 없이 단일 매니페스트. 애플 실리콘 맥이면 빌드 노드가 arm64 라서 arm64 이미지가 나온다. 07(EC2, x86_64)에서는 그래서 <code>docker buildx build --platform linux/amd64</code> 로 따로 만든다(<code>poc/07-ec2-k3s/scripts/gvisor-ec2.sh image</code>).</li>
+</ul></aside>
+
+<aside class="callout fact"><p class="callout-title">공식 문서</p>
+<ul>
+<li><a href="https://github.com/opencontainers/image-spec/blob/main/spec.md">OCI Image Format Specification</a> · <a href="https://github.com/opencontainers/image-spec/blob/main/manifest.md">Image Manifest</a> · <a href="https://github.com/opencontainers/image-spec/blob/main/image-index.md">Image Index</a> · <a href="https://github.com/opencontainers/image-spec/blob/main/config.md">Image Configuration</a> · <a href="https://github.com/opencontainers/image-spec/blob/main/layer.md">Image Layer Filesystem Changeset</a> · <a href="https://github.com/opencontainers/image-spec/blob/main/descriptor.md">Descriptors (digest 규칙)</a></li>
+<li><a href="https://distribution.github.io/distribution/spec/manifest-v2-2/">Docker Image Manifest V2, Schema 2</a></li>
+</ul></aside>
+
+<!-- ============================================================ 2. 레지스트리 프로토콜 -->
+<h2 id="registry">2. 레지스트리 프로토콜 (OCI Distribution, Docker Registry HTTP API v2)</h2>
+
+<div class="tier" data-tier="1">
+  <h3>레지스트리는 "digest 로 찾는 파일 서버 + 태그 표"</h3>
+  <p>레지스트리(registry)는 이미지를 저장하고 나눠 주는 HTTP 서버다. Docker Hub, Amazon ECR, GitHub Container Registry, 그리고 우리 PoC 의 <code>registry:2</code> 컨테이너가 모두 같은 HTTP 규약을 말한다. 이 규약이 Docker Registry HTTP API v2 이고, 지금은 OCI <em>Distribution Specification</em> 으로 표준화됐다.</p>
+  <p>레지스트리 안에는 두 가지만 있다.</p>
+  <ul>
+    <li><strong>blob</strong>: digest 로 찾는 바이트 덩어리. 레이어와 설정이 여기 들어간다. 경로 <code>/v2/&lt;저장소&gt;/blobs/&lt;digest&gt;</code>.</li>
+    <li><strong>manifest</strong>: 매니페스트(또는 인덱스) JSON. 태그나 digest 로 찾는다. 경로 <code>/v2/&lt;저장소&gt;/manifests/&lt;태그 또는 digest&gt;</code>.</li>
+  </ul>
+  <p>그래서 push 는 "blob 을 먼저 다 올리고, 마지막에 매니페스트를 올린다", pull 은 "매니페스트를 먼저 받고, 거기 적힌 blob 을 받는다" 가 전부다. 매니페스트를 마지막에 올리는 이유: 매니페스트가 가리키는 blob 이 레지스트리에 하나라도 없으면 레지스트리가 매니페스트를 거절하기 때문이다(반쯤 올라간 이미지가 보이지 않게).</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>push 와 pull 을 HTTP 요청으로</h3>
+  <p>kaniko 가 빌드를 마치고 <code>kind-registry:5000/fn/hello:v1</code> 로 올릴 때 오가는 요청이다. 이미 있는 blob 은 HEAD 로 확인하고 건너뛴다(그래서 베이스 레이어는 다시 안 올라간다).</p>
+  <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant K as kaniko (push 하는 쪽)
+  participant R as kind-registry (registry:2)
+  K->>R: GET /v2/ (버전 확인, 인증 필요 여부)
+  R-->>K: 200 OK
+  loop 레이어와 설정 blob 마다
+    K->>R: HEAD /v2/fn/hello/blobs/sha256:aa...
+    alt 이미 있음
+      R-->>K: 200 (건너뜀)
+    else 없음
+      R-->>K: 404
+      K->>R: POST /v2/fn/hello/blobs/uploads/
+      R-->>K: 202 Accepted, Location 업로드 주소
+      K->>R: PATCH Location (바이트 조각)
+      R-->>K: 202, Range 0-N
+      K->>R: PUT Location?digest=sha256:aa...
+      R-->>K: 201 Created (해시 검증 통과)
+    end
+  end
+  K->>R: PUT /v2/fn/hello/manifests/v1 (매니페스트 JSON)
+  R-->>K: 201, Docker-Content-Digest sha256:1a2b...
+  Note over K: 이 digest 를 --digest-file 에 쓴다 (8절)
+  </pre>
+  <p>노드의 containerd 가 이미지를 받을 때는 반대 방향이다.</p>
+  <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant C as containerd (노드)
+  participant R as 레지스트리
+  C->>R: HEAD 또는 GET /v2/fn/hello/manifests/v1, Accept 에 OCI와 Docker 미디어 타입
+  R-->>C: 200, Content-Type, Docker-Content-Digest sha256:1a2b...
+  Note over C: 태그 → digest 확정 (resolve)
+  C->>R: GET /v2/fn/hello/manifests/sha256:1a2b...
+  R-->>C: 매니페스트 JSON (인덱스면 자기 플랫폼 항목을 골라 한 번 더)
+  C->>R: GET /v2/fn/hello/blobs/sha256:설정
+  R-->>C: 설정 JSON
+  par 레이어 병렬 다운로드
+    C->>R: GET /v2/fn/hello/blobs/sha256:aa...
+    R-->>C: 307 또는 200 (바이트)
+  and
+    C->>R: GET /v2/fn/hello/blobs/sha256:bb...
+    R-->>C: 200 (바이트)
+  end
+  Note over C: 해시 검증 → 압축 해제 → snapshotter 에 레이어 적용
+  </pre>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>엔드포인트 표와 에지 케이스</h3>
+  <div class="table-wrap"><table><thead><tr><th>목적</th><th>요청</th><th>성공 응답</th><th>메모</th></tr></thead><tbody>
+  <tr><td>지원 확인</td><td><code>GET /v2/</code></td><td>200 또는 401</td><td>401 이면 <code>WWW-Authenticate</code> 헤더의 토큰 서버로 가서 Bearer 토큰을 받는다 (Docker Hub 방식)</td></tr>
+  <tr><td>매니페스트 받기</td><td><code>GET /v2/&lt;name&gt;/manifests/&lt;ref&gt;</code></td><td>200</td><td><code>Accept</code> 헤더로 원하는 mediaType 을 밝힌다. ref 가 태그면 그 순간의 매니페스트</td></tr>
+  <tr><td>있나 확인</td><td><code>HEAD /v2/&lt;name&gt;/manifests/&lt;ref&gt;</code>, <code>HEAD .../blobs/&lt;digest&gt;</code></td><td>200 / 404</td><td>태그 → digest 해석은 HEAD 한 번이면 된다 (<code>Docker-Content-Digest</code> 헤더)</td></tr>
+  <tr><td>blob 받기</td><td><code>GET /v2/&lt;name&gt;/blobs/&lt;digest&gt;</code></td><td>200 또는 307</td><td>307 이면 S3 같은 저장소로 리다이렉트. <code>Range</code> 로 이어받기 가능</td></tr>
+  <tr><td>업로드 시작</td><td><code>POST /v2/&lt;name&gt;/blobs/uploads/</code></td><td>202 + <code>Location</code></td><td><code>?digest=</code> 를 붙이고 바이트를 함께 보내면 한 번에(monolithic) 끝</td></tr>
+  <tr><td>조각 올리기</td><td><code>PATCH &lt;Location&gt;</code></td><td>202 + <code>Range</code></td><td>chunked 업로드. 순서대로만</td></tr>
+  <tr><td>업로드 끝</td><td><code>PUT &lt;Location&gt;?digest=&lt;digest&gt;</code></td><td>201</td><td>레지스트리가 해시를 계산해 다르면 <code>DIGEST_INVALID</code></td></tr>
+  <tr><td>다른 저장소에서 빌려오기</td><td><code>POST .../blobs/uploads/?mount=&lt;digest&gt;&amp;from=&lt;다른 저장소&gt;</code></td><td>201</td><td>같은 레지스트리 안이면 바이트 전송 없이 연결만 (베이스 레이어 공유)</td></tr>
+  <tr><td>매니페스트 올리기</td><td><code>PUT /v2/&lt;name&gt;/manifests/&lt;태그 또는 digest&gt;</code></td><td>201 + <code>Docker-Content-Digest</code></td><td>가리키는 blob 이 없으면 <code>MANIFEST_BLOB_UNKNOWN</code>. 같은 태그에 PUT 하면 <strong>덮어쓴다</strong></td></tr>
+  <tr><td>태그 목록</td><td><code>GET /v2/&lt;name&gt;/tags/list</code></td><td>200</td><td>04 README 의 <code>curl -s localhost:5001/v2/fn/hello/tags/list</code></td></tr>
+  <tr><td>저장소 목록</td><td><code>GET /v2/_catalog</code></td><td>200</td><td>Docker Registry 확장. OCI 표준에는 없다</td></tr>
+  <tr><td>지우기</td><td><code>DELETE .../manifests/&lt;digest&gt;</code></td><td>202</td><td>registry:2 는 설정으로 켜야 하고, 디스크 회수는 별도 GC</td></tr>
+  </tbody></table></div>
+  <p>에러 응답은 JSON <code>{"errors":[{"code": ..., "message": ...}]}</code> 모양이다. 자주 보는 코드: <code>BLOB_UNKNOWN</code>, <code>MANIFEST_UNKNOWN</code>, <code>NAME_UNKNOWN</code>, <code>UNAUTHORIZED</code>, <code>DENIED</code>, <code>TOOMANYREQUESTS</code>(HTTP 429, Docker Hub 다운로드 한도).</p>
+  <pre class="pseudo"><code><span class="k">함수</span> push(이미지, 저장소, 태그):
+  <span class="k">for</span> blob <span class="k">in</span> 이미지.레이어들 + [이미지.설정]:
+    <span class="k">if</span> HEAD(blobs/blob.digest) == 200: <span class="k">continue</span>        <span class="c">// 이미 있음</span>
+    loc = POST(blobs/uploads/).Location
+    PATCH(loc, blob.바이트)                                 <span class="c">// 큰 레이어는 여러 번</span>
+    PUT(loc + "?digest=" + blob.digest)                     <span class="c">// 서버가 해시 검증</span>
+  d = PUT(manifests/태그, 이미지.매니페스트).헤더["Docker-Content-Digest"]
+  <span class="k">반환</span> d                                                  <span class="c">// = sha256(매니페스트 바이트)</span>
+
+<span class="k">함수</span> pull(저장소, ref, 내_플랫폼):
+  m = GET(manifests/ref, Accept=[OCI 인덱스, OCI 매니페스트, Docker 둘])
+  <span class="k">if</span> m 이 인덱스: m = GET(manifests/ m.manifests[플랫폼==내_플랫폼].digest)
+  설정 = GET(blobs/m.config.digest);  검증
+  <span class="k">병렬</span> <span class="k">for</span> l <span class="k">in</span> m.layers: 받기 → 검증 → 압축 해제 → snapshotter 에 적용</code></pre>
+  <aside class="callout warn"><p class="callout-title">주의: "push 성공" 과 "같은 이미지" 는 다르다</p>
+  <p>매니페스트 PUT 은 태그를 조용히 덮어쓴다. 레지스트리 설정이나 ECR 의 tag immutability 같은 기능을 켜지 않는 한 막지 않는다. 그래서 "태그를 매번 새로" 또는 "digest 로 참조" 둘 중 하나가 필요하다.</p></aside>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+<p>레지스트리는 인증도 TLS 도 없는 <code>registry:2</code>(Docker 의 오픈소스 레지스트리 구현, 지금 이름은 CNCF Distribution) 컨테이너 하나다. 맥에서 <code>curl -s localhost:5001/v2/_catalog</code> 로 저장소 목록을, <code>curl -s localhost:5001/v2/fn/hello/tags/list</code> 로 태그 목록을 본다. 매니페스트 digest 를 직접 보고 싶으면:</p>
+<div class="code-head"><span>맥 터미널 (읽기 전용 확인)</span><span>예시</span></div>
+<pre><code>curl -sI -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
+     -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+     localhost:5001/v2/fn/hello/manifests/v1 | grep -i docker-content-digest
+<span class="c"># Docker-Content-Digest: sha256:...   ← 05 의 ksvc 에 들어가는 값과 같은 종류</span></code></pre>
+</aside>
+
+<aside class="callout fact"><p class="callout-title">공식 문서</p>
+<ul>
+<li><a href="https://github.com/opencontainers/distribution-spec/blob/main/spec.md">OCI Distribution Specification</a> (pull, push, content discovery, 에러 코드)</li>
+<li><a href="https://distribution.github.io/distribution/spec/api/">Docker Registry HTTP API V2</a> · <a href="https://distribution.github.io/distribution/about/deploying/">registry:2 배포</a></li>
+<li><a href="https://docs.docker.com/docker-hub/usage/">Docker Hub 사용 한도</a></li>
+</ul></aside>
+
+<!-- ============================================================ 3. 레지스트리 배치 -->
+<h2 id="topology">3. 우리 레지스트리 배치: 한 저장소, 두 이름</h2>
+
+<div class="tier" data-tier="1">
+  <h3>왜 이름이 둘인가</h3>
+  <p>kind 클러스터의 "노드"는 맥(정확히는 Docker Desktop 의 리눅스 VM) 위의 Docker 컨테이너다. 레지스트리도 같은 VM 위의 Docker 컨테이너 <code>kind-registry</code> 다. 같은 저장소를 누가 어디서 부르느냐에 따라 보이는 주소가 다르다.</p>
+  <ul>
+    <li><strong>맥에서</strong>: <code>localhost:5001</code>. <code>docker run -p 127.0.0.1:5001:5000</code> 포트 매핑 덕분이다. <code>curl</code>, <code>docker push</code>(Docker Hub 미러 채우기)가 쓴다.</li>
+    <li><strong>클러스터 안 파드(kaniko)에서</strong>: <code>kind-registry:5000</code>. 레지스트리를 kind 노드들과 같은 Docker 네트워크 <code>kind</code> 에 붙였기 때문에, Docker 의 내장 DNS 가 컨테이너 이름을 풀어 준다. 파드 안의 <code>localhost</code> 는 파드 자신이라 <code>localhost:5001</code> 은 거기서 아무 뜻이 없다.</li>
+    <li><strong>노드의 containerd 에서</strong>: 둘 다 쓸 수 있다. <code>setup.sh</code> 가 노드마다 <code>hosts.toml</code> 을 넣어 "<code>localhost:5001</code> 도 <code>kind-registry:5000</code> 도 실제로는 <code>http://kind-registry:5000</code> 에서 받아라" 라고 알려 두었다.</li>
+  </ul>
+  <p>05 가 "push 는 <code>kind-registry:5000</code>, ksvc 에는 <code>localhost:5001</code>" 로 쓰는 것은 kind 공식 문서(local registry)의 관례를 따른 것이다. 04 의 ksvc 는 <code>kind-registry:5000</code> 을 그대로 쓴다. 노드에서는 둘 다 같은 곳으로 간다.</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>배치도: 누가 어느 이름으로 어디에 닿나</h3>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1100 600" role="img" aria-labelledby="f66-t">
+        <title id="f66-t">kind-registry 배치: 맥의 localhost:5001, 파드와 노드의 kind-registry:5000, containerd hosts.toml 미러, Knative 태그 해석 건너뛰기</title>
+        <defs>
+          <marker id="f66-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+          <marker id="f66-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+          <marker id="f66-fail" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+          <marker id="f66-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <rect x="10" y="10" width="1080" height="580" rx="12" class="d-pool"/>
+        <text x="28" y="36" class="d-lbl">맥 · Docker Desktop (리눅스 VM)</text>
+        <rect x="30" y="50" width="330" height="80" rx="12" class="d-user-box"/>
+        <text x="48" y="80" class="d-ttl">맥 터미널</text>
+        <text x="48" y="108" class="d-mono">curl / docker push localhost:5001</text>
+        <rect x="30" y="160" width="1040" height="415" rx="12" class="d-cp"/>
+        <text x="48" y="186" class="d-lbl">Docker 네트워크 "kind" (컨테이너 이름 = DNS 이름)</text>
+        <rect x="420" y="50" width="280" height="140" rx="12" class="d-obs-box"/>
+        <text x="438" y="80" class="d-ttl">kind-registry</text>
+        <text x="438" y="106" class="d-sub">registry:2 컨테이너</text>
+        <text x="438" y="132" class="d-mono">듣는 곳 :5000 (http, TLS 없음)</text>
+        <text x="438" y="156" class="d-mono">-p 127.0.0.1:5001:5000</text>
+        <text x="438" y="178" class="d-mono">network connect kind</text>
+        <path d="M360 90 L415 90" class="d-e-user" marker-end="url(#f66-user)"/>
+        <text x="364" y="80" class="d-lbl">5001→5000</text>
+        <rect x="760" y="40" width="310" height="110" rx="12" class="d-warn-box"/>
+        <text x="778" y="68" class="d-ttl-s">Knative controller</text>
+        <text x="778" y="92" class="d-sub">태그 → digest 해석을 건너뜀</text>
+        <text x="778" y="116" class="d-mono">registries-skipping-</text>
+        <text x="778" y="136" class="d-mono">  tag-resolving</text>
+        <path d="M760 95 L705 95" class="d-e-fail" marker-end="url(#f66-fail)"/>
+        <text x="780" y="174" class="d-lbl">https 로 물으면 실패</text>
+        <rect x="50" y="210" width="230" height="120" rx="12" class="d-card"/>
+        <text x="68" y="240" class="d-ttl-s">control-plane 노드</text>
+        <text x="68" y="266" class="d-sub">API 서버, NodePort</text>
+        <text x="68" y="290" class="d-mono">faas-control-plane</text>
+        <rect x="50" y="350" width="230" height="110" rx="12" class="d-card"/>
+        <text x="68" y="380" class="d-ttl-s">system 노드</text>
+        <text x="68" y="406" class="d-sub">Knative, 컨트롤 플레인</text>
+        <text x="68" y="430" class="d-mono">faas-worker</text>
+        <rect x="310" y="230" width="330" height="230" rx="12" class="d-card"/>
+        <text x="328" y="260" class="d-ttl-s">build 노드 (faas-worker2)</text>
+        <rect x="328" y="280" width="294" height="90" rx="12" class="d-prov-box"/>
+        <text x="346" y="308" class="d-ttl-s">kaniko 파드</text>
+        <text x="346" y="332" class="d-mono">--destination=</text>
+        <text x="346" y="352" class="d-mono">  kind-registry:5000/...</text>
+        <text x="328" y="398" class="d-sub">파드 DNS → CoreDNS → 노드</text>
+        <text x="328" y="422" class="d-sub">→ Docker 내장 DNS 가 이름을 품</text>
+        <text x="328" y="446" class="d-lbl">【확인 필요】 정확한 DNS 경로</text>
+        <path d="M600 280 L580 195" class="d-e-prov" marker-end="url(#f66-prov)"/>
+        <text x="540" y="222" class="d-lbl">push</text>
+        <rect x="670" y="230" width="380" height="330" rx="12" class="d-card"/>
+        <text x="688" y="260" class="d-ttl-s">exec 노드 (faas-worker3)</text>
+        <rect x="688" y="276" width="344" height="170" rx="12" class="d-plain-box"/>
+        <text x="704" y="300" class="d-lbl">containerd · /etc/containerd/certs.d/</text>
+        <text x="704" y="324" class="d-mono">localhost:5001/hosts.toml</text>
+        <text x="704" y="346" class="d-mono">kind-registry:5000/hosts.toml</text>
+        <text x="704" y="374" class="d-mono">[host."http://kind-registry:5000"]</text>
+        <text x="704" y="396" class="d-mono">  capabilities = pull, resolve</text>
+        <text x="704" y="426" class="d-sub">두 이름 모두 같은 곳으로</text>
+        <rect x="688" y="460" width="344" height="86" rx="12" class="d-user-box"/>
+        <text x="704" y="486" class="d-ttl-s">함수 파드의 image</text>
+        <text x="704" y="510" class="d-mono">04: kind-registry:5000/fn/hello:v1</text>
+        <text x="704" y="532" class="d-mono">05: localhost:5001/t/hello@sha256</text>
+        <path d="M690 278 L655 250 L650 195" class="d-e-prov" marker-end="url(#f66-prov)"/>
+        <text x="606" y="224" class="d-lbl">pull</text>
+        <path d="M165 460 C200 545 600 560 683 520" class="d-e-api" marker-end="url(#f66-api)"/>
+        <text x="300" y="500" class="d-lbl">컨트롤 플레인이 ksvc 에 이미지 주소를 적음</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-6.</b> 레지스트리 배치도. 맥은 포트 매핑으로(파랑), kaniko 는 Docker 네트워크 이름으로 push 하고(주황), exec 노드의 containerd 는 hosts.toml 이 두 이름을 같은 http 주소로 바꿔 pull 한다(주황). Knative controller 가 태그를 https 로 해석하려다 실패하는 길(빨강)은 설정으로 꺼 두었다.</figcaption>
+  </figure>
+
+  <h4>세 군데의 설정이 맞물린다</h4>
+  <ol>
+    <li><strong>kind-config 의 <code>containerdConfigPatches</code></strong>: containerd 에게 "레지스트리별 설정은 <code>/etc/containerd/certs.d</code> 폴더에서 읽어라" (<code>config_path</code>).</li>
+    <li><strong>setup.sh 의 hosts.toml</strong>: 그 폴더 아래 레지스트리 이름마다 폴더를 만들고 <code>hosts.toml</code> 을 둔다. 내용은 "이 이름의 이미지는 <code>http://kind-registry:5000</code> 에서 pull·resolve".</li>
+    <li><strong>Knative config-deployment</strong>: <code>registries-skipping-tag-resolving</code> 에 두 이름을 넣어 Knative 가 태그를 digest 로 바꾸려고 레지스트리에 묻지 않게.</li>
+  </ol>
+  <p>3번이 왜 필요한가: Knative Serving 은 Revision 을 만들 때 <code>image: ...:v1</code> 처럼 태그로 적힌 이미지를 레지스트리에 물어 digest 로 바꿔 Revision 에 고정한다(태그가 나중에 바뀌어도 그 Revision 은 같은 이미지를 쓰게). 이 일은 노드의 containerd 가 아니라 <strong>knative-serving 의 controller 파드</strong>가 직접 HTTP 로 하는데, 기본이 https 라서 http 전용 kind-registry 에 실패하고 Revision 이 Ready 가 되지 않는다. 그래서 이 두 레지스트리는 건너뛰게 했다. 대가는 04 처럼 태그로 적은 ksvc 의 Revision 이 태그에 묶인다는 것이다.</p>
+  <pre class="mermaid">
+flowchart TD
+  A["Revision 생성<br/>image = 레지스트리/저장소:태그"] --> B{"이미 @sha256 형식인가"}
+  B -- "예 (05 의 ksvc)" --> OK["그대로 사용"]
+  B -- "아니오 (04 의 ksvc)" --> C{"레지스트리가<br/>skipping 목록에 있나"}
+  C -- "있음 (kind-registry:5000, localhost:5001)" --> T["태그 그대로 둠<br/>노드가 pull 할 때마다 태그를 다시 해석"]
+  C -- "없음" --> D["controller 가 레지스트리에<br/>매니페스트 HEAD (https)"]
+  D -- "성공" --> E["Revision 에 image@sha256 기록"]
+  D -- "실패 (http 전용 등)" --> F["Revision 실패<br/>ContainerMissing 류 메시지"]
+  </pre>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>코드 한 줄씩</h3>
+  <div class="code-head"><span>poc/04-faas-runtime/scripts/setup.sh</span><span>발췌 (1/5 kind-registry)</span></div>
+  <pre><code><span class="k">if</span> [ "$(docker inspect -f '{{.State.Running}}' kind-registry 2&gt;/dev/null || true)" != "true" ]; <span class="k">then</span>
+  <span class="c"># -p 127.0.0.1:5001:5000 : 맥에서도 localhost:5001 로 볼 수 있게 (curl localhost:5001/v2/_catalog)</span>
+  docker run -d --restart=always -p 127.0.0.1:5001:5000 --network bridge --name kind-registry registry:2
+<span class="k">fi</span>
+<span class="c"># kind 노드들과 같은 Docker 네트워크에 붙인다 → 노드·Pod 가 "kind-registry" 라는 이름으로 찾는다</span>
+docker network connect kind kind-registry 2&gt;/dev/null || true
+<span class="k">for</span> n <span class="k">in</span> $(kind get nodes --name "$CLUSTER"); <span class="k">do</span>
+  <span class="k">for</span> r <span class="k">in</span> kind-registry:5000 localhost:5001; <span class="k">do</span>
+    docker exec "$n" mkdir -p "/etc/containerd/certs.d/$r"
+    printf '[host."http://kind-registry:5000"]\n  capabilities = ["pull", "resolve"]\n' |
+      docker exec -i "$n" cp /dev/stdin "/etc/containerd/certs.d/$r/hosts.toml"
+  <span class="k">done</span>
+<span class="k">done</span></code></pre>
+  <ul>
+    <li><code>docker inspect ... || true</code>: 이미 떠 있으면 다시 만들지 않는다(멱등). 클러스터를 재생성해도 레지스트리와 그 안의 이미지는 남는다.</li>
+    <li><code>-p 127.0.0.1:5001:5000</code>: 맥의 루프백에만 연다. 같은 와이파이의 다른 기기에서는 안 보인다.</li>
+    <li><code>--network bridge</code> 로 만들고 <code>network connect kind</code> 로 하나 더 붙인다. 컨테이너가 두 네트워크에 동시에 있는다.</li>
+    <li>바깥 루프: 노드 4개 전부. 안쪽 루프: 이름 두 개. 결과적으로 노드마다 폴더 두 개, 내용은 같은 파일.</li>
+    <li><code>[host."http://..."]</code>: 미러(mirror) 항목. 스킴이 <code>http</code> 라서 TLS 없이 접속한다. <code>capabilities = ["pull", "resolve"]</code> 는 "여기서 받기와 태그 해석을 해도 된다"(push 는 안 함).</li>
+    <li><code>server = ...</code> 줄이 없다. containerd 문서에 따르면 <code>server</code> 를 빼면 기본값은 이미지 이름의 레지스트리 자신(예: <code>https://localhost:5001</code>)이고, host 항목이 모두 실패했을 때만 그쪽으로 넘어간다. 즉 kind-registry 가 죽으면 노드 자신의 <code>localhost:5001</code> 을 https 로 찔러 보고 실패한다.</li>
+    <li>hosts.toml 은 containerd 재시작 없이 다음 pull 부터 반영된다(문서: "changes take effect without restarting"). 반면 <code>config_path</code> 자체는 containerd 설정이라 클러스터 생성 때(kind-config) 넣었다.</li>
+  </ul>
+  <div class="code-head"><span>poc/04-faas-runtime/cluster/kind-config.yaml</span><span>발췌</span></div>
+  <pre><code><span class="k">containerdConfigPatches</span>:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry]
+      config_path = "/etc/containerd/certs.d"</code></pre>
+  <p>이 플러그인 이름(<code>io.containerd.grpc.v1.cri</code>)은 containerd 1.x 설정(version = 2) 형식이다. containerd 2.x 의 설정 version 3 에서는 <code>io.containerd.cri.v1.images</code> 로 바뀌었다. kind 공식 문서도 이 모양을 쓰고 containerd 2 는 옛 형식 설정을 자동 변환한다고 알려져 있지만, <code>kindest/node:v1.37.0</code> 안의 containerd 버전과 변환 동작은 【확인 필요】 (<code>docker exec faas-worker3 containerd config dump | grep config_path</code> 로 확인).</p>
+
+  <h4>containerd 가 이미지 주소를 실제 접속처로 바꾸는 순서</h4>
+  <pre class="mermaid">
+flowchart TD
+  A["image 참조<br/>localhost:5001/tenant-a/hello@sha256..."] --> B["호스트 부분 추출<br/>localhost:5001"]
+  B --> C{"certs.d/localhost:5001/<br/>hosts.toml 있나"}
+  C -- "없음" --> G{"certs.d/_default 있나"}
+  G -- "없음" --> H["https://localhost:5001 직접<br/>노드 안에선 아무것도 없음 → 실패"]
+  C -- "있음" --> D["host 항목을 적힌 순서대로 시도<br/>http://kind-registry:5000"]
+  D -- "성공" --> E["/v2/tenant-a/hello/manifests/sha256... GET"]
+  D -- "실패" --> F["server 값으로 (없으면 원래 호스트)"]
+  E --> I["blob GET → 검증 → 압축 해제 → snapshot"]
+  </pre>
+  <pre class="pseudo"><code><span class="k">함수</span> 접속처(이미지_참조):
+  호스트 = 참조.레지스트리                       <span class="c">// "localhost:5001" (포트 포함)</span>
+  설정 = 읽기(config_path + "/" + 호스트 + "/hosts.toml")
+       <span class="k">또는</span> 읽기(config_path + "/_default/hosts.toml")
+  후보 = [h <span class="k">for</span> h <span class="k">in</span> 설정.host 항목들 <span class="k">if</span> 필요한_능력 ⊆ h.capabilities]
+  후보 += [설정.server <span class="k">또는</span> "https://" + 호스트]
+  <span class="k">for</span> h <span class="k">in</span> 후보: <span class="k">if</span> 요청(h) 성공: <span class="k">반환</span>
+  <span class="k">실패</span></code></pre>
+  <div class="code-head"><span>poc/04-faas-runtime/scripts/setup.sh</span><span>발췌 (4/5 Knative 설정)</span></div>
+  <pre><code>kubectl -n knative-serving patch configmap config-deployment --type merge \
+  -p '{"data":{"registries-skipping-tag-resolving":"kind.local,ko.local,dev.local,kind-registry:5000,localhost:5001"}}'</code></pre>
+  <ul>
+    <li><code>kind.local,ko.local,dev.local</code>: Knative 기본값. 덮어쓰기라서 기본값을 다시 적어 둔다.</li>
+    <li><code>--type merge</code>: ConfigMap 의 다른 키는 그대로.</li>
+    <li>대안: Knative controller 에 레지스트리 CA 를 넣고 kind-registry 를 TLS 로 띄우면 해석을 건너뛰지 않아도 된다. PoC 에서는 간단함을 골랐다.</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+<ul>
+<li>레지스트리 만들기·연결·hosts.toml: <code>poc/04-faas-runtime/scripts/setup.sh</code> 1/5단계. <code>config_path</code>: <code>poc/04-faas-runtime/cluster/kind-config.yaml</code> 맨 아래.</li>
+<li>05 의 두 이름: <code>poc/05-control-plane-mcp/control-plane/src/main/resources/application.yml</code> 의 <code>faas.registry-push: kind-registry:5000</code>, <code>faas.registry-pull: localhost:5001</code>.</li>
+<li>07(EC2)에는 kind-registry 가 없다. 측정용 이미지는 <code>ttl.sh</code>(로그인 없는 공개 임시 레지스트리)에 올린다.</li>
+</ul></aside>
+
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+<ul>
+<li><strong>증상</strong>: 함수 파드가 <code>ErrImagePull</code> / <code>ImagePullBackOff</code>, 이벤트에 <code>http: server gave HTTP response to HTTPS client</code> 또는 <code>dial tcp ... localhost:5001: connect: connection refused</code>. <strong>볼 곳</strong>: <code>docker exec faas-worker3 cat /etc/containerd/certs.d/localhost:5001/hosts.toml</code>, <code>docker network inspect kind | grep kind-registry</code>. <strong>고치는 법</strong>: <code>setup.sh</code> 1/5단계만 다시(노드를 새로 만들면 hosts.toml 이 사라진다).</li>
+<li><strong>증상</strong>: ksvc 가 <code>RevisionMissing</code>, 메시지에 레지스트리 https 오류. <strong>볼 곳</strong>: <code>kubectl -n knative-serving get cm config-deployment -o yaml</code>. <strong>고치는 법</strong>: <code>registries-skipping-tag-resolving</code> 에 레지스트리 이름 추가.</li>
+<li><strong>증상</strong>: kaniko 로그 <code>dial tcp: lookup kind-registry ... no such host</code>. <strong>볼 곳</strong>: 레지스트리가 <code>kind</code> 네트워크에 붙었나. <strong>고치는 법</strong>: <code>docker network connect kind kind-registry</code>.</li>
+</ul></aside>
+
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
+<ul>
+<li><strong>클러스터 밖 Docker 컨테이너 레지스트리</strong>: 클러스터를 지워도 이미지가 남고, 맥에서 curl 로 바로 본다. kind 공식 문서가 권하는 모양이라 자료가 많다.</li>
+<li>대안 (가) <strong>클러스터 안 레지스트리(Deployment)</strong>: 노드의 containerd 는 클러스터 DNS 를 모른다(containerd 는 파드가 아니다) → NodePort 나 hostNetwork 로 열어야 하고, 클러스터 재생성 때 이미지가 같이 사라진다.</li>
+<li>대안 (나) <strong><code>kind load docker-image</code></strong>: 레지스트리 없이 노드에 직접 복사. 05 의 컨트롤 플레인 이미지는 이 방식이다. 하지만 클러스터 안 kaniko 는 push 할 곳이 필요하다.</li>
+<li>대안 (다) <strong>Harbor 같은 TLS + 인증 레지스트리</strong>: 운영에 맞고 Knative 태그 해석·취약점 스캔·불변 태그를 쓸 수 있지만, 해커톤 셋업 시간을 넘긴다. 설계 문서에는 "운영은 ECR + immutable tag" 로 적는다.</li>
+</ul></aside>
+
+<aside class="callout fact"><p class="callout-title">공식 문서</p>
+<ul>
+<li><a href="https://kind.sigs.k8s.io/docs/user/local-registry/">kind: Local Registry</a></li>
+<li><a href="https://github.com/containerd/containerd/blob/main/docs/hosts.md">containerd: Registry Configuration (hosts.toml)</a> · <a href="https://github.com/containerd/containerd/blob/main/docs/cri/config.md">containerd CRI 설정</a></li>
+<li><a href="https://knative.dev/docs/serving/tag-resolution/">Knative: Tag resolution</a> · <a href="https://knative.dev/docs/serving/configuration/deployment/">Knative: config-deployment</a></li>
+</ul></aside>
+
+<!-- ============================================================ 4. Dockerfile -->
+<h2 id="dockerfile">4. Dockerfile 과 멀티 스테이지 빌드</h2>
+
+<div class="tier" data-tier="1">
+  <h3>Dockerfile = 레이어를 만드는 조리법</h3>
+  <p>Dockerfile 의 한 줄 한 줄은 "이전 상태 위에서 무언가를 하고, 바뀐 파일을 레이어로 남겨라" 또는 "설정에 이 값을 적어라" 둘 중 하나다.</p>
+  <ul>
+    <li>레이어를 만드는 줄: <code>RUN</code>, <code>COPY</code>, <code>ADD</code> (그리고 <code>WORKDIR</code> 이 새 폴더를 만들 때).</li>
+    <li>설정만 바꾸는 줄: <code>ENV</code>, <code>USER</code>, <code>CMD</code>, <code>ENTRYPOINT</code>, <code>EXPOSE</code>, <code>LABEL</code>.</li>
+  </ul>
+  <p><strong>멀티 스테이지 빌드(multi-stage build)</strong>는 <code>FROM</code> 을 여러 번 써서, 앞 단계(컴파일러가 든 큰 이미지)에서 만든 결과물만 뒤 단계(작은 실행용 이미지)로 <code>COPY --from</code> 하는 방법이다. 최종 이미지에는 마지막 단계만 남는다. 컴파일러·소스·캐시는 버려진다. 함수 플랫폼에서는 이미지가 작을수록 콜드 스타트 때 받는 바이트가 줄고, 공격 표면(셸·패키지 관리자)도 줄어든다.</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>Go hello: 두 단계</h3>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 380" role="img" aria-labelledby="f68-t">
+        <title id="f68-t">Go hello 함수의 멀티 스테이지 빌드: golang 단계에서 실행 파일을 만들고 scratch 단계로 복사</title>
+        <defs>
+          <marker id="f68-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+        </defs>
+        <rect x="20" y="20" width="440" height="340" rx="12" class="d-pool"/>
+        <text x="38" y="46" class="d-lbl">1단계 "build" (최종 이미지에 안 남음)</text>
+        <rect x="40" y="60" width="400" height="56" rx="12" class="d-plain-box"/>
+        <text x="58" y="94" class="d-mono">FROM golang:1.25-alpine AS build</text>
+        <rect x="40" y="126" width="400" height="56" rx="12" class="d-card"/>
+        <text x="58" y="160" class="d-mono">COPY go.mod main.go ./</text>
+        <rect x="40" y="192" width="400" height="70" rx="12" class="d-card"/>
+        <text x="58" y="220" class="d-mono">RUN CGO_ENABLED=0 go build</text>
+        <text x="58" y="244" class="d-mono">  -trimpath -ldflags=-s -w -o /hello</text>
+        <rect x="40" y="272" width="400" height="56" rx="12" class="d-card"/>
+        <text x="58" y="306" class="d-mono">RUN mkdir -p /out/tmp</text>
+        <rect x="500" y="20" width="440" height="340" rx="12" class="d-cp"/>
+        <text x="518" y="46" class="d-lbl">2단계 (최종 이미지)</text>
+        <rect x="520" y="60" width="400" height="56" rx="12" class="d-plain-box"/>
+        <text x="538" y="94" class="d-mono">FROM scratch   (빈 이미지, 레이어 0개)</text>
+        <rect x="520" y="126" width="400" height="56" rx="12" class="d-prov-box"/>
+        <text x="538" y="160" class="d-mono">COPY --from=build /hello /hello</text>
+        <rect x="520" y="192" width="400" height="56" rx="12" class="d-prov-box"/>
+        <text x="538" y="226" class="d-mono">COPY --chown=65532 /out/tmp /tmp</text>
+        <rect x="520" y="258" width="400" height="84" rx="12" class="d-obs-box"/>
+        <text x="538" y="286" class="d-mono">USER 65532:65532</text>
+        <text x="538" y="310" class="d-mono">ENTRYPOINT ["/hello"]</text>
+        <text x="538" y="332" class="d-lbl">설정에만 기록 (레이어 아님)</text>
+        <path d="M440 227 C470 227 480 154 515 154" class="d-e-prov" marker-end="url(#f68-prov)"/>
+        <path d="M440 300 C475 300 480 220 515 220" class="d-e-prov" marker-end="url(#f68-prov)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-7.</b> Go hello 의 두 단계. 왼쪽(golang 컴파일러가 든 이미지)에서 정적 실행 파일과 빈 /tmp 를 만들고, 오른쪽 scratch 에 그 둘만 복사한다(주황). 최종 이미지 = 레이어 2장 + 설정.</figcaption>
+  </figure>
+  <h3>Python 런타임: 한 단계, 레이어는 베이스 위에 1장</h3>
+  <p>05 의 함수 이미지는 멀티 스테이지가 아니다. 파이썬은 컴파일 결과물만 따로 뽑기 어렵고(인터프리터와 표준 라이브러리가 실행에 필요), 사용자 코드가 외부 패키지를 쓰지 않는 PoC 범위에서는 <code>python:3.12-slim</code> 위에 파일 두 개를 얹는 것으로 충분하다. 패키지 설치(<code>pip install</code>)가 생기면 그때 "빌드 단계에서 wheel 을 만들고 실행 단계에는 결과만" 으로 멀티 스테이지를 쓴다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 330" role="img" aria-labelledby="f69-t">
+        <title id="f69-t">Python 런타임 이미지의 레이어: 베이스 레이어 위에 사용자 코드 레이어 하나만 배포마다 바뀐다</title>
+        <rect x="20" y="230" width="560" height="80" rx="12" class="d-plain-box"/>
+        <text x="38" y="262" class="d-ttl-s">python:3.12-slim 의 레이어들 (Docker Hub)</text>
+        <text x="38" y="288" class="d-mono">debian slim + python 인터프리터 + 표준 라이브러리</text>
+        <rect x="20" y="160" width="560" height="56" rx="12" class="d-card"/>
+        <text x="38" y="194" class="d-mono">WORKDIR /app        → 빈 폴더 레이어</text>
+        <rect x="20" y="90" width="560" height="56" rx="12" class="d-prov-box"/>
+        <text x="38" y="124" class="d-mono">COPY server.py handler.py ./   → 배포마다 바뀌는 유일한 레이어</text>
+        <rect x="20" y="20" width="560" height="56" rx="12" class="d-obs-box"/>
+        <text x="38" y="54" class="d-mono">USER 65532:65532 · ENV PORT=8080 · EXPOSE · CMD  → 설정만</text>
+        <rect x="620" y="20" width="320" height="290" rx="12" class="d-card"/>
+        <text x="638" y="50" class="d-ttl-s">같은 테넌트가 코드를 바꾸면</text>
+        <text x="638" y="80" class="d-sub">베이스 레이어: 노드에 이미 있음</text>
+        <text x="638" y="104" class="d-sub">→ diff_id 가 같아 다시 안 받음</text>
+        <text x="638" y="138" class="d-sub">코드 레이어: 몇 KB 새로 받음</text>
+        <text x="638" y="172" class="d-sub">설정 JSON: 새로 받음</text>
+        <text x="638" y="206" class="d-sub">매니페스트: 새 digest</text>
+        <text x="638" y="246" class="d-lbl">server.py 는 플랫폼 몫, handler.py 는</text>
+        <text x="638" y="268" class="d-lbl">사용자 몫. 둘 다 컨트롤 플레인이</text>
+        <text x="638" y="290" class="d-lbl">ConfigMap 에 넣어 준다</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-8.</b> Python 런타임 이미지. 베이스 레이어는 노드가 한 번 받으면 재사용되고, 배포마다 바뀌는 건 COPY 레이어 한 장과 설정·매니페스트뿐이다. 레이어 순서를 "잘 안 바뀌는 것 아래, 자주 바뀌는 것 위"로 두는 것이 캐시의 기본 규칙이다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>두 Dockerfile 을 한 줄씩</h3>
+  <div class="code-head"><span>poc/04-faas-runtime/functions/hello-src/Dockerfile</span><span>전체</span></div>
+  <pre><code><span class="k">FROM</span> golang:1.25-alpine AS build
+<span class="k">WORKDIR</span> /src
+<span class="k">COPY</span> go.mod main.go ./
+<span class="c"># CGO_ENABLED=0: C 라이브러리 없이 혼자 도는 실행 파일 → 아래 scratch(빈 이미지)에서도 돈다</span>
+<span class="k">RUN</span> CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /hello .
+<span class="c"># scratch 에는 /tmp 도 없다. ?work=io 가 쓸 빈 폴더를 미리 만들어 둔다</span>
+<span class="k">RUN</span> mkdir -p /out/tmp
+
+<span class="k">FROM</span> scratch
+<span class="k">COPY</span> --from=build /hello /hello
+<span class="k">COPY</span> --from=build --chown=65532:65532 /out/tmp /tmp
+<span class="k">USER</span> 65532:65532
+<span class="k">ENTRYPOINT</span> ["/hello"]</code></pre>
+  <ul>
+    <li><code>AS build</code>: 단계에 이름을 붙인다. 아래에서 <code>--from=build</code> 로 부른다.</li>
+    <li><code>COPY go.mod main.go ./</code>: <code>go.sum</code> 이 없다. 외부 의존성이 없어서다(<code>main.go</code> 는 표준 라이브러리만). 의존성이 생기면 <code>COPY go.mod go.sum</code> → <code>RUN go mod download</code> → <code>COPY . .</code> 순서로 나눠 의존성 레이어를 캐시한다.</li>
+    <li><code>CGO_ENABLED=0</code>: glibc/musl 에 동적 링크하지 않는 정적 바이너리. scratch 에는 libc 가 없으니 필수다.</li>
+    <li><code>-trimpath</code>: 빌드한 경로(<code>/src</code>)를 바이너리에서 지운다. 재현성과 정보 노출 감소. <code>-ldflags="-s -w"</code>: 심볼 표와 DWARF 디버그 정보를 빼서 크기를 줄인다.</li>
+    <li><code>RUN mkdir -p /out/tmp</code>: scratch 에는 <code>mkdir</code> 명령도 없어서 앞 단계에서 만든다. 함수의 <code>?work=io</code> 가 <code>os.TempDir()</code>(=<code>/tmp</code>)에 파일을 쓴다.</li>
+    <li><code>--chown=65532:65532</code>: /tmp 의 주인을 실행 사용자와 같게. 65532 는 distroless 의 <code>nonroot</code> 관례 번호.</li>
+    <li><code>USER 65532:65532</code>: ksvc 의 <code>runAsNonRoot: true</code> 를 통과하려면 이미지가 숫자 UID 를 가져야 한다(이름이면 kubelet 이 root 여부를 확인할 수 없어 거절한다).</li>
+    <li><code>ENTRYPOINT ["/hello"]</code>: JSON 배열(exec form). 셸이 없으니 문자열 형식(shell form)은 못 쓴다.</li>
+  </ul>
+  <div class="code-head"><span>poc/05-control-plane-mcp/control-plane/src/main/resources/runtime/python/Dockerfile</span><span>전체</span></div>
+  <pre><code><span class="k">FROM</span> python:3.12-slim
+<span class="k">WORKDIR</span> /app
+<span class="k">COPY</span> server.py handler.py ./
+<span class="c"># root 가 아닌 숫자 UID. 3단계 테넌트 namespace 의 Pod Security(restricted)를 통과하려면 필요</span>
+<span class="k">USER</span> 65532:65532
+<span class="k">ENV</span> PORT=8080 PYTHONUNBUFFERED=1
+<span class="k">EXPOSE</span> 8080
+<span class="k">CMD</span> ["python", "server.py"]</code></pre>
+  <ul>
+    <li><code>FROM python:3.12-slim</code>: Docker Hub 의 공식 이미지(인덱스). 빌드 노드의 arch 항목이 골라진다. 태그로 적었으니 Docker Hub 쪽에서 3.12 패치가 나오면 다음 빌드에 새 베이스가 들어온다. 재현성을 원하면 <code>python:3.12-slim@sha256:...</code> 로 고정.</li>
+    <li><code>COPY server.py handler.py ./</code>: 빌드 재료(ConfigMap)에 이 두 파일과 Dockerfile 이 들어 있다(6절). <code>handler.py</code> 가 사용자 코드다.</li>
+    <li><code>ENV PYTHONUNBUFFERED=1</code>: print 가 바로 표준 출력으로 → <code>kubectl logs</code> 에 즉시 보인다.</li>
+    <li><code>CMD</code>: Knative 가 넣어 주는 <code>PORT</code> 를 <code>server.py</code> 가 읽는다.</li>
+  </ul>
+  <div class="code-head"><span>poc/05-control-plane-mcp/control-plane/src/main/resources/runtime/python/server.py</span><span>발췌</span></div>
+  <pre><code><span class="k">import</span> handler  <span class="c"># 사용자 코드. import 가 실패하면 컨테이너가 바로 죽고 Revision 이 Ready 가 안 된다</span>
+
+<span class="k">class</span> FunctionHandler(BaseHTTPRequestHandler):
+    <span class="k">def</span> _serve(self):
+        length = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(length) <span class="k">if</span> length <span class="k">else</span> b""
+        <span class="k">try</span>:
+            out = handler.handle(body)
+            status = 200
+        <span class="k">except</span> Exception:  <span class="c"># 사용자 코드의 어떤 예외든 500 으로</span>
+            traceback.print_exc()
+            out, status = {"error": "function raised an exception"}, 500
+        ...
+    do_GET = _serve
+    do_POST = _serve
+
+<span class="k">if</span> __name__ == "__main__":
+    port = int(os.environ.get("PORT", "8080"))
+    ThreadingHTTPServer(("", port), FunctionHandler).serve_forever()</code></pre>
+  <ul>
+    <li>런타임(server.py)과 사용자 코드(handler.py)를 나누는 구조는 AWS Lambda 의 "런타임 + 핸들러" 와 같은 발상이다. 사용자는 <code>def handle(body)</code> 만 쓴다.</li>
+    <li>사용자 코드에 문법 오류가 있어도 <strong>빌드는 성공한다</strong>(파이썬은 빌드 때 실행하지 않는다). 실패는 Revision 의 컨테이너가 시작하다 죽는 것으로 나타난다(07장 상태 <code>FAILED</code>). 빌드 단계에 <code>RUN python -c "import handler"</code> 를 넣으면 실패를 빌드로 앞당길 수 있다.</li>
+  </ul>
+  <pre class="pseudo"><code><span class="c">// 레이어 순서 정하는 규칙</span>
+<span class="k">for</span> 줄 <span class="k">in</span> Dockerfile:
+  <span class="k">if</span> 줄이 바뀌거나 그 줄의 입력 파일이 바뀌면: 그 줄과 <span class="k">아래 모든 줄</span>의 캐시가 무효
+<span class="c">// 그래서: 잘 안 바뀌는 것(베이스, 의존성 설치) → 위쪽 줄</span>
+<span class="c">//        자주 바뀌는 것(사용자 코드 COPY)     → 아래쪽 줄</span></code></pre>
+</div>
+
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
+<ul>
+<li><strong>scratch</strong>(Go): 이미지가 가장 작고 셸이 없어 침입 후 할 수 있는 일이 적다. 대가는 디버깅 도구가 없다는 것(<code>kubectl exec</code> 로 들어가도 할 게 없다). 대안 <code>gcr.io/distroless/static</code> 은 CA 인증서·tzdata·<code>/etc/passwd</code> 가 있어 HTTPS 를 부르는 함수에 더 맞다.</li>
+<li><strong>python:3.12-slim</strong>: alpine(musl) 보다 크지만 C 확장 wheel 이 그대로 깔린다. distroless python 은 크기는 비슷하고 셸이 없다.</li>
+<li><strong>Dockerfile 을 플랫폼이 준다</strong>: 사용자는 Dockerfile 을 모른다(FaaS 의 약속). 언어가 늘면 런타임 폴더(<code>runtime/&lt;언어&gt;/</code>)를 하나씩 추가한다. Buildpacks 는 이 일을 자동화한 것이다(9절).</li>
+</ul></aside>
+
+<aside class="callout fact"><p class="callout-title">공식 문서</p>
+<ul>
+<li><a href="https://docs.docker.com/reference/dockerfile/">Dockerfile reference</a> · <a href="https://docs.docker.com/build/building/multi-stage/">Multi-stage builds</a> · <a href="https://docs.docker.com/build/cache/">Build cache 규칙</a></li>
+<li><a href="https://pkg.go.dev/cmd/go#hdr-Compile_packages_and_dependencies">go build 플래그</a> · <a href="https://github.com/GoogleContainerTools/distroless">distroless</a></li>
+</ul></aside>
+
+<!-- ============================================================ 5. Kaniko -->
+<h2 id="kaniko">5. Kaniko: Docker 데몬 없이 클러스터 안에서 빌드</h2>
+
+<div class="tier" data-tier="1">
+  <h3>무엇이고 왜 쓰나</h3>
+  <p>맥에서 <code>docker build</code> 를 하면 실제 일은 Docker 데몬(dockerd, root 권한 프로세스)이 한다. 쿠버네티스 파드 안에는 데몬이 없다. 데몬을 쓰는 방법은 두 가지인데 둘 다 위험하다.</p>
+  <ul>
+    <li><strong>노드의 Docker 소켓을 파드에 마운트</strong>: 그 파드는 노드의 dockerd 에게 "호스트 / 를 마운트한 privileged 컨테이너를 띄워라" 를 시킬 수 있다 = 노드 root.</li>
+    <li><strong>Docker-in-Docker</strong>: 파드 안에 dockerd 를 띄운다. dockerd 가 cgroup·마운트를 만들려면 <code>privileged: true</code> 가 필요하다 = 역시 노드 root 에 가깝다.</li>
+  </ul>
+  <p><strong>Kaniko</strong>(Google 이 만든 도구, 원본 저장소는 2025-06-03 보관됨)는 데몬 없이 <strong>자기 컨테이너의 루트 파일 시스템 위에서 직접</strong> Dockerfile 을 실행한다. 베이스 이미지를 자기 <code>/</code> 에 풀고, <code>RUN</code> 을 자기 프로세스로 실행하고, 바뀐 파일을 tar 로 묶어 레이어를 만들고, 레지스트리 API 로 push 한다. 특권(privileged)이 필요 없고, 평범한 Job 파드 하나로 빌드가 끝난다.</p>
+  <p>Java 로 비유하면, 빌드 서버에 원격 셸을 열어 주는 대신 "빌드만 하고 결과를 아티팩트 저장소에 올리고 끝나는 일회용 컨테이너" 를 띄우는 것이다.</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>executor 안에서 일어나는 일</h3>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 470" role="img" aria-labelledby="f610-t">
+        <title id="f610-t">Kaniko executor 내부: 베이스 파일 시스템을 자기 루트에 풀고 명령마다 스냅샷을 떠서 레이어로 만든 뒤 push</title>
+        <defs>
+          <marker id="f610-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+          <marker id="f610-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <rect x="20" y="20" width="640" height="430" rx="12" class="d-pool"/>
+        <text x="38" y="46" class="d-lbl">kaniko 컨테이너 (privileged 아님, 컨테이너 안 uid 0)</text>
+        <rect x="40" y="60" width="270" height="110" rx="12" class="d-agent"/>
+        <text x="58" y="90" class="d-ttl-s">/kaniko (무시 목록)</text>
+        <text x="58" y="116" class="d-mono">executor 바이너리</text>
+        <text x="58" y="138" class="d-mono">.docker/ 인증, ssl/certs</text>
+        <text x="58" y="160" class="d-sub">스냅샷에서 빠진다</text>
+        <rect x="340" y="60" width="300" height="110" rx="12" class="d-card"/>
+        <text x="358" y="90" class="d-ttl-s">/workspace (빌드 재료)</text>
+        <text x="358" y="116" class="d-mono">Dockerfile, 소스</text>
+        <text x="358" y="140" class="d-mono">볼륨 마운트 → 무시 목록</text>
+        <rect x="40" y="190" width="600" height="245" rx="12" class="d-prov-box"/>
+        <text x="58" y="218" class="d-ttl-s">/ (컨테이너 자신의 루트) = 빌드 중인 이미지</text>
+        <rect x="60" y="234" width="170" height="80" rx="12" class="d-card"/>
+        <text x="74" y="262" class="d-ttl-s">① 베이스 풀기</text>
+        <text x="74" y="286" class="d-sub">FROM 레이어를</text>
+        <text x="74" y="306" class="d-sub">/ 에 덮어씀</text>
+        <rect x="250" y="234" width="170" height="80" rx="12" class="d-card"/>
+        <text x="264" y="262" class="d-ttl-s">② 명령 실행</text>
+        <text x="264" y="286" class="d-sub">RUN = 자식 프로세스</text>
+        <text x="264" y="306" class="d-sub">COPY = 파일 복사</text>
+        <rect x="440" y="234" width="180" height="80" rx="12" class="d-card"/>
+        <text x="454" y="262" class="d-ttl-s">③ 스냅샷</text>
+        <text x="454" y="286" class="d-sub">이전 목록과 비교</text>
+        <text x="454" y="306" class="d-sub">바뀐 파일 → tar</text>
+        <rect x="60" y="334" width="560" height="84" rx="12" class="d-card"/>
+        <text x="74" y="362" class="d-ttl-s">④ 레이어 쌓기 + 설정 갱신</text>
+        <text x="74" y="388" class="d-sub">tar.gz 를 이미지에 덧붙이고 diff_id, history, ENV 등을 기록</text>
+        <text x="74" y="410" class="d-lbl">다음 줄이 있으면 ②로, 단계가 바뀌면 / 를 비우고 ①부터</text>
+        <path d="M230 274 L245 274" class="d-e-api" marker-end="url(#f610-api)"/>
+        <path d="M420 274 L435 274" class="d-e-api" marker-end="url(#f610-api)"/>
+        <path d="M530 314 L530 329" class="d-e-api" marker-end="url(#f610-api)"/>
+        <rect x="700" y="60" width="240" height="130" rx="12" class="d-obs-box"/>
+        <text x="718" y="90" class="d-ttl-s">레지스트리 (대상)</text>
+        <text x="718" y="116" class="d-mono">--destination</text>
+        <text x="718" y="140" class="d-sub">⑤ blob → 매니페스트 push</text>
+        <text x="718" y="164" class="d-sub">⑥ digest 를 파일에</text>
+        <rect x="700" y="230" width="240" height="120" rx="12" class="d-obs-box"/>
+        <text x="718" y="260" class="d-ttl-s">캐시 저장소</text>
+        <text x="718" y="286" class="d-mono">--cache-repo</text>
+        <text x="718" y="310" class="d-sub">RUN 결과 레이어를</text>
+        <text x="718" y="332" class="d-sub">키(해시) 태그로 보관</text>
+        <rect x="700" y="380" width="240" height="60" rx="12" class="d-plain-box"/>
+        <text x="718" y="406" class="d-sub">베이스 이미지 레지스트리</text>
+        <text x="718" y="428" class="d-mono">FROM → ① 로</text>
+        <path d="M640 380 L695 125" class="d-e-prov" marker-end="url(#f610-prov)"/>
+        <path d="M640 300 L695 290" class="d-e-prov" marker-end="url(#f610-prov)"/>
+        <path d="M700 420 L645 420" class="d-e-api" marker-end="url(#f610-api)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-9.</b> kaniko executor 의 내부. 베이스 이미지를 자기 루트(/)에 풀고(①), 명령을 실행하고(②), 파일 시스템 스냅샷을 비교해 바뀐 파일만 레이어로 만든다(③④). /kaniko 와 마운트된 볼륨은 스냅샷에서 빠진다. 끝나면 대상 레지스트리에 push 하고 digest 를 파일로 남긴다(⑤⑥).</figcaption>
+  </figure>
+  <pre class="mermaid">
+flowchart TD
+  S["시작: 플래그 읽기<br/>context, dockerfile, destination"] --> P["Dockerfile 파싱<br/>단계(stage)별 명령 목록"]
+  P --> B["단계의 FROM 이미지 받기<br/>--registry-mirror 먼저"]
+  B --> X["베이스 레이어를 / 에 풀기<br/>무시 목록 제외"]
+  X --> C{"다음 명령 있나"}
+  C -- "있음" --> K{"--cache 켜짐이고<br/>캐시 키가 cache-repo 에 있나"}
+  K -- "있음" --> H["캐시 레이어를 받아 / 에 풀기<br/>Using caching version of cmd"]
+  K -- "없음" --> R["명령 실행 (RUN, COPY ...)"]
+  R --> T["스냅샷: 바뀐 파일을 tar 로"]
+  T --> U["레이어 추가, 캐시면 cache-repo 로 push"]
+  H --> C
+  U --> C
+  C -- "없음 (단계 끝)" --> N{"마지막 단계인가"}
+  N -- "아니오" --> Q["결과 파일을 보관하고 / 를 비움<br/>다음 단계 FROM 으로"]
+  Q --> B
+  N -- "예" --> PU["destination 으로 push"]
+  PU --> D["digest-file 에 sha256 쓰기<br/>종료 코드 0"]
+  </pre>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>플래그와 내부 규칙</h3>
+  <div class="code-head"><span>poc/04-faas-runtime/build/kaniko-job.yaml</span><span>발췌 (args)</span></div>
+  <pre><code>        - <span class="k">name</span>: kaniko
+          <span class="k">image</span>: gcr.io/kaniko-project/executor:v1.23.2
+          <span class="k">env</span>:
+            - <span class="k">name</span>: IMAGE_TAG
+              <span class="k">value</span>: dev
+          <span class="k">args</span>:
+            - --context=tar:///workspace/context.tar.gz
+            - --dockerfile=Dockerfile
+            - --destination=kind-registry:5000/fn/hello:$(IMAGE_TAG)
+            - --cache=true
+            - --cache-repo=kind-registry:5000/fn/cache
+            - --insecure
+            - --insecure-registry=kind-registry:5000
+            - --snapshot-mode=redo</code></pre>
+  <div class="table-wrap"><table><thead><tr><th>플래그</th><th>뜻 (kaniko README 기준)</th><th>04</th><th>05</th></tr></thead><tbody>
+  <tr><td><code>--context</code></td><td>빌드 재료 위치. <code>dir://</code>(컨테이너 안 폴더), <code>tar://</code>(tar.gz 파일, <code>tar://stdin</code> 가능), <code>gs://</code>, <code>s3://</code>, <code>git://</code> 등</td><td><code>tar:///workspace/context.tar.gz</code></td><td><code>dir:///workspace</code></td></tr>
+  <tr><td><code>--dockerfile</code></td><td>Dockerfile 경로 (context 기준 상대 또는 절대)</td><td><code>Dockerfile</code></td><td><code>/workspace/Dockerfile</code></td></tr>
+  <tr><td><code>--destination</code></td><td>push 할 이미지 참조. 여러 번 줄 수 있다</td><td><code>kind-registry:5000/fn/hello:$(IMAGE_TAG)</code></td><td><code>${PUSH_IMAGE}</code></td></tr>
+  <tr><td><code>--cache</code>, <code>--cache-repo</code></td><td>RUN 결과 레이어 캐시를 원격 저장소에. cache-repo 를 안 주면 destination + <code>/cache</code></td><td>켬, <code>fn/cache</code></td><td>안 씀</td></tr>
+  <tr><td><code>--cache-ttl</code></td><td>캐시 유효 기간. 기본 2주</td><td>기본</td><td>-</td></tr>
+  <tr><td><code>--digest-file</code></td><td>push 한 이미지의 digest 를 이 파일에. <code>/dev/termination-log</code> 로 주면 쿠버네티스가 종료 메시지로 보관</td><td>안 씀</td><td><code>/dev/termination-log</code></td></tr>
+  <tr><td><code>--insecure</code></td><td>push 를 평문 HTTP 로</td><td>켬</td><td>켬</td></tr>
+  <tr><td><code>--insecure-pull</code></td><td>pull 을 평문 HTTP 로</td><td>-</td><td>-</td></tr>
+  <tr><td><code>--insecure-registry</code></td><td>이 레지스트리 하나는 push·pull 모두 HTTP 로 (여러 번 가능)</td><td><code>kind-registry:5000</code></td><td>-</td></tr>
+  <tr><td><code>--registry-mirror</code></td><td>Docker Hub 이미지를 받을 때 먼저 볼 미러. 실패하면 기본 레지스트리로 (<code>--skip-default-registry-fallback</code> 이면 실패)</td><td>429 때 추가 (15절)</td><td>-</td></tr>
+  <tr><td><code>--snapshot-mode</code></td><td><code>full</code>(기본, 내용+메타데이터), <code>redo</code>(mtime·크기·모드·uid·gid), <code>time</code>(mtime 만, RUN 변경을 놓칠 수 있음)</td><td><code>redo</code></td><td>기본 full</td></tr>
+  </tbody></table></div>
+  <ul>
+    <li><code>$(IMAGE_TAG)</code>: 쿠버네티스가 컨테이너의 <code>args</code> 안 <code>$(변수)</code> 를 같은 컨테이너의 env 값으로 바꿔 준다(셸이 아니라 kubelet 이 한다). build.sh 가 env 0번 값을 JSON Patch 로 바꾼다.</li>
+    <li>05 는 캐시를 안 쓴다. 대신 같은 코드는 빌드 ID 가 같아 Job 자체를 재사용한다(8절). 베이스 이미지(python:3.12-slim)는 빌드마다 Docker Hub 에서 다시 받는다. Docker Hub 한도에 걸리기 쉬운 쪽이 05 다.</li>
+  </ul>
+  <h4>스냅샷의 실제 알고리즘</h4>
+  <pre class="pseudo"><code><span class="k">초기화</span>:
+  무시_목록 = [/kaniko, /proc, /sys, /dev, /var/run, 마운트된 볼륨들 ...]   <span class="c">// /proc/self/mountinfo 로 찾음</span>
+  기준 = { 경로 → 해시(모드에 따라 내용 또는 mtime·크기·…) <span class="k">for</span> 경로 <span class="k">in</span> / <span class="k">if</span> 경로 ∉ 무시_목록 }
+
+<span class="k">명령마다</span>:
+  실행(명령)                         <span class="c">// RUN 은 /bin/sh -c 를 자식 프로세스로. 컨테이너 루트를 그대로 씀</span>
+  현재 = 같은 방식으로 다시 훑기
+  추가·변경 = {p | p ∈ 현재, 기준[p] != 현재[p]}
+  삭제 = 기준 − 현재                 <span class="c">// → .wh. 파일로 tar 에 넣음</span>
+  레이어 = gzip(tar(추가·변경 + whiteout(삭제)))
+  기준 = 현재
+
+<span class="c">// COPY 처럼 바뀔 파일을 이미 아는 명령은 전체를 훑지 않고 그 파일만 레이어로 (빠름)</span>
+<span class="c">// --single-snapshot 이면 마지막에 한 번만 → 레이어 1장</span></code></pre>
+  <h4>캐시 키</h4>
+  <pre class="mermaid">
+flowchart LR
+  A["이전 단계까지의 캐시 키<br/>(베이스 이미지 digest 에서 시작)"] --> H["sha256 으로 합침"]
+  B["이번 명령 문자열<br/>RUN go build ..."] --> H
+  C["COPY 면 복사할 파일들의 해시"] --> H
+  D["빌드 인자, 관련 ENV"] --> H
+  H --> K["캐시 키"]
+  K --> L{"cache-repo:캐시키<br/>매니페스트 있나 + TTL 안인가"}
+  L -- "예" --> M["그 레이어를 받아 씀<br/>명령은 실행 안 함"]
+  L -- "아니오" --> N["실행 후 레이어를<br/>cache-repo:캐시키 로 push"]
+  </pre>
+  <p>그래서 캐시는 "체인"이다. 위 줄의 키가 바뀌면 아래 줄 키도 전부 바뀐다(Dockerfile 레이어 순서 규칙과 같은 이유). 04 에서 <code>build.sh v1</code> 다음 <code>v1b</code> 를 같은 소스로 돌리면 <code>RUN go build</code> 줄이 캐시로 끝나고 로그에 <code>Using caching version of cmd</code> 가 보인다. 단 <code>FROM golang:1.25-alpine</code> 의 베이스 레이어는 매번 받아서 풀어야 한다(캐시는 "명령 결과" 레이어만 대상이고, 베이스 이미지 캐시는 별도의 <code>--cache-dir</code> + warmer 가 필요하다). 첫 빌드가 느린 이유 두 가지가 여기 있다: 캐시가 없어서, 그리고 커다란 golang 베이스를 처음 받아서.</p>
+  <aside class="callout warn"><p class="callout-title">주의: kaniko 는 보안 경계가 아니다</p>
+  <p>kaniko README 는 "kaniko 혼자서 신뢰할 수 없는 빌드를 안전하게 만들지 않는다, 컨테이너 런타임의 보안 기능에 기댄다" 고 적는다. <code>RUN</code> 은 컨테이너 안 root 로 실행되고, 베이스 이미지를 자기 루트에 풀어 덮어쓴다(그래서 공식 executor 이미지가 아닌 다른 이미지에서 돌리는 걸 지원하지 않는다). 사용자 코드가 빌드 때 실행되는 언어(예: <code>pip install</code> 의 setup.py, <code>npm install</code> 의 postinstall)라면 빌드 파드도 "남의 코드를 실행하는 곳" 이다. 그래서 우리는 빌드를 테넌트 namespace 가 아닌 별도 namespace(PSA baseline)와 별도 노드 풀에 가두었다. 더 조이려면 빌드 파드에도 <code>runtimeClassName: gvisor</code> 를 줄 수 있다 【확인 필요: kaniko 가 gVisor 안에서 도는지는 이 PoC 에서 시험하지 않았다】.</p></aside>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+<ul>
+<li>04: <code>poc/04-faas-runtime/build/kaniko-job.yaml</code> 을 <code>scripts/build.sh</code> 가 읽어 이름·태그·풀만 JSON Patch 로 바꿔 만든다. 캐시 <code>kind-registry:5000/fn/cache</code>.</li>
+<li>05: <code>poc/05-control-plane-mcp/control-plane/src/main/resources/templates/build-job.yaml</code> 을 컨트롤 플레인(<code>FunctionDeployer.startDeploy</code>)이 <code>${...}</code> 를 채워 만든다. 캐시 없음, digest 파일 있음.</li>
+<li>이미지는 둘 다 <code>gcr.io/kaniko-project/executor:v1.23.2</code>. 원본 저장소가 보관됐으므로 본선 전에 포크(<code>chainguard-dev/kaniko</code>) 이미지로 바꿀지 확인한다(04 README 1.3).</li>
+</ul></aside>
+
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+<ul>
+<li><strong>증상</strong>: Job 파드 <code>ImagePullBackOff</code> (kaniko 이미지 자체). <strong>볼 곳</strong>: <code>kubectl -n faas-build describe pod</code>. <strong>고치는 법</strong>: gcr.io 접근 확인, 또는 맥에서 받아 <code>kind load docker-image</code>.</li>
+<li><strong>증상</strong>: kaniko 로그 <code>error building image: ... go.mod file not found</code>. <strong>원인</strong>: ConfigMap 심볼릭 링크를 그대로 COPY (6절). </li>
+<li><strong>증상</strong>: <code>UNAUTHORIZED</code> / <code>http: server gave HTTP response to HTTPS client</code> 로 push 실패. <strong>고치는 법</strong>: <code>--insecure</code>/<code>--insecure-registry</code> 확인.</li>
+<li><strong>증상</strong>: 빌드가 매번 느림, 로그에 캐시 줄이 없음. <strong>볼 곳</strong>: <code>curl -s localhost:5001/v2/fn/cache/tags/list</code>. <strong>원인</strong>: <code>NOCACHE=1</code>, cache-repo 오타, 위 줄 변경으로 체인 무효.</li>
+</ul></aside>
+
+<aside class="callout fact"><p class="callout-title">공식 문서</p>
+<ul>
+<li><a href="https://github.com/GoogleContainerTools/kaniko">kaniko README</a> (How does kaniko work, Additional flags, Caching, Security) · <a href="https://github.com/chainguard-dev/kaniko">chainguard-dev/kaniko 포크</a></li>
+<li><a href="https://kubernetes.io/docs/tasks/inject-data-application/define-interdependent-environment-variables/">쿠버네티스: args 안의 $(VAR) 치환</a></li>
+</ul></aside>
+
+<!-- ============================================================ 6. 빌드 재료 -->
+<h2 id="context">6. 빌드 재료 넣기: ConfigMap 과 심볼릭 링크</h2>
+
+<div class="tier" data-tier="1">
+  <h3>소스를 kaniko 파드에 어떻게 넘기나</h3>
+  <p>kaniko 는 빌드 재료(context)를 자기 컨테이너 안의 폴더나 tar 파일, 또는 S3·GCS·Git 에서 읽는다. PoC 는 외부 저장소 없이 끝내려고 <strong>ConfigMap</strong> 에 소스를 넣고 파드에 볼륨으로 붙인다. ConfigMap 한 개는 최대 1MiB 라서 함수 코드 몇 개에는 충분하다.</p>
+  <p>함정이 하나 있다. 쿠버네티스는 ConfigMap 볼륨의 파일을 "진짜 파일" 로 두지 않고 <strong>심볼릭 링크</strong>로 둔다(갱신을 원자적으로 하려고). kaniko 의 <code>COPY</code> 는 링크를 따라가지 않고 링크 자체를 이미지에 복사한다. 그러면 이미지 안에서 <code>go.mod</code> 가 "어디에도 없는 곳을 가리키는 링크" 가 되어 빌드가 깨진다. 04 와 05 는 이 같은 문제를 서로 다른 방법으로 피한다.</p>
+  <div class="grid">
+    <div class="item"><h4>04: tar.gz 하나로</h4><p>build.sh 가 소스 폴더를 <code>context.tar.gz</code> 로 묶어 ConfigMap 에 넣고, kaniko 에 <code>--context=tar://...</code>. kaniko 가 tar 를 열 때 파일 하나(링크)를 읽는 것은 문제가 없고, 압축을 푼 결과는 진짜 파일이다.</p></div>
+    <div class="item"><h4>05: initContainer cp -L</h4><p>busybox initContainer 가 <code>cp -L /src/* /workspace/</code> 로 링크를 따라가 내용을 복사(emptyDir)한 다음 kaniko 가 <code>dir:///workspace</code> 를 쓴다. 컨트롤 플레인이 파일별로 ConfigMap 키를 만들 수 있어 tar 를 만들 필요가 없다.</p></div>
+  </div>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>ConfigMap 볼륨의 실제 모양</h3>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 400" role="img" aria-labelledby="f612-t">
+        <title id="f612-t">ConfigMap 볼륨의 심볼릭 링크 구조와 cp -L 로 진짜 파일을 만드는 과정</title>
+        <defs>
+          <marker id="f612-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f612-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+          <marker id="f612-fail" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+        </defs>
+        <rect x="20" y="20" width="460" height="300" rx="12" class="d-card"/>
+        <text x="38" y="50" class="d-ttl-s">/src (ConfigMap src-&lt;id&gt; 볼륨, 읽기 전용)</text>
+        <text x="38" y="86" class="d-mono">handler.py  → ..data/handler.py</text>
+        <text x="38" y="110" class="d-mono">server.py   → ..data/server.py</text>
+        <text x="38" y="134" class="d-mono">Dockerfile  → ..data/Dockerfile</text>
+        <text x="38" y="170" class="d-mono">..data      → ..2026_10_20_12_00_00.123</text>
+        <rect x="38" y="190" width="420" height="110" rx="12" class="d-plain-box"/>
+        <text x="54" y="216" class="d-mono">..2026_10_20_12_00_00.123/</text>
+        <text x="54" y="240" class="d-mono">   handler.py   (진짜 파일)</text>
+        <text x="54" y="262" class="d-mono">   server.py    (진짜 파일)</text>
+        <text x="54" y="284" class="d-mono">   Dockerfile   (진짜 파일)</text>
+        <rect x="560" y="20" width="380" height="150" rx="12" class="d-cp-box"/>
+        <text x="578" y="50" class="d-ttl-s">/workspace (emptyDir)</text>
+        <text x="578" y="84" class="d-mono">handler.py   (진짜 파일)</text>
+        <text x="578" y="108" class="d-mono">server.py    (진짜 파일)</text>
+        <text x="578" y="132" class="d-mono">Dockerfile   (진짜 파일)</text>
+        <text x="578" y="156" class="d-sub">→ kaniko --context=dir:///workspace</text>
+        <path d="M480 100 L555 100" class="d-e-prov" marker-end="url(#f612-prov)"/>
+        <text x="486" y="90" class="d-lbl">cp -L</text>
+        <rect x="560" y="210" width="380" height="110" rx="12" class="d-fail-box"/>
+        <text x="578" y="240" class="d-ttl-s">링크를 그대로 COPY 하면</text>
+        <text x="578" y="266" class="d-mono">/app/handler.py → ..data/handler.py</text>
+        <text x="578" y="290" class="d-sub">이미지 안에 ..data 가 없다 → 깨진 링크</text>
+        <path d="M480 250 L555 250" class="d-e-fail" marker-end="url(#f612-fail)"/>
+        <text x="20" y="352" class="d-sub">갱신 때 kubelet 은 새 시각 폴더를 만들고 ..data 링크 하나만 바꾼다 (원자적 교체).</text>
+        <text x="20" y="378" class="d-sub">그래서 사용자에게 보이는 이름은 늘 링크다. ls -la /src 로 확인할 수 있다.</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-10.</b> ConfigMap 볼륨은 "보이는 이름 → <code>..data</code> → 시각 폴더의 진짜 파일" 2단 링크다. <code>cp -L</code>(링크를 따라가 내용 복사)로 emptyDir 에 진짜 파일을 만들면 kaniko 가 안전하게 COPY 한다. 링크를 그대로 COPY 하면 이미지 안에서 깨진다(빨강).</figcaption>
+  </figure>
+  <p>05 에서 Job 과 ConfigMap 을 만드는 순서도 볼 만하다. <strong>Job 을 먼저</strong> 만들고, 그 Job 을 주인(ownerReference)으로 하는 ConfigMap 을 만든다. Job 이 TTL 로 지워지면 쿠버네티스 가비지 컬렉터가 ConfigMap 도 같이 지운다. 파드가 ConfigMap 보다 먼저 스케줄되면 kubelet 이 볼륨을 못 붙여 <code>ContainerCreating</code> 에서 잠깐 기다렸다가 다시 시도한다.</p>
+  <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant CP as 컨트롤 플레인
+  participant API as API 서버
+  participant KL as kubelet (build 노드)
+  CP->>API: GET Job build-hello-3f2a9c01be (있나)
+  API-->>CP: 404
+  CP->>API: CREATE Job (templates/build-job.yaml 렌더링)
+  API-->>CP: 201, uid
+  CP->>API: CREATE ConfigMap src-hello-3f2a9c01be, ownerReferences = Job uid
+  Note over API,KL: Job controller 가 파드 생성, 스케줄러가 build 노드 배정
+  KL->>API: ConfigMap src-... 읽기 (없으면 FailedMount 후 재시도)
+  KL->>KL: initContainer copy-source - cp -L /src/* /workspace/
+  KL->>KL: kaniko 컨테이너 시작 - dir:///workspace
+  Note over CP: 202 Accepted 는 CREATE 직후 이미 응답함
+  </pre>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>두 방식의 코드</h3>
+  <div class="code-head"><span>poc/04-faas-runtime/scripts/build.sh</span><span>발췌</span></div>
+  <pre><code><span class="c"># 소스 폴더를 tar.gz 하나로 묶어 ConfigMap 에 넣는다 (ConfigMap 한 개 최대 1MiB → 큰 소스는 Git context 나 S3 로)</span>
+ctx=$(mktemp -d)
+tar -czf "$ctx/context.tar.gz" -C "$POC_DIR/functions/hello-src" .
+kubectl -n "$BUILD_NS" create configmap hello-src --from-file="$ctx/context.tar.gz" \
+  --dry-run=client -o yaml | kubectl apply -f - &gt;/dev/null</code></pre>
+  <ul>
+    <li><code>tar -C ... .</code>: 폴더 안으로 들어가서 묶는다 → tar 안 경로가 <code>./Dockerfile</code> 처럼 context 루트 기준이 된다.</li>
+    <li><code>--from-file</code>: 바이너리(gzip)라서 kubectl 이 <code>binaryData</code> 칸(base64)에 넣는다.</li>
+    <li><code>--dry-run=client -o yaml | kubectl apply</code>: "있으면 갱신, 없으면 생성". ConfigMap 이름이 <code>hello-src</code> 하나로 고정이라, 빌드 두 개를 동시에 돌리면 서로의 재료를 덮어쓸 수 있다(04 는 측정용이라 순서대로만 돌린다).</li>
+  </ul>
+  <div class="code-head"><span>poc/05-control-plane-mcp/control-plane/src/main/resources/templates/build-job.yaml</span><span>발췌 (initContainer, volumes)</span></div>
+  <pre><code>      <span class="k">initContainers</span>:
+        - <span class="k">name</span>: copy-source
+          <span class="k">image</span>: busybox:1.36
+          <span class="k">command</span>: ["sh", "-c", "cp -L /src/* /workspace/"]
+          <span class="k">volumeMounts</span>:
+            - { <span class="k">name</span>: src, <span class="k">mountPath</span>: /src, <span class="k">readOnly</span>: true }
+            - { <span class="k">name</span>: workspace, <span class="k">mountPath</span>: /workspace }
+      ...
+      <span class="k">volumes</span>:
+        - <span class="k">name</span>: src
+          <span class="k">configMap</span>:
+            <span class="k">name</span>: src-${BUILD_ID}
+        - <span class="k">name</span>: workspace
+          <span class="k">emptyDir</span>: {}</code></pre>
+  <ul>
+    <li><code>/src/*</code>: 셸 glob 은 점으로 시작하는 이름(<code>..data</code>, 시각 폴더)을 고르지 않는다 → 보이는 이름 세 개만 복사.</li>
+    <li><code>cp -L</code>: 원본이 링크면 링크가 가리키는 내용을 복사(dereference).</li>
+    <li>emptyDir: 파드가 사는 동안만 있는 노드 디스크 폴더. initContainer 와 kaniko 가 같이 본다.</li>
+    <li>(발췌는 한 줄 맵 형식으로 줄였다. 원본은 여러 줄 YAML.)</li>
+  </ul>
+  <div class="code-head"><span>poc/05-control-plane-mcp/control-plane/src/main/java/com/example/controlplane/deploy/FunctionDeployer.java</span><span>발췌 (startDeploy)</span></div>
+  <pre><code>Job job = k8s.batch().v1().jobs().inNamespace(buildNs).withName(jobName).get();
+<span class="k">boolean</span> reused = job != <span class="k">null</span>;
+<span class="k">if</span> (!reused) {
+    Job desired = renderer.render(<span class="s">"build-job.yaml"</span>, vars, Job.<span class="k">class</span>);
+    requireName(desired.getMetadata().getName(), jobName, <span class="s">"build-job.yaml"</span>);
+    job = k8s.batch().v1().jobs().inNamespace(buildNs).resource(desired).create();
+
+    ConfigMap source = <span class="k">new</span> ConfigMapBuilder()
+            .withNewMetadata()
+                .withName(<span class="s">"src-"</span> + buildId)
+                ...
+                .withOwnerReferences(<span class="k">new</span> OwnerReferenceBuilder()
+                        .withApiVersion(<span class="s">"batch/v1"</span>).withKind(<span class="s">"Job"</span>)
+                        .withName(job.getMetadata().getName()).withUid(job.getMetadata().getUid())
+                        .build())
+            .endMetadata()
+            .addToData(<span class="s">"handler.py"</span>, req.code())
+            .addToData(<span class="s">"server.py"</span>, renderer.readRuntimeFile(<span class="s">"python/server.py"</span>))
+            .addToData(<span class="s">"Dockerfile"</span>, renderer.readRuntimeFile(<span class="s">"python/Dockerfile"</span>))
+            .build();
+    k8s.configMaps().inNamespace(buildNs).resource(source).create();
+}</code></pre>
+  <ul>
+    <li><code>get()</code> 이 null 이 아니면 같은 코드의 빌드가 이미 있다 → 재사용(멱등, 8절).</li>
+    <li>ownerReference 에 Job 의 <code>uid</code> 를 넣는다. 이름만 같은 다른 Job(지워졌다 다시 생긴)과 헷갈리지 않게.</li>
+    <li>사용자 코드(<code>req.code()</code>)는 문자열로 <code>data</code> 에 들어간다. 컨트롤 플레인 설정 <code>faas.max-code-bytes: 262144</code> 가 ConfigMap 한도(1MiB) 안쪽에서 먼저 막는다.</li>
+  </ul>
+  <pre class="pseudo"><code><span class="k">선택</span> 빌드_재료_전달(소스):
+  <span class="k">if</span> 소스 크기 &lt; 1MiB 이고 외부 저장소 없음:
+      ConfigMap + (tar.gz 하나  <span class="k">또는</span>  initContainer cp -L)
+  <span class="k">elif</span> 소스가 Git 에 있음:   --context=git://...          <span class="c">// 커밋 SHA 고정</span>
+  <span class="k">else</span>:                     S3 에 tar.gz 업로드 → --context=s3://...   <span class="c">// 07(EC2) 확장안</span></code></pre>
+</div>
+
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+<ul>
+<li><strong>증상</strong>: kaniko 로그 <code>go.mod file not found</code> 또는 이미지 안 <code>ModuleNotFoundError: handler</code>. <strong>볼 곳</strong>: 빌드 Job 의 <code>--context</code> 가 ConfigMap 마운트 폴더를 직접 가리키는지. <strong>고치는 법</strong>: tar.gz 또는 cp -L.</li>
+<li><strong>증상</strong>: 빌드 파드가 오래 <code>ContainerCreating</code>, 이벤트 <code>FailedMount ... configmap "src-..." not found</code>. <strong>원인</strong>: ConfigMap 생성 실패(RBAC 403 등). <strong>볼 곳</strong>: 컨트롤 플레인 AUDIT 줄, <code>kubectl auth can-i create configmaps -n faas-build --as=system:serviceaccount:faas-system:control-plane</code>.</li>
+</ul></aside>
+
+<aside class="callout fact"><p class="callout-title">공식 문서</p>
+<ul>
+<li><a href="https://kubernetes.io/docs/concepts/configuration/configmap/">ConfigMap</a> (1MiB 한도, 볼륨 갱신) · <a href="https://kubernetes.io/docs/concepts/storage/volumes/#configmap">configMap 볼륨</a> · <a href="https://kubernetes.io/docs/concepts/architecture/garbage-collection/#owners-dependents">ownerReferences 와 GC</a></li>
+<li><a href="https://github.com/GoogleContainerTools/kaniko#kaniko-build-contexts">kaniko build contexts</a></li>
+</ul></aside>
+
+<!-- ============================================================ 7. Job 설계 -->
+<h2 id="job">7. 빌드 Job 설계</h2>
+
+<div class="tier" data-tier="1">
+  <h3>빌드는 "한 번 돌고 끝나는 일" → Job</h3>
+  <p>쿠버네티스 Job 은 "파드를 띄워서 성공으로 끝날 때까지 책임진다" 는 리소스다. 빌드 Job 을 설계할 때 정할 것은 다섯 가지다: <strong>어디서</strong>(namespace, 노드 풀), <strong>실패하면</strong>(backoffLimit), <strong>얼마나 오래</strong>(activeDeadlineSeconds), <strong>끝나면 언제 치우나</strong>(ttlSecondsAfterFinished), <strong>얼마나 쓰나</strong>(resources).</p>
+  <div class="table-wrap"><table><thead><tr><th>항목</th><th>04 (<code>build/kaniko-job.yaml</code>)</th><th>05 (<code>templates/build-job.yaml</code>)</th><th>이유</th></tr></thead><tbody>
+  <tr><td>namespace</td><td><code>fn-build</code></td><td><code>faas-build</code> (PSA baseline)</td><td>테넌트 namespace 와 분리. kaniko 는 컨테이너 안 root 가 필요해서 restricted 를 못 쓴다</td></tr>
+  <tr><td>노드</td><td colspan="2"><code>nodeSelector pool: build</code> + toleration <code>pool=build:NoSchedule</code></td><td>빌드의 CPU·디스크 폭주가 함수(exec 풀)에 번지지 않게</td></tr>
+  <tr><td>backoffLimit</td><td>0</td><td>0</td><td>코드 오류는 다시 해도 실패. 빨리 실패를 알린다</td></tr>
+  <tr><td>activeDeadlineSeconds</td><td>600</td><td>600</td><td>베이스 다운로드가 멈추거나 무한 루프 RUN 이면 강제 종료</td></tr>
+  <tr><td>ttlSecondsAfterFinished</td><td>600</td><td>3600</td><td>05 는 상태 조회(BUILD_FAILED 의 로그 안내)와 빌드 재사용에 Job 이 더 오래 필요</td></tr>
+  <tr><td>requests</td><td>cpu 500m, mem 512Mi</td><td>cpu 500m, mem 512Mi</td><td>작게 → 스케줄이 잘 된다</td></tr>
+  <tr><td>limits</td><td>cpu 2, mem 2Gi</td><td>mem 1Gi (CPU limit 없음)</td><td>크게 → 빨리 끝난다. 05 는 CPU 를 throttling 없이 노드 여유만큼</td></tr>
+  <tr><td>restartPolicy</td><td colspan="2"><code>Never</code></td><td>재시도는 Job 이 새 파드로(backoffLimit). 같은 파드 재시작은 하지 않음</td></tr>
+  </tbody></table></div>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>세 개의 시계</h3>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 300" role="img" aria-labelledby="f613-t">
+        <title id="f613-t">빌드 Job 에 걸린 세 개의 시간 제한: 컨트롤 플레인 build-timeout, activeDeadlineSeconds, ttlSecondsAfterFinished</title>
+        <path d="M60 80 L900 80" class="d-e-api"/>
+        <text x="40" y="60" class="d-lbl">Job 생성</text>
+        <text x="380" y="60" class="d-lbl">5분</text>
+        <text x="600" y="60" class="d-lbl">10분</text>
+        <text x="800" y="60" class="d-lbl">끝난 뒤 +10분 / +1시간</text>
+        <rect x="60" y="100" width="340" height="44" rx="12" class="d-agent"/>
+        <text x="76" y="128" class="d-mono">컨트롤 플레인 build-timeout 5m</text>
+        <rect x="60" y="156" width="560" height="44" rx="12" class="d-warn-box"/>
+        <text x="76" y="184" class="d-mono">activeDeadlineSeconds 600 → 파드 강제 종료, Job Failed</text>
+        <rect x="640" y="212" width="260" height="44" rx="12" class="d-plain-box"/>
+        <text x="656" y="240" class="d-mono">ttlSecondsAfterFinished</text>
+        <text x="60" y="284" class="d-sub">05: 5분이 지나면 컨트롤 플레인은 기다리기를 그만둔다. Job 은 10분까지 살 수 있다 (아래 주의).</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-11.</b> 빌드 Job 의 세 시계. 컨트롤 플레인의 기다림(보라)이 쿠버네티스의 강제 종료(노랑)보다 짧고, 끝난 Job 은 TTL(회색) 뒤에 ConfigMap 과 함께 지워진다.</figcaption>
+  </figure>
+  <pre class="mermaid">
+stateDiagram-v2
+  [*] --> Pending: Job 생성, 파드 생성
+  Pending --> Init: build 노드 배정, 볼륨 마운트
+  Init --> Running: copy-source 성공
+  Running --> Succeeded: kaniko 종료 코드 0, digest 기록
+  Running --> Failed: 종료 코드 != 0, backoffLimit 0
+  Running --> Failed: activeDeadlineSeconds 초과
+  Pending --> Failed: activeDeadlineSeconds 초과 (Pending 도 시간에 포함)
+  Succeeded --> Deleted: ttlSecondsAfterFinished 후 GC
+  Failed --> Deleted: ttlSecondsAfterFinished 후 GC
+  Deleted --> [*]: ConfigMap 도 ownerReference 로 함께 삭제
+  </pre>
+  <aside class="callout warn"><p class="callout-title">주의: 05 의 시계 불일치</p>
+  <p>컨트롤 플레인의 <code>build-timeout: 5m</code> 이 지나면 <code>waitUntilCondition</code> 이 예외를 던지고 감사 로그에 <code>deploy.apply error</code> 가 남는다. 그런데 Job 은 10분까지 계속 돌다가 성공할 수 있다. 성공해도 ksvc 를 만들 스레드가 이미 없다(같은 코드로 다시 POST 하면 Job 이 재사용되고 새 스레드가 digest 를 읽어 이어 간다). 템플릿 주석이 "컨트롤 플레인 build-timeout(5m)보다 길게" 라고 적은 의도는 "쿠버네티스가 먼저 죽이지 않게" 인데, 반대로 "컨트롤 플레인이 먼저 포기" 하는 틈이 생긴다. 07장 알려진 한계(메모리에만 있는 대기 스레드)와 같은 뿌리다.</p></aside>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>필드별 세부 (Job 공식 문서 기준)</h3>
+  <ul>
+    <li><strong>backoffLimit</strong>: 실패한 파드 수가 이 값을 넘으면 Job 을 Failed 로. 기본 6. 재시도 간격은 10초, 20초, 40초 … 최대 6분의 지수 백오프. 0 이면 첫 실패가 곧 Job 실패. <code>podFailurePolicy</code> 로 "종료 코드 1 은 재시도 안 함, 노드 장애(DisruptionTarget)는 재시도" 처럼 나눌 수 있다. 빌드에 쓰기 좋은 확장안이다.</li>
+    <li><strong>activeDeadlineSeconds</strong>: Job 이 시작된 뒤 전체 경과 시간. 파드가 Pending 인 시간도 포함한다. 넘으면 실행 중 파드를 모두 종료하고 reason <code>DeadlineExceeded</code>. backoffLimit 보다 우선한다.</li>
+    <li><strong>ttlSecondsAfterFinished</strong>: Complete 또는 Failed 가 된 시각부터 셈. TTL 컨트롤러가 Job 을 지우고, 연쇄 삭제(cascading)로 파드도 지운다. 05 는 ConfigMap 의 owner 가 Job 이라 ConfigMap 도 지워진다. 0 이면 끝나자마자 삭제(그러면 05 의 digest 읽기가 경쟁에 진다).</li>
+    <li><strong>restartPolicy: Never</strong>: Job 의 파드는 <code>Always</code> 를 쓸 수 없다. <code>OnFailure</code> 는 같은 파드에서 컨테이너를 다시 띄워 로그가 덮이고, termination-log 도 마지막 시도 것만 남는다.</li>
+    <li><strong>requests / limits</strong>: 스케줄러는 requests 만 보고 자리를 계산한다. build 노드에 빌드 N개가 동시에 들어가려면 <code>N × 500m ≤ 노드 할당 가능 CPU</code>. limits.cpu 는 CFS quota(100ms 마다 상한)로 지켜지고, limits.memory 를 넘으면 OOMKilled(종료 코드 137) → backoffLimit 0 이라 바로 BUILD_FAILED. Go 컴파일은 메모리를 꽤 쓰므로 04 는 2Gi 로 넉넉하게 잡았다.</li>
+    <li><strong>labels</strong>: 05 는 <code>faas.poc/tenant</code>, <code>faas.poc/function</code>, <code>faas.poc/build-id</code> 를 Job 과 파드 템플릿 둘 다에 붙인다. 상태 조회가 Job 을 라벨로 찾고(<code>latestBuild</code>), digest 읽기는 Job controller 가 자동으로 붙이는 <code>job-name</code> 라벨로 파드를 찾는다.</li>
+  </ul>
+  <div class="code-head"><span>poc/04-faas-runtime/scripts/build.sh</span><span>발췌 (Job 만들기와 기다리기)</span></div>
+  <pre><code>patch='[
+ {"op":"replace","path":"/metadata/name","value":"'"$name"'"},
+ {"op":"replace","path":"/spec/template/spec/containers/0/env/0/value","value":"'"$TAG"'"},
+ {"op":"replace","path":"/spec/template/spec/nodeSelector/pool","value":"'"$POOL"'"},
+ {"op":"replace","path":"/spec/template/spec/tolerations/0/value","value":"'"$POOL"'"}'
+[ "$NOCACHE" = "1" ] &amp;&amp; patch="$patch"',
+ {"op":"add","path":"/spec/template/spec/containers/0/args/-","value":"--cache=false"}'
+patch="$patch]"
+kubectl patch --local -f "$JOB_FILE" --type=json -p "$patch" -o yaml | kubectl create -f - &gt;/dev/null
+...
+<span class="k">for</span> _ <span class="k">in</span> $(seq 1 600); <span class="k">do</span>
+  s=$(kubectl -n "$BUILD_NS" get job "$name" -o jsonpath='{.status.succeeded}/{.status.failed}')
+  <span class="k">case</span> "$s" <span class="k">in</span>
+    1/*) result=ok; <span class="k">break</span> ;;
+    */1) result=failed; <span class="k">break</span> ;;
+  <span class="k">esac</span>
+  sleep 1
+<span class="k">done</span></code></pre>
+  <ul>
+    <li><code>kubectl patch --local</code>: 클러스터에 묻지 않고 파일만 바꿔 출력 → <code>kubectl create -f -</code> 로 생성. 원본 YAML 은 그대로.</li>
+    <li>JSON Patch 경로가 "env 0번", "toleration 0번" 처럼 위치를 쓴다. 그래서 YAML 주석이 "순서를 바꾸지 말 것" 이라고 경고한다.</li>
+    <li>Job 이름에 <code>$(date +%s)</code> 를 붙인다 → 같은 태그로 다시 돌려도 이름이 겹치지 않는다(04 는 멱등이 아니라 측정 반복이 목적).</li>
+    <li><code>POOL=exec</code> 로 부르면 빌드를 일부러 함수 옆에 띄운다(<code>build-noise.sh</code> 의 비교 실험).</li>
+  </ul>
+  <pre class="pseudo"><code><span class="k">설계</span> 빌드_Job(함수):
+  이름      = "build-" + 함수명 + "-" + 해시(테넌트, 함수명, 코드)[:10]   <span class="c">// 05: 같은 코드 = 같은 이름</span>
+  ns        = 빌드 전용 (PSA baseline, 테넌트 아님)
+  배치      = nodeSelector(pool=build) + toleration(pool=build)
+  실패      = backoffLimit 0  (필요하면 podFailurePolicy 로 인프라 실패만 재시도)
+  시간      = activeDeadlineSeconds &gt; 호출자 대기 시간  <span class="c">// 그리고 호출자는 다시 붙을 수 있어야 함</span>
+  청소      = ttlSecondsAfterFinished ≥ 결과를 읽는 데 걸리는 시간
+  자원      = requests 작게, limits.memory 넉넉히, limits.cpu 는 선택</code></pre>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+<p>빌드가 build 노드에서만 도는지 확인: <code>kubectl -n fn-build get pods -l app=fn-build -o custom-columns=NODE:.spec.nodeName --no-headers | sort -u</code> (04), <code>kubectl -n faas-build get pods -o wide</code> (05). 노드 풀 설계 자체(taint·toleration·nodeSelector 세 개를 다 써야 하는 이유)는 03장.</p></aside>
+
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
+<ul>
+<li><strong>backoffLimit 0</strong>: 빌드 실패의 대부분은 코드나 Dockerfile 문제라 재시도해도 같다. 레지스트리 일시 장애처럼 재시도할 가치가 있는 실패는 드물고, 그때는 사용자가 다시 POST 하면 된다. 대안 1~2 는 실패 응답을 늦춘다.</li>
+<li><strong>Job</strong> vs <strong>Tekton TaskRun</strong>/<strong>Argo Workflows</strong>: 파이프라인 도구는 단계·재사용·로그 UI 가 있지만 설치할 것이 늘어난다. 빌드가 "kaniko 한 번" 인 동안은 Job 으로 충분하다.</li>
+</ul></aside>
+
+<aside class="callout fact"><p class="callout-title">공식 문서</p>
+<ul>
+<li><a href="https://kubernetes.io/docs/concepts/workloads/controllers/job/">Job</a> (backoffLimit, activeDeadlineSeconds, podFailurePolicy) · <a href="https://kubernetes.io/docs/concepts/workloads/controllers/ttlafterfinished/">TTL-after-finished</a></li>
+<li><a href="https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/">Resource requests and limits</a> · <a href="https://kubernetes.io/docs/concepts/security/pod-security-standards/">Pod Security Standards</a></li>
+</ul></aside>
+
+<!-- ============================================================ 8. digest 고정 -->
+<h2 id="digest">8. digest 고정: 빌드에서 Revision 까지</h2>
+
+<div class="tier" data-tier="1">
+  <h3>태그는 거짓말을 할 수 있다</h3>
+  <p>"Revision 3 = 이 코드" 가 영원히 참이어야 롤백을 믿을 수 있다. 그런데 Revision 이 <code>hello:latest</code> 같은 태그를 가리키면, 누군가 그 태그에 다른 이미지를 push 한 순간부터 Revision 3 의 파드가 새로 뜰 때(스케일 아웃, 노드 장애 후 재배치, 콜드 스타트) <strong>다른 코드</strong>를 받는다. 쿠버네티스는 이것을 알아채지 못한다. 그래서 05 는 kaniko 가 push 한 매니페스트의 digest 를 받아 ksvc 에 <code>image@sha256:...</code> 로 넣는다.</p>
+  <p>태그가 거짓말하는 경우를 정리하면:</p>
+  <ul>
+    <li>같은 태그로 다시 push(04 에서 <code>build.sh v1</code> 을 두 번).</li>
+    <li>베이스 이미지 태그(<code>python:3.12-slim</code>)가 상류에서 갱신.</li>
+    <li>노드마다 받은 시각이 달라서 같은 Deployment 의 파드들이 서로 다른 이미지를 돌림(<code>imagePullPolicy: IfNotPresent</code> + 이미 캐시된 노드).</li>
+    <li>레지스트리 침해나 실수로 태그가 악성 이미지로 바뀜(공급망 공격).</li>
+  </ul>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>digest 가 흐르는 길</h3>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1100 360" role="img" aria-labelledby="f614-t">
+        <title id="f614-t">digest 고정 경로: kaniko digest-file, termination-log, 파드 상태, 컨트롤 플레인, ksvc, Revision, containerd pull</title>
+        <defs>
+          <marker id="f614-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+          <marker id="f614-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <rect x="20" y="30" width="190" height="120" rx="12" class="d-prov-box"/>
+        <text x="36" y="60" class="d-ttl-s">① kaniko</text>
+        <text x="36" y="86" class="d-mono">push 끝</text>
+        <text x="36" y="108" class="d-mono">--digest-file=</text>
+        <text x="36" y="128" class="d-mono">/dev/termination-log</text>
+        <rect x="240" y="30" width="200" height="120" rx="12" class="d-card"/>
+        <text x="256" y="60" class="d-ttl-s">② kubelet</text>
+        <text x="256" y="86" class="d-sub">컨테이너 종료 시</text>
+        <text x="256" y="108" class="d-sub">파일 내용을 읽어</text>
+        <text x="256" y="130" class="d-sub">상태에 기록</text>
+        <rect x="470" y="30" width="300" height="120" rx="12" class="d-card"/>
+        <text x="486" y="60" class="d-ttl-s">③ 파드 status (API 서버)</text>
+        <text x="486" y="86" class="d-mono">containerStatuses[kaniko]</text>
+        <text x="486" y="108" class="d-mono">.state.terminated.message</text>
+        <text x="486" y="130" class="d-mono">= "sha256:9f8e..."</text>
+        <rect x="800" y="30" width="280" height="120" rx="12" class="d-cp-box"/>
+        <text x="816" y="60" class="d-ttl-s">④ 컨트롤 플레인</text>
+        <text x="816" y="86" class="d-mono">readDigest(jobName)</text>
+        <text x="816" y="108" class="d-mono">registry-pull + / + 테넌트</text>
+        <text x="816" y="130" class="d-mono">+ / + 이름 + @ + digest</text>
+        <rect x="800" y="210" width="280" height="120" rx="12" class="d-cp-box"/>
+        <text x="816" y="240" class="d-ttl-s">⑤ ksvc server-side apply</text>
+        <text x="816" y="266" class="d-mono">image: localhost:5001/</text>
+        <text x="816" y="288" class="d-mono">  tenant-a/hello@sha256:9f8e</text>
+        <text x="816" y="312" class="d-sub">템플릿이 바뀜 → 새 Revision</text>
+        <rect x="470" y="210" width="300" height="120" rx="12" class="d-user-box"/>
+        <text x="486" y="240" class="d-ttl-s">⑥ Revision hello-0000N</text>
+        <text x="486" y="266" class="d-sub">이미 digest 라 태그 해석 없음</text>
+        <text x="486" y="290" class="d-sub">이 Revision 의 모든 파드 =</text>
+        <text x="486" y="312" class="d-sub">같은 바이트</text>
+        <rect x="160" y="210" width="280" height="120" rx="12" class="d-user-box"/>
+        <text x="176" y="240" class="d-ttl-s">⑦ exec 노드 containerd</text>
+        <text x="176" y="266" class="d-mono">GET manifests/sha256:9f8e</text>
+        <text x="176" y="290" class="d-sub">받은 바이트의 해시가</text>
+        <text x="176" y="312" class="d-sub">다르면 거절</text>
+        <path d="M210 90 L235 90" class="d-e-prov" marker-end="url(#f614-prov)"/>
+        <path d="M440 90 L465 90" class="d-e-api" marker-end="url(#f614-api)"/>
+        <path d="M770 90 L795 90" class="d-e-api" marker-end="url(#f614-api)"/>
+        <path d="M940 150 L940 205" class="d-e-api" marker-end="url(#f614-api)"/>
+        <path d="M800 270 L775 270" class="d-e-api" marker-end="url(#f614-api)"/>
+        <path d="M470 270 L445 270" class="d-e-prov" marker-end="url(#f614-prov)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-12.</b> digest 가 흐르는 일곱 단계. 쿠버네티스의 "종료 메시지" 기능을 빌려 빌드 파드의 출력값 하나를 API 로 꺼내고, 그 값을 ksvc 에 박아 Revision 을 바이트 단위로 고정한다.</figcaption>
+  </figure>
+  <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant K as kaniko
+  participant KL as kubelet
+  participant API as API 서버
+  participant CP as 컨트롤 플레인 (백그라운드 스레드)
+  participant KN as Knative controller
+  K->>K: push 완료, digest 를 /dev/termination-log 에 쓰기
+  K-->>KL: 종료 코드 0
+  KL->>API: 파드 status 갱신 (terminated.message = sha256...)
+  API-->>CP: Job watch 이벤트 succeeded = 1
+  CP->>API: LIST pods label job-name=build-...
+  API-->>CP: containerStatuses
+  CP->>CP: 이름 kaniko 의 message 가 sha256 으로 시작하나 검사
+  CP->>API: PATCH ksvc (server-side apply, fieldManager faas-control-plane, force)
+  API-->>KN: ksvc 변경 이벤트
+  KN->>API: Configuration → 새 Revision (image@sha256 그대로)
+  Note over KN: 콜드 스타트든 스케일 아웃이든 같은 digest 로 pull
+  </pre>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>코드와 엣지 케이스</h3>
+  <div class="code-head"><span>poc/05-control-plane-mcp/control-plane/src/main/java/com/example/controlplane/deploy/FunctionDeployer.java</span><span>발췌 (readDigest)</span></div>
+  <pre><code><span class="c">/** kaniko 의 --digest-file=/dev/termination-log 덕분에, 끝난 컨테이너 상태의 message 에 digest 가 들어 있다 */</span>
+<span class="k">private</span> String readDigest(String jobName) {
+    List&lt;Pod&gt; pods = k8s.pods().inNamespace(props.buildNamespace()).withLabel(<span class="s">"job-name"</span>, jobName).list().getItems();
+    <span class="k">return</span> pods.stream()
+            .flatMap(p -&gt; p.getStatus() == <span class="k">null</span> || p.getStatus().getContainerStatuses() == <span class="k">null</span>
+                    ? java.util.stream.Stream.&lt;ContainerStatus&gt;empty()
+                    : p.getStatus().getContainerStatuses().stream())
+            .filter(cs -&gt; KANIKO_CONTAINER.equals(cs.getName()))
+            .map(cs -&gt; cs.getState() == <span class="k">null</span> || cs.getState().getTerminated() == <span class="k">null</span> ? <span class="k">null</span> : cs.getState().getTerminated().getMessage())
+            .filter(Objects::nonNull)
+            .map(String::trim)
+            .filter(m -&gt; m.startsWith(<span class="s">"sha256:"</span>))
+            .findFirst()
+            .orElseThrow(() -&gt; <span class="k">new</span> IllegalStateException(<span class="s">"빌드 파드에서 digest 를 못 찾았다. ..."</span>));
+}</code></pre>
+  <ul>
+    <li><code>withLabel("job-name", jobName)</code>: Job controller 가 파드에 붙이는 라벨. 템플릿에 따로 적을 필요가 없다.</li>
+    <li>initContainer(<code>copy-source</code>)도 containerStatuses 가 아닌 <code>initContainerStatuses</code> 에 있어서 섞이지 않는다. 그래도 이름 <code>kaniko</code> 로 한 번 더 거른다.</li>
+    <li><code>trim()</code> + <code>startsWith("sha256:")</code>: 줄바꿈이나 다른 에러 문구가 들어 있으면 버린다. 실패한 컨테이너의 termination message 는 에러 문구일 수 있다.</li>
+    <li>못 찾으면 예외 → 감사 로그 <code>deploy.apply error</code>. 템플릿에서 컨테이너 이름을 바꾸거나 <code>--digest-file</code> 을 빼면 바로 여기서 터진다(테스트가 이걸 검사한다).</li>
+  </ul>
+  <div class="code-head"><span>FunctionDeployer.java</span><span>발췌 (finishDeploy)</span></div>
+  <pre><code>String digest = readDigest(jobName);
+String image = props.registryPull() + <span class="s">"/"</span> + tenant + <span class="s">"/"</span> + name + <span class="s">"@"</span> + digest;
+...
+knativeServices(tenant).resource(ksvc).fieldManager(FIELD_MANAGER).forceConflicts().serverSideApply();</code></pre>
+  <ul>
+    <li>push 는 <code>kind-registry:5000/tenant-a/hello:hello-3f2a9c01be</code>(태그 = 빌드 ID), ksvc 는 <code>localhost:5001/tenant-a/hello@sha256:...</code>. 저장소 경로가 같고 레지스트리 이름만 다르다(3절). digest 는 레지스트리 이름과 무관하게 같은 바이트를 가리킨다.</li>
+    <li>태그도 빌드 ID(코드 해시)라서 사실상 "내용 기반" 이다. 그래도 digest 를 쓰는 이유: 태그는 레지스트리가 덮어쓰기를 허용하고, Knative 가 이 레지스트리의 태그 해석을 건너뛰므로 digest 를 직접 넣는 것이 유일한 고정 수단이다.</li>
+  </ul>
+  <h4>termination message 의 규칙</h4>
+  <ul>
+    <li>기본 경로 <code>/dev/termination-log</code>(<code>terminationMessagePath</code> 로 바꿀 수 있다). kubelet 은 컨테이너가 끝나면 이 파일을 읽어 <code>state.terminated.message</code> 에 넣는다.</li>
+    <li>크기 제한: 컨테이너 하나 4096바이트, 파드 전체 12KiB. sha256 digest(71자)는 여유가 있다.</li>
+    <li><code>terminationMessagePolicy: FallbackToLogsOnError</code> 로 두면 파일이 비고 실패했을 때 로그 끝부분을 대신 넣는다. 05 는 기본(<code>File</code>)이다.</li>
+  </ul>
+  <h4>멱등성: 같은 코드 두 번</h4>
+  <div class="code-head"><span>poc/05-control-plane-mcp/control-plane/src/main/java/com/example/controlplane/deploy/BuildIds.java</span><span>발췌</span></div>
+  <pre><code><span class="k">public static</span> String of(String tenant, String name, String code) {
+    MessageDigest sha = MessageDigest.getInstance(<span class="s">"SHA-256"</span>);
+    <span class="k">byte</span>[] hash = sha.digest((tenant + <span class="s">"\n"</span> + name + <span class="s">"\n"</span> + code).getBytes(StandardCharsets.UTF_8));
+    <span class="k">return</span> name + <span class="s">"-"</span> + HexFormat.of().formatHex(hash).substring(0, 10);
+}</code></pre>
+  <ul>
+    <li>입력에 테넌트를 넣어 "다른 테넌트의 같은 코드" 가 같은 Job 을 공유하지 않게 한다(빌드 Job 은 한 namespace 에 모이니까).</li>
+    <li>앞 10자(40비트)라 충돌 확률은 낮지만 0 은 아니다. 충돌하면 남의 빌드를 재사용하게 되는데 테넌트·이름이 입력에 있어 실제 피해 범위는 "같은 테넌트의 같은 함수" 안이다.</li>
+    <li>빌드 ID 는 런타임 파일(server.py, Dockerfile) 변경을 반영하지 않는다. 플랫폼이 런타임을 고쳐도 같은 사용자 코드는 옛 Job 을 재사용한다(TTL 1시간 안). 【확인 필요: 의도인지. 런타임 버전을 해시 입력에 넣는 것이 안전하다】</li>
+  </ul>
+  <pre class="pseudo"><code><span class="k">함수</span> 배포(테넌트, 이름, 코드):
+  id = 이름 + "-" + sha256(테넌트, 이름, 코드)[:10]
+  <span class="k">if</span> Job("build-"+id) 없음: Job 생성; ConfigMap 생성(owner = Job)
+  <span class="k">비동기</span>:
+    Job 끝날 때까지 watch (최대 build-timeout)
+    <span class="k">if</span> 실패: 감사 로그; <span class="k">끝</span>
+    d = 파드[job-name=build-id].컨테이너[kaniko].terminated.message
+    <span class="k">assert</span> d 가 "sha256:" 로 시작
+    ksvc.image = pull_레지스트리 + "/" + 테넌트 + "/" + 이름 + "@" + d
+    server-side apply(ksvc, 주인 = faas-control-plane, force)
+  <span class="k">즉시 반환</span> 202 + 상태 URL</code></pre>
+</div>
+
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+<ul>
+<li><strong>증상</strong>: 상태가 BUILDING 에서 끝났는데 DEPLOYING 에서 영원히 멈춤, 감사 로그 <code>deploy.apply error 빌드 파드에서 digest 를 못 찾았다</code>. <strong>볼 곳</strong>: <code>kubectl -n faas-build get pod -l job-name=build-... -o jsonpath='{.items[0].status.containerStatuses[0].state.terminated.message}'</code>. <strong>원인</strong>: 컨테이너 이름이 kaniko 가 아님, <code>--digest-file</code> 누락, TTL 0 으로 파드가 이미 삭제.</li>
+<li><strong>증상</strong>: 같은 코드로 다시 배포했는데 아무 변화 없음. <strong>설명</strong>: 정상(멱등). 빌드 ID 가 같아 Job 재사용, ksvc 템플릿이 같아 새 Revision 도 안 생긴다.</li>
+</ul></aside>
+
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
+<ul>
+<li><strong>termination-log 로 digest 꺼내기</strong>: 추가 저장소 없이 쿠버네티스 API 만으로 빌드 결과를 읽는다. 대안 (가) 빌드 끝난 뒤 컨트롤 플레인이 레지스트리에 HEAD 로 태그 → digest 를 묻기: 레지스트리 접근 권한과 http 설정이 컨트롤 플레인에 필요하고, 그 사이 태그가 바뀌면 틀린다. (나) kaniko 로그를 파싱: 형식이 바뀌면 깨지고 로그 권한이 필요하다.</li>
+<li><strong>태그 고유화(빌드 ID 태그)만</strong>: 실용적으로는 거의 같지만 덮어쓰기를 기술적으로 막지 못한다. 둘 다 쓰는 것이 05 의 선택이다.</li>
+</ul></aside>
+
+<aside class="callout fact"><p class="callout-title">공식 문서</p>
+<ul>
+<li><a href="https://kubernetes.io/docs/tasks/debug/debug-application/determine-reason-pod-failure/">Determine the Reason for Pod Failure (termination message)</a></li>
+<li><a href="https://kubernetes.io/docs/concepts/containers/images/#image-names">Container images: 태그와 digest</a> · <a href="https://knative.dev/docs/serving/tag-resolution/">Knative tag resolution</a></li>
+<li><a href="https://github.com/GoogleContainerTools/kaniko#flag---digest-file">kaniko --digest-file</a></li>
+</ul></aside>
+
+<!-- ============================================================ 9. 빌드 대안 -->
+<h2 id="build-alt">9. 빌드 방식의 대안</h2>
+
+<div class="tier" data-tier="1">
+  <h3>"빌드 파드가 노드에 무엇을 요구하나" 로 비교</h3>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 400" role="img" aria-labelledby="f611-t">
+        <title id="f611-t">클러스터 안 빌드 방식 네 가지가 노드에 요구하는 권한 비교</title>
+        <defs>
+          <marker id="f611-fail" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+          <marker id="f611-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <rect x="20" y="300" width="920" height="80" rx="12" class="d-plain-box"/>
+        <text x="40" y="332" class="d-ttl-s">노드 (호스트 커널, kubelet, containerd 또는 dockerd)</text>
+        <text x="40" y="358" class="d-sub">빨간 점선 = 노드의 root 에 준하는 권한으로 이어지는 길</text>
+        <rect x="20" y="20" width="215" height="250" rx="12" class="d-fail-box"/>
+        <text x="36" y="50" class="d-ttl-s">Docker 소켓 마운트</text>
+        <text x="36" y="78" class="d-mono">/var/run/docker.sock</text>
+        <text x="36" y="106" class="d-sub">파드가 노드 데몬에게</text>
+        <text x="36" y="128" class="d-sub">"/ 를 마운트한 특권</text>
+        <text x="36" y="150" class="d-sub">컨테이너 띄워" 가능</text>
+        <text x="36" y="184" class="d-lbl">= 노드 root</text>
+        <text x="36" y="206" class="d-lbl">containerd 노드엔</text>
+        <text x="36" y="226" class="d-lbl">dockerd 도 없다</text>
+        <path d="M128 270 L128 295" class="d-e-fail" marker-end="url(#f611-fail)"/>
+        <rect x="255" y="20" width="215" height="250" rx="12" class="d-warn-box"/>
+        <text x="271" y="50" class="d-ttl-s">Docker-in-Docker</text>
+        <text x="271" y="78" class="d-mono">privileged: true</text>
+        <text x="271" y="106" class="d-sub">파드 안 dockerd 가</text>
+        <text x="271" y="128" class="d-sub">cgroup, 마운트를</text>
+        <text x="271" y="150" class="d-sub">직접 만든다</text>
+        <text x="271" y="184" class="d-lbl">특권 = 탈출이 쉽다</text>
+        <path d="M362 270 L362 295" class="d-e-fail" marker-end="url(#f611-fail)"/>
+        <rect x="490" y="20" width="215" height="250" rx="12" class="d-cp-box"/>
+        <text x="506" y="50" class="d-ttl-s">kaniko (우리)</text>
+        <text x="506" y="78" class="d-mono">특권 없음</text>
+        <text x="506" y="106" class="d-sub">컨테이너 안 root 로</text>
+        <text x="506" y="128" class="d-sub">자기 / 를 고친다</text>
+        <text x="506" y="150" class="d-sub">PSA baseline 통과</text>
+        <text x="506" y="184" class="d-lbl">노드 권한 요구 없음</text>
+        <path d="M597 270 L597 295" class="d-e-api" marker-end="url(#f611-api)"/>
+        <rect x="725" y="20" width="215" height="250" rx="12" class="d-cp-box"/>
+        <text x="741" y="50" class="d-ttl-s">BuildKit rootless</text>
+        <text x="741" y="78" class="d-mono">uid 1000 + userns</text>
+        <text x="741" y="106" class="d-sub">user namespace 안에서</text>
+        <text x="741" y="128" class="d-sub">rootless 로 빌드</text>
+        <text x="741" y="150" class="d-sub">seccomp, AppArmor</text>
+        <text x="741" y="172" class="d-sub">Unconfined 필요</text>
+        <text x="741" y="206" class="d-lbl">빠르고 활발히 유지</text>
+        <path d="M832 270 L832 295" class="d-e-api" marker-end="url(#f611-api)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-13.</b> 클러스터 안 빌드 네 가지. 왼쪽 둘은 노드 root 로 이어지는 길(빨강)이 있고, 오른쪽 둘은 특권 없이 돈다. BuildKit rootless 는 user namespace 와 seccomp/AppArmor 완화를 요구한다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>네 가지 대안의 동작 원리</h3>
+  <dl class="terms">
+    <dt>BuildKit (rootless)</dt><dd>Docker 의 새 빌드 엔진. 빌드를 DAG(의존 그래프)로 풀어 독립 단계를 병렬로 돌리고, 캐시를 내용 해시로 정교하게 관리한다(<code>--export-cache type=registry</code>). rootless 모드는 <code>buildkitd</code> 를 일반 사용자로 띄우고 user namespace 안에서 "가짜 root" 로 파일 소유자를 다룬다. 파드에서 돌리려면 공식 예시대로 seccomp·AppArmor 를 <code>Unconfined</code> 로 풀어야 한다(user namespace 와 마운트를 만들 시스템 콜이 기본 프로필에 막혀 있어서). 04 결정 2 에서 "본선에서 바꿀 1순위 후보".</dd>
+    <dt>Cloud Native Buildpacks</dt><dd>Dockerfile 없이 소스를 보고 언어를 감지(detect)해서 "빌더 이미지"가 정해진 레이어를 만든다(Heroku·Cloud Foundry 계보, <code>pack</code>, kpack). 베이스 OS 레이어만 갈아 끼우는 rebase 가 된다. FaaS 의 "코드만 올리면 된다" 와 가장 잘 맞지만 빌더 이미지가 크고 첫 빌드가 무겁다. Knative Functions(<code>func</code>)가 이 방식을 쓴다.</dd>
+    <dt>외부 CI (GitHub Actions 등)</dt><dd>클러스터 밖에서 <code>docker build</code> 후 push. 클러스터에 빌드 부하가 없고 도구가 성숙했다. 하지만 사용자 코드가 Git 에 있어야 하고(우리는 HTTP 로 코드를 받는다), 왕복이 길고, "남의 코드를 실행하는 곳" 이 CI 러너로 옮겨 갈 뿐 격리 문제는 그대로다.</dd>
+    <dt>Docker 소켓</dt><dd>가장 쉽고 가장 위험하다. 소켓에 쓸 수 있는 파드는 <code>docker run --privileged -v /:/host</code> 를 시킬 수 있다. 또 쿠버네티스 1.24 에서 dockershim 이 빠진 뒤 노드에는 보통 dockerd 자체가 없다(kind 노드도 containerd 만 있다).</dd>
+  </dl>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>선택 기준표</h3>
+  <div class="table-wrap"><table><thead><tr><th>기준</th><th>kaniko</th><th>BuildKit rootless</th><th>Buildpacks</th><th>외부 CI</th><th>Docker 소켓</th></tr></thead><tbody>
+  <tr><td>노드 특권</td><td>없음</td><td>없음 (seccomp/AppArmor 완화)</td><td>없음 (kpack 기준)</td><td>클러스터 밖</td><td>사실상 root</td></tr>
+  <tr><td>Dockerfile</td><td>필요</td><td>필요</td><td>불필요</td><td>필요</td><td>필요</td></tr>
+  <tr><td>캐시</td><td>registry 캐시(RUN 단위)</td><td>정교한 내용 캐시, 병렬</td><td>레이어 재사용, rebase</td><td>러너 캐시</td><td>노드 데몬 캐시</td></tr>
+  <tr><td>유지 상태</td><td>원본 보관(2025-06), 포크 있음</td><td>활발</td><td>활발(CNCF)</td><td>-</td><td>-</td></tr>
+  <tr><td>FaaS 적합</td><td>PoC 에 충분</td><td>본선 교체 1순위</td><td>"코드만" 에 가장 맞음</td><td>코드가 Git 에 있을 때</td><td>쓰지 않는다</td></tr>
+  </tbody></table></div>
+  <pre class="pseudo"><code><span class="k">선택</span> 빌드_방식(조건):
+  <span class="k">if</span> 사용자 코드가 HTTP 로 오고 클러스터 안에서 끝내야 함:
+      <span class="k">if</span> 설정 시간 여유 있음 <span class="k">and</span> 속도 중요: BuildKit rootless
+      <span class="k">elif</span> 언어가 여러 개 <span class="k">and</span> Dockerfile 을 감추고 싶음: Buildpacks (kpack)
+      <span class="k">else</span>: kaniko                                     <span class="c">// PoC</span>
+  <span class="k">elif</span> 코드가 Git PR 로 옴: 외부 CI + 이미지 서명
+  <span class="k">절대 아님</span>: 노드 Docker 소켓</code></pre>
+</div>
+
+<aside class="callout why"><p class="callout-title">왜 kaniko 를 골랐나</p>
+<p>평범한 Job 한 장, 특권 없음, 레지스트리 캐시, digest 파일. PoC 가 필요로 하는 네 가지를 설정 몇 줄로 준다. 보관된 프로젝트라는 약점은 "이미지 이름만 바꾸면 포크로 간다" 로 관리한다(04 README 결정 2).</p></aside>
+
+<aside class="callout fact"><p class="callout-title">공식 문서</p>
+<ul>
+<li><a href="https://github.com/moby/buildkit/blob/master/docs/rootless.md">BuildKit rootless</a> · <a href="https://github.com/moby/buildkit/tree/master/examples/kubernetes">BuildKit on Kubernetes 예시</a></li>
+<li><a href="https://buildpacks.io/docs/">Cloud Native Buildpacks</a> · <a href="https://github.com/buildpacks-community/kpack">kpack</a></li>
+<li><a href="https://kubernetes.io/blog/2022/02/17/dockershim-faq/">Dockershim 제거 FAQ</a></li>
+</ul></aside>
+
+<!-- ============================================================ 10. 런타임 스택 -->
+<h2 id="runtime">10. 컨테이너 런타임 스택: kubelet 에서 커널까지</h2>
+
+<div class="tier" data-tier="1">
+  <h3>컨테이너는 "칸막이 친 프로세스" 다</h3>
+  <p>컨테이너는 VM 이 아니다. 리눅스 프로세스 하나에 커널 기능 몇 가지로 칸막이를 친 것이다. 컨테이너 안 프로그램이 파일을 열거나 소켓을 만들면 그 시스템 콜(system call, 커널에 하는 부탁)은 <strong>노드의 커널이 직접</strong> 받는다. 그래서 커널에 버그가 하나 있으면, 그 버그를 건드리는 컨테이너 하나가 노드 전체를 차지할 수 있다(컨테이너 탈출, container escape).</p>
+  <p>쿠버네티스에서 파드가 실제 프로세스가 되기까지는 여러 층을 거친다.</p>
+  <ol>
+    <li><strong>kubelet</strong>: 노드의 에이전트. "이 파드를 띄워라" 를 API 서버에서 받는다.</li>
+    <li><strong>CRI</strong>(Container Runtime Interface): kubelet 이 런타임에게 말하는 gRPC 규약. 쿠버네티스는 이 규약만 알고 구현은 모른다.</li>
+    <li><strong>containerd</strong>: CRI 를 구현한 데몬. 이미지 pull, 스냅샷, 컨테이너 수명을 관리한다.</li>
+    <li><strong>shim</strong>(containerd-shim-*-v2): 컨테이너(정확히는 파드 샌드박스)마다 하나씩 뜨는 작은 중간 프로세스. containerd 가 재시작해도 컨테이너가 살아 있게 한다.</li>
+    <li><strong>OCI 런타임</strong>: 실제로 칸막이를 치고 프로세스를 띄우는 도구. 기본은 <strong>runc</strong>, gVisor 는 <strong>runsc</strong>.</li>
+    <li><strong>리눅스 커널</strong>: namespace, cgroup, capability, seccomp, LSM(AppArmor/SELinux).</li>
+  </ol>
+  <p>RuntimeClass(11절)는 4~5층의 "어느 shim/런타임을 쓸까" 를 파드마다 고르게 해 주는 장치다.</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>층별 그림</h3>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1100 640" role="img" aria-labelledby="f615-t">
+        <title id="f615-t">kubelet, CRI, containerd, shim v2, runc 와 runsc, 리눅스 커널 격리 기능까지의 계층도</title>
+        <defs>
+          <marker id="f615-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f615-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+        </defs>
+        <rect x="20" y="20" width="1060" height="70" rx="12" class="d-card"/>
+        <text x="40" y="50" class="d-ttl">kubelet</text>
+        <text x="40" y="74" class="d-sub">PodSpec → "샌드박스 만들고, 이미지 받고, 컨테이너 만들고, 시작"</text>
+        <text x="760" y="62" class="d-mono">runtimeClassName → handler</text>
+        <rect x="20" y="110" width="1060" height="56" rx="12" class="d-plain-box"/>
+        <text x="40" y="144" class="d-ttl-s">CRI (gRPC, unix 소켓 /run/containerd/containerd.sock)</text>
+        <text x="640" y="144" class="d-mono">RuntimeService · ImageService</text>
+        <rect x="20" y="186" width="1060" height="110" rx="12" class="d-card"/>
+        <text x="40" y="216" class="d-ttl">containerd</text>
+        <rect x="40" y="230" width="230" height="52" rx="12" class="d-plain-box"/>
+        <text x="56" y="262" class="d-mono">CRI 플러그인</text>
+        <rect x="290" y="230" width="230" height="52" rx="12" class="d-plain-box"/>
+        <text x="306" y="262" class="d-mono">content store (blob)</text>
+        <rect x="540" y="230" width="230" height="52" rx="12" class="d-plain-box"/>
+        <text x="556" y="262" class="d-mono">snapshotter (overlayfs)</text>
+        <rect x="790" y="230" width="270" height="52" rx="12" class="d-plain-box"/>
+        <text x="806" y="254" class="d-mono">runtimes.runc / runtimes.runsc</text>
+        <text x="806" y="274" class="d-mono">→ runtime_type</text>
+        <rect x="20" y="316" width="520" height="70" rx="12" class="d-prov-box"/>
+        <text x="40" y="346" class="d-ttl-s">containerd-shim-runc-v2</text>
+        <text x="40" y="370" class="d-mono">runtime_type io.containerd.runc.v2</text>
+        <rect x="560" y="316" width="520" height="70" rx="12" class="d-agent"/>
+        <text x="580" y="346" class="d-ttl-s">containerd-shim-runsc-v1</text>
+        <text x="580" y="370" class="d-mono">runtime_type io.containerd.runsc.v1</text>
+        <rect x="20" y="406" width="520" height="110" rx="12" class="d-prov-box"/>
+        <text x="40" y="436" class="d-ttl-s">runc (OCI 런타임)</text>
+        <text x="40" y="462" class="d-sub">config.json 대로 namespace, cgroup, seccomp 를</text>
+        <text x="40" y="486" class="d-sub">설정하고 사용자 프로세스를 exec 한 뒤 빠진다</text>
+        <text x="40" y="508" class="d-lbl">컨테이너 프로세스 = 호스트 커널의 일반 프로세스</text>
+        <rect x="560" y="406" width="520" height="110" rx="12" class="d-agent"/>
+        <text x="580" y="436" class="d-ttl-s">runsc (gVisor, OCI 런타임)</text>
+        <text x="580" y="462" class="d-sub">Sentry(사용자 공간 커널) + Gofer 를 띄우고</text>
+        <text x="580" y="486" class="d-sub">컨테이너 프로세스는 Sentry 위에서 돈다</text>
+        <text x="580" y="508" class="d-lbl">앱 시스템 콜 → Sentry, 호스트에는 좁은 목록만</text>
+        <rect x="20" y="536" width="1060" height="90" rx="12" class="d-plain-box"/>
+        <text x="40" y="564" class="d-ttl-s">리눅스 커널 (노드)</text>
+        <text x="40" y="590" class="d-mono">namespaces · cgroups v2 · capabilities · seccomp-bpf · AppArmor/SELinux · user namespaces</text>
+        <text x="40" y="612" class="d-sub">runc 컨테이너는 이 커널의 시스템 콜 표면 전체를 본다</text>
+        <path d="M550 90 L550 105" class="d-e-api" marker-end="url(#f615-api)"/>
+        <path d="M550 166 L550 181" class="d-e-api" marker-end="url(#f615-api)"/>
+        <path d="M280 296 L280 311" class="d-e-api" marker-end="url(#f615-api)"/>
+        <path d="M820 296 L820 311" class="d-e-api" marker-end="url(#f615-api)"/>
+        <path d="M280 386 L280 401" class="d-e-api" marker-end="url(#f615-api)"/>
+        <path d="M820 386 L820 401" class="d-e-api" marker-end="url(#f615-api)"/>
+        <path d="M280 516 L280 531" class="d-e-prov" marker-end="url(#f615-prov)"/>
+        <path d="M820 516 L820 531" class="d-e-prov" marker-end="url(#f615-prov)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-14.</b> 런타임 스택. 위 세 층(kubelet, CRI, containerd)은 runc 와 gVisor 가 같고, shim 과 OCI 런타임부터 갈라진다. 왼쪽(주황)은 컨테이너가 호스트 커널을 직접 쓰고, 오른쪽(보라)은 gVisor 의 Sentry 가 중간에서 받는다.</figcaption>
+  </figure>
+  <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant KL as kubelet
+  participant CD as containerd (CRI 플러그인)
+  participant SH as containerd-shim-runsc-v1
+  participant RS as runsc
+  KL->>CD: RunPodSandbox(config, runtime_handler = runsc)
+  CD->>CD: runtimes.runsc 찾기 → runtime_type io.containerd.runsc.v1
+  CD->>SH: shim 바이너리 실행 (이름 규칙으로 찾음)
+  SH->>RS: runsc create / start (pause 컨테이너 = 샌드박스)
+  RS-->>SH: Sentry, Gofer 프로세스 기동
+  SH-->>CD: 샌드박스 준비, ttrpc 로 보고
+  CD-->>KL: PodSandboxId
+  KL->>CD: PullImage(localhost:5001/...@sha256)
+  KL->>CD: CreateContainer(sandbox, 이미지, 명령)
+  CD->>SH: 같은 샌드박스에 컨테이너 추가
+  KL->>CD: StartContainer
+  SH->>RS: 앱 프로세스를 Sentry 안에서 시작
+  </pre>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>규약과 커널 기능 세부</h3>
+  <h4>CRI 의 두 서비스</h4>
+  <div class="table-wrap"><table><thead><tr><th>서비스</th><th>대표 RPC</th><th>뜻</th></tr></thead><tbody>
+  <tr><td>RuntimeService</td><td><code>RunPodSandbox</code>, <code>StopPodSandbox</code>, <code>RemovePodSandbox</code></td><td>파드 단위 환경(네트워크 namespace, pause 컨테이너, gVisor 면 Sentry). 요청에 <code>runtime_handler</code> 문자열이 들어간다</td></tr>
+  <tr><td></td><td><code>CreateContainer</code>, <code>StartContainer</code>, <code>StopContainer</code>, <code>ExecSync</code>, <code>ContainerStatus</code></td><td>샌드박스 안 컨테이너 수명</td></tr>
+  <tr><td>ImageService</td><td><code>PullImage</code>, <code>ImageStatus</code>, <code>ListImages</code>, <code>RemoveImage</code>, <code>ImageFsInfo</code></td><td>이미지 받기와 디스크 관리(이미지 GC)</td></tr>
+  </tbody></table></div>
+  <h4>shim v2 이름 규칙</h4>
+  <p>containerd 설정의 <code>runtime_type = "io.containerd.&lt;이름&gt;.&lt;버전&gt;"</code> 은 PATH 에서 <code>containerd-shim-&lt;이름&gt;-&lt;버전&gt;</code> 바이너리를 찾으라는 뜻이다. <code>io.containerd.runc.v2</code> → <code>containerd-shim-runc-v2</code>, <code>io.containerd.runsc.v1</code> → <code>containerd-shim-runsc-v1</code>. 그래서 install-gvisor.sh 는 <code>runsc</code> 와 함께 shim 바이너리를 <code>/usr/local/bin</code> 에 넣는다. shim 은 containerd 와 ttrpc(가벼운 gRPC)로 말하고, 컨테이너의 표준 입출력·종료 코드를 들고 있다.</p>
+  <h4>OCI 런타임 스펙</h4>
+  <ul>
+    <li><strong>번들(bundle)</strong>: <code>config.json</code> + <code>rootfs/</code>. containerd 가 스냅샷을 rootfs 로 마운트하고 PodSpec 을 config.json(프로세스 args, env, 마운트, namespace 목록, cgroup 경로, 자원 한도, capability, seccomp 프로필, 사용자)으로 번역한다.</li>
+    <li><strong>동작</strong>: <code>create</code>(환경만 만들고 대기) → <code>start</code>(사용자 프로세스 실행) → <code>kill</code> → <code>delete</code>. <code>state</code> 로 상태(creating/created/running/stopped) 조회.</li>
+    <li>runc 와 runsc 는 같은 번들을 받는다. 그래서 위 층은 바꾸지 않고 런타임만 갈아 끼울 수 있다.</li>
+  </ul>
+  <h4>리눅스 격리 기본 기능</h4>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 440" role="img" aria-labelledby="f616-t">
+        <title id="f616-t">컨테이너 프로세스를 둘러싼 리눅스 격리 기능 여섯 가지</title>
+        <rect x="360" y="170" width="240" height="100" rx="12" class="d-user-box"/>
+        <text x="380" y="206" class="d-ttl">컨테이너 프로세스</text>
+        <text x="380" y="232" class="d-mono">/hello (uid 65532)</text>
+        <text x="380" y="254" class="d-sub">호스트에선 평범한 PID</text>
+        <rect x="20" y="20" width="300" height="120" rx="12" class="d-card"/>
+        <text x="38" y="50" class="d-ttl-s">namespaces: 무엇이 보이나</text>
+        <text x="38" y="76" class="d-mono">mnt pid net ipc uts cgroup</text>
+        <text x="38" y="98" class="d-mono">user time</text>
+        <text x="38" y="124" class="d-sub">자기 파일·프로세스·네트워크만 보임</text>
+        <rect x="640" y="20" width="300" height="120" rx="12" class="d-card"/>
+        <text x="658" y="50" class="d-ttl-s">cgroups v2: 얼마나 쓰나</text>
+        <text x="658" y="76" class="d-mono">cpu.max memory.max pids.max</text>
+        <text x="658" y="98" class="d-mono">io.max</text>
+        <text x="658" y="124" class="d-sub">limits, OOM, CPU throttling</text>
+        <rect x="20" y="160" width="300" height="120" rx="12" class="d-card"/>
+        <text x="38" y="190" class="d-ttl-s">capabilities: root 쪼개기</text>
+        <text x="38" y="216" class="d-mono">drop ALL (우리 ksvc)</text>
+        <text x="38" y="238" class="d-mono">CAP_SYS_ADMIN, NET_RAW ...</text>
+        <text x="38" y="264" class="d-sub">root 라도 할 수 없는 일</text>
+        <rect x="640" y="160" width="300" height="120" rx="12" class="d-card"/>
+        <text x="658" y="190" class="d-ttl-s">seccomp-bpf: 어떤 콜</text>
+        <text x="658" y="216" class="d-mono">RuntimeDefault 프로필</text>
+        <text x="658" y="238" class="d-mono">허용 목록 밖 → EPERM</text>
+        <text x="658" y="264" class="d-sub">시스템 콜 번호·인자 필터</text>
+        <rect x="20" y="300" width="300" height="120" rx="12" class="d-card"/>
+        <text x="38" y="330" class="d-ttl-s">AppArmor / SELinux</text>
+        <text x="38" y="356" class="d-mono">LSM 프로필</text>
+        <text x="38" y="378" class="d-sub">경로·자원 단위 접근 통제</text>
+        <text x="38" y="402" class="d-sub">(강제 접근 통제, MAC)</text>
+        <rect x="640" y="300" width="300" height="120" rx="12" class="d-card"/>
+        <text x="658" y="330" class="d-ttl-s">user namespaces</text>
+        <text x="658" y="356" class="d-mono">pod.spec.hostUsers: false</text>
+        <text x="658" y="378" class="d-sub">안의 uid 0 = 밖의 일반 uid</text>
+        <text x="658" y="402" class="d-sub">탈출해도 호스트 root 아님</text>
+        <path d="M320 80 L360 180" class="d-e-api"/>
+        <path d="M640 80 L600 180" class="d-e-api"/>
+        <path d="M320 220 L355 220" class="d-e-api"/>
+        <path d="M640 220 L605 220" class="d-e-api"/>
+        <path d="M320 360 L360 260" class="d-e-api"/>
+        <path d="M640 360 L600 260" class="d-e-api"/>
+        <rect x="360" y="320" width="240" height="90" rx="12" class="d-fail-box"/>
+        <text x="378" y="350" class="d-ttl-s">공통 한계</text>
+        <text x="378" y="374" class="d-sub">전부 같은 커널의 기능</text>
+        <text x="378" y="396" class="d-sub">커널 버그 하나면 무력</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-15.</b> runc 가 쓰는 리눅스 격리 기능 여섯 가지. 무엇이 보이나(namespace), 얼마나 쓰나(cgroup), 어떤 권한(capability), 어떤 시스템 콜(seccomp), 어떤 자원 접근(LSM), 안의 root 가 밖에선 누구인가(user namespace). 모두 같은 커널이 지키므로 커널 자체의 버그 앞에서는 함께 무너진다. gVisor 는 이 아래에 한 겹을 더 둔다.</figcaption>
+  </figure>
+  <div class="table-wrap"><table><thead><tr><th>기능</th><th>PodSpec 에서 어디</th><th>우리 ksvc 설정</th></tr></thead><tbody>
+  <tr><td>capabilities</td><td><code>securityContext.capabilities</code></td><td><code>drop: ["ALL"]</code></td></tr>
+  <tr><td>권한 상승 막기</td><td><code>allowPrivilegeEscalation</code> (no_new_privs 비트)</td><td><code>false</code></td></tr>
+  <tr><td>root 금지</td><td><code>runAsNonRoot</code></td><td><code>true</code> + 이미지 <code>USER 65532</code></td></tr>
+  <tr><td>seccomp</td><td><code>seccompProfile.type</code></td><td><code>RuntimeDefault</code> (containerd 기본 프로필)</td></tr>
+  <tr><td>cgroup</td><td><code>resources.requests/limits</code></td><td>cpu 50m~500m, memory 32Mi~128Mi (04)</td></tr>
+  <tr><td>user namespace</td><td><code>hostUsers: false</code></td><td>안 씀 (kind/노드 커널 지원과 기능 단계에 따라 다름)</td></tr>
+  </tbody></table></div>
+  <pre class="pseudo"><code><span class="k">runc create</span>(번들):
+  clone(CLONE_NEWNS | NEWPID | NEWNET(샌드박스 것에 join) | NEWIPC | NEWUTS ...)
+  cgroup 생성: /sys/fs/cgroup/kubepods.slice/.../cpu.max, memory.max 쓰기
+  rootfs 로 pivot_root, /proc /dev 마운트, 읽기 전용 경로 처리
+  capability 집합 줄이기, no_new_privs 설정
+  seccomp 필터 설치           <span class="c">// 이 뒤로는 허용 목록 밖 시스템 콜 금지</span>
+  AppArmor 프로필 적용
+  <span class="k">대기</span>(start 신호) → execve(사용자 프로세스)   <span class="c">// runc 자신은 빠진다</span></code></pre>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+<p>kind 노드(<code>kindest/node:v1.37.0</code>)는 containerd 를 쓴다. 확인: <code>docker exec faas-worker3 crictl info | head</code>, <code>docker exec faas-worker3 ls /usr/local/bin</code>(gVisor 설치 뒤 runsc 와 shim 이 보임). 함수 응답의 <code>kernel</code> 칸이 runc 면 노드 커널, gVisor 면 다른 값이 나오는 이유가 이 그림의 두 갈래다(<code>main.go</code> 의 <code>syscall.Uname</code>).</p></aside>
+
+<aside class="callout fact"><p class="callout-title">공식 문서</p>
+<ul>
+<li><a href="https://kubernetes.io/docs/concepts/architecture/cri/">Container Runtime Interface</a> · <a href="https://kubernetes.io/docs/setup/production-environment/container-runtimes/">Container Runtimes</a> · <a href="https://github.com/kubernetes/cri-api">cri-api (proto)</a></li>
+<li><a href="https://github.com/containerd/containerd/blob/main/core/runtime/v2/README.md">containerd Runtime v2 (shim)</a> · <a href="https://github.com/opencontainers/runtime-spec/blob/main/spec.md">OCI Runtime Specification</a></li>
+<li><a href="https://kubernetes.io/docs/concepts/security/linux-kernel-security-constraints/">Linux kernel security constraints for Pods</a> · <a href="https://kubernetes.io/docs/tutorials/security/seccomp/">seccomp</a> · <a href="https://kubernetes.io/docs/concepts/workloads/pods/user-namespaces/">User Namespaces</a> · <a href="https://docs.kernel.org/admin-guide/cgroup-v2.html">cgroup v2</a></li>
+</ul></aside>
+
+<!-- ============================================================ 11. RuntimeClass -->
+<h2 id="runtimeclass">11. RuntimeClass: 파드마다 런타임 고르기</h2>
+
+<div class="tier" data-tier="1">
+  <h3>이름 하나로 "어떤 샌드박스" 를 고른다</h3>
+  <p><strong>RuntimeClass</strong> 는 클러스터 전체 리소스(namespace 없음)로, "이 이름을 고른 파드는 노드의 이 런타임 설정(handler)으로 띄워라" 를 정의한다. 파드(우리는 ksvc 의 template)에 <code>runtimeClassName: gvisor</code> 한 줄을 쓰면 그 파드만 gVisor 로 돈다. 나머지 파드는 기본(runc)이다.</p>
+  <p>필드는 세 개뿐이다.</p>
+  <ul>
+    <li><code>handler</code>: 노드의 CRI 런타임 설정 이름. containerd 에서는 <code>runtimes.&lt;handler&gt;</code> 표의 이름. 우리는 <code>runsc</code>.</li>
+    <li><code>scheduling</code>: 이 런타임이 깔린 노드로만 가게 nodeSelector·tolerations 를 <strong>자동으로 붙여</strong> 준다. 우리는 exec 풀.</li>
+    <li><code>overhead</code>: 앱 컨테이너 말고 런타임 자체(Sentry 등)가 먹는 자원. 스케줄러와 쿼터가 더해서 계산한다.</li>
+  </ul>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>파드 생성부터 노드의 runsc 까지</h3>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1100 400" role="img" aria-labelledby="f617-t">
+        <title id="f617-t">RuntimeClass 가 파드 스펙에 합쳐지고 스케줄러와 kubelet, containerd 를 거쳐 runsc 로 이어지는 흐름</title>
+        <defs>
+          <marker id="f617-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f617-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+        </defs>
+        <rect x="20" y="30" width="240" height="120" rx="12" class="d-user-box"/>
+        <text x="36" y="60" class="d-ttl-s">파드 (ksvc 템플릿)</text>
+        <text x="36" y="86" class="d-mono">runtimeClassName: gvisor</text>
+        <text x="36" y="108" class="d-mono">containers: [...]</text>
+        <text x="36" y="130" class="d-sub">resources 32Mi/128Mi</text>
+        <rect x="20" y="200" width="240" height="170" rx="12" class="d-agent"/>
+        <text x="36" y="230" class="d-ttl-s">RuntimeClass gvisor</text>
+        <text x="36" y="256" class="d-mono">handler: runsc</text>
+        <text x="36" y="280" class="d-mono">scheduling:</text>
+        <text x="36" y="300" class="d-mono">  nodeSelector pool=exec</text>
+        <text x="36" y="320" class="d-mono">  tolerations pool=exec</text>
+        <text x="36" y="344" class="d-mono">overhead 50m / 64Mi</text>
+        <rect x="310" y="110" width="250" height="180" rx="12" class="d-cp-box"/>
+        <text x="326" y="140" class="d-ttl-s">RuntimeClass 어드미션</text>
+        <text x="326" y="166" class="d-sub">nodeSelector 합치기</text>
+        <text x="326" y="188" class="d-sub">(충돌하면 거절)</text>
+        <text x="326" y="214" class="d-sub">tolerations 합집합</text>
+        <text x="326" y="240" class="d-sub">spec.overhead 채우기</text>
+        <text x="326" y="262" class="d-sub">(이미 다르면 거절)</text>
+        <rect x="610" y="110" width="200" height="180" rx="12" class="d-card"/>
+        <text x="626" y="140" class="d-ttl-s">스케줄러</text>
+        <text x="626" y="166" class="d-sub">pool=exec 노드만</text>
+        <text x="626" y="190" class="d-sub">요구량 =</text>
+        <text x="626" y="212" class="d-sub">requests 합</text>
+        <text x="626" y="234" class="d-sub">+ overhead</text>
+        <rect x="860" y="30" width="220" height="150" rx="12" class="d-card"/>
+        <text x="876" y="60" class="d-ttl-s">kubelet (exec)</text>
+        <text x="876" y="86" class="d-sub">RuntimeClass 조회</text>
+        <text x="876" y="110" class="d-mono">RunPodSandbox(</text>
+        <text x="876" y="130" class="d-mono">  handler=runsc)</text>
+        <text x="876" y="156" class="d-sub">pod cgroup 에 overhead</text>
+        <rect x="860" y="220" width="220" height="150" rx="12" class="d-agent"/>
+        <text x="876" y="250" class="d-ttl-s">containerd</text>
+        <text x="876" y="276" class="d-mono">runtimes.runsc</text>
+        <text x="876" y="298" class="d-mono">→ runsc.v1 shim</text>
+        <text x="876" y="324" class="d-sub">표에 없으면</text>
+        <text x="876" y="346" class="d-sub">샌드박스 생성 실패</text>
+        <path d="M260 90 C285 90 285 150 305 150" class="d-e-api" marker-end="url(#f617-api)"/>
+        <path d="M260 280 C285 280 285 250 305 250" class="d-e-api" marker-end="url(#f617-api)"/>
+        <path d="M560 200 L605 200" class="d-e-api" marker-end="url(#f617-api)"/>
+        <path d="M810 160 C835 160 835 105 855 105" class="d-e-api" marker-end="url(#f617-api)"/>
+        <path d="M970 180 L970 215" class="d-e-prov" marker-end="url(#f617-prov)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-16.</b> RuntimeClass 의 일생. 파드가 API 서버에 들어올 때 어드미션 단계에서 scheduling 과 overhead 가 파드 스펙에 합쳐지고, 스케줄러는 합쳐진 스펙으로 노드를 고르고, kubelet 은 handler 이름을 CRI 로 넘기고, containerd 는 그 이름의 런타임 표를 찾는다.</figcaption>
+  </figure>
+  <pre class="mermaid">
+flowchart TD
+  P["파드 생성 요청<br/>runtimeClassName = gvisor"] --> E{"RuntimeClass gvisor<br/>존재하나"}
+  E -- "없음" --> X1["거절<br/>RuntimeClass not found"]
+  E -- "있음" --> S{"scheduling.nodeSelector 와<br/>파드 nodeSelector 가 충돌하나"}
+  S -- "같은 키 다른 값" --> X2["거절"]
+  S -- "없음 또는 같음" --> T["nodeSelector 합치기<br/>tolerations 합집합"]
+  T --> O{"파드에 overhead 가<br/>이미 있고 다른가"}
+  O -- "예" --> X3["거절"]
+  O -- "아니오" --> Q["spec.overhead = podFixed"]
+  Q --> SCH["스케줄: pool=exec 노드 중<br/>requests + overhead 가 들어가는 곳"]
+  SCH --> KL["kubelet: CRI RunPodSandbox<br/>runtime_handler = runsc"]
+  KL --> CD{"containerd 에<br/>runtimes.runsc 있나"}
+  CD -- "없음" --> F["FailedCreatePodSandBox<br/>no runtime for runsc 류"]
+  CD -- "있음" --> OK2["containerd-shim-runsc-v1 → runsc"]
+  </pre>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>코드와 필드 규칙</h3>
+  <div class="code-head"><span>poc/04-faas-runtime/platform/runtimeclass-gvisor.yaml</span><span>전체 (주석 줄임)</span></div>
+  <pre><code><span class="k">apiVersion</span>: node.k8s.io/v1
+<span class="k">kind</span>: RuntimeClass
+<span class="k">metadata</span>:
+  <span class="k">name</span>: gvisor
+<span class="c"># handler = 노드 containerd 설정의 runtimes.&lt;이름&gt;. install-gvisor.sh 가 exec 노드에 runsc 라는 이름으로 등록했다</span>
+<span class="k">handler</span>: runsc
+<span class="k">scheduling</span>:
+  <span class="k">nodeSelector</span>:
+    <span class="k">pool</span>: exec
+  <span class="k">tolerations</span>:
+    - <span class="k">key</span>: pool
+      <span class="k">operator</span>: Equal
+      <span class="k">value</span>: exec
+      <span class="k">effect</span>: NoSchedule
+<span class="k">overhead</span>:
+  <span class="k">podFixed</span>:
+    <span class="k">cpu</span>: 50m
+    <span class="k">memory</span>: 64Mi</code></pre>
+  <ul>
+    <li><code>apiVersion: node.k8s.io/v1</code>: RuntimeClass 는 1.20 에 GA. namespace 가 없는 리소스라 모든 테넌트가 같은 이름을 쓴다.</li>
+    <li><code>handler</code>: DNS 레이블 규칙(소문자, 숫자, <code>-</code>)을 따라야 하고, 만든 뒤에는 바꿀 수 없다(immutable). 노드 쪽 이름과 글자 하나라도 다르면 위 순서도의 마지막 실패가 난다.</li>
+    <li><code>scheduling.nodeSelector</code>: 어드미션이 파드의 nodeSelector 와 합친다. 같은 키에 다른 값이면 파드 생성이 거절된다. 우리 hello-gvisor 는 같은 값(<code>pool: exec</code>)을 직접도 적어 두어 충돌이 없다.</li>
+    <li><code>scheduling.tolerations</code>: 파드의 tolerations 에 합집합으로 더해진다.</li>
+    <li><code>overhead.podFixed</code>: 어드미션이 <code>pod.spec.overhead</code> 에 복사한다. 스케줄러, ResourceQuota, kubelet 의 파드 cgroup 크기 계산에 들어간다. 컨테이너 limits 가 다 있는 파드라면 파드 cgroup 한도 = limits 합 + overhead. 값 50m/64Mi 는 04 README 가 "추정치, 측정 후 고친다" 로 남긴 값이다.</li>
+  </ul>
+  <div class="code-head"><span>poc/04-faas-runtime/functions/ksvc/hello-gvisor.yaml</span><span>발췌</span></div>
+  <pre><code>    <span class="k">spec</span>:
+      <span class="k">runtimeClassName</span>: gvisor
+      <span class="k">nodeSelector</span>:
+        <span class="k">pool</span>: exec
+      <span class="k">tolerations</span>:
+        - { <span class="k">key</span>: pool, <span class="k">operator</span>: Equal, <span class="k">value</span>: exec, <span class="k">effect</span>: NoSchedule }</code></pre>
+  <ul>
+    <li>Knative 는 ksvc 템플릿의 PodSpec 칸 중 일부만 기본 허용한다. <code>runtimeClassName</code>, <code>nodeSelector</code>, <code>tolerations</code> 는 <code>config-features</code> 의 <code>kubernetes.podspec-runtimeclassname</code> 등 플래그를 <code>enabled</code> 로 켜야 통과한다(05장).</li>
+    <li>RuntimeClass 의 scheduling 이 붙여 주는데도 직접 적은 이유(파일 주석): RuntimeClass 를 빼먹어도 exec 풀에 가게. 반대로 이중으로 적으면 값이 어긋났을 때 어드미션이 거절한다는 비용이 있다.</li>
+    <li>05 의 <code>templates/ksvc.yaml</code> 에서는 <code>runtimeClassName: gvisor</code> 가 <strong>주석 처리</strong>되어 있다. 05 의 테넌트 함수는 기본이 runc 다(README 3절 "5단계 기본은 꺼 둠"). 본선에서 "테넌트 코드는 gVisor" 를 주장하려면 이 한 줄을 켠다.</li>
+  </ul>
+  <pre class="pseudo"><code><span class="k">어드미션</span> RuntimeClass(파드):
+  <span class="k">if</span> 파드.runtimeClassName 비었음: <span class="k">통과</span>        <span class="c">// 기본 런타임 (containerd default_runtime_name = runc)</span>
+  rc = 조회(파드.runtimeClassName) <span class="k">또는</span> 거절
+  <span class="k">for</span> (k, v) <span class="k">in</span> rc.scheduling.nodeSelector:
+     <span class="k">if</span> k ∈ 파드.nodeSelector <span class="k">and</span> 파드.nodeSelector[k] != v: 거절
+     파드.nodeSelector[k] = v
+  파드.tolerations = 파드.tolerations ∪ rc.scheduling.tolerations
+  <span class="k">if</span> rc.overhead:
+     <span class="k">if</span> 파드.overhead <span class="k">and</span> 파드.overhead != rc.overhead.podFixed: 거절
+     파드.overhead = rc.overhead.podFixed</code></pre>
+  <h4>containerd 쪽 짝</h4>
+  <div class="code-head"><span>poc/04-faas-runtime/scripts/install-gvisor.sh 가 노드에 덧붙이는 설정</span><span>발췌</span></div>
+  <pre><code><span class="c"># gVisor (scripts/install-gvisor.sh)</span>
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]
+  runtime_type = "io.containerd.runsc.v1"</code></pre>
+  <p>표 이름의 마지막 조각 <code>runsc</code> 가 RuntimeClass 의 <code>handler</code> 와 같아야 한다. 선택 항목 <code>pod_annotations</code>, <code>options.ConfigPath</code>(runsc 설정 파일 <code>/etc/containerd/runsc.toml</code> 경로)를 여기 더할 수 있다. gVisor 플랫폼을 바꾸고 싶을 때 쓰는 자리다(12절).</p>
+</div>
+
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+<ul>
+<li><strong>증상</strong>: 파드 생성 자체가 거절, 이벤트 <code>pod rejected: RuntimeClass "gvisor" not found</code>. <strong>고치는 법</strong>: <code>kubectl get runtimeclass</code>, <code>kubectl apply -f platform/runtimeclass-gvisor.yaml</code>.</li>
+<li><strong>증상</strong>: <code>FailedCreatePodSandBox ... no runtime for "runsc" is configured</code>. <strong>원인</strong>: 그 노드 containerd 에 표가 없음(설치 안 된 노드로 갔거나 containerd 재시작 전). <strong>볼 곳</strong>: <code>kubectl get pod -o wide</code> 의 노드, <code>docker exec &lt;노드&gt; grep -A1 runtimes.runsc /etc/containerd/config.toml</code>.</li>
+<li><strong>증상</strong>: 파드 Pending, <code>Insufficient memory</code>. <strong>원인</strong>: overhead 가 더해져 노드에 자리가 없음. <strong>볼 곳</strong>: <code>kubectl get pod -o jsonpath='{.spec.overhead}'</code>.</li>
+</ul></aside>
+
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
+<ul>
+<li><strong>RuntimeClass</strong>: 함수마다(또는 테넌트마다) 런타임을 한 줄로 바꾼다. 플랫폼 코드는 그대로. 설계 문서 문장: "격리 런타임은 RuntimeClass 한 줄로 갈아 끼우는 구조".</li>
+<li>대안 (가) containerd 기본 런타임을 runsc 로: 노드의 모든 파드(Cilium 에이전트, kube-proxy 류 포함)가 gVisor 로 돌아 호환성 문제가 난다. (나) 노드 풀 전체를 gVisor 전용: 07 결정에서 "실행 풀 전체 vs 전용 풀" 로 다룬다.</li>
+</ul></aside>
+
+<aside class="callout fact"><p class="callout-title">공식 문서</p>
+<ul>
+<li><a href="https://kubernetes.io/docs/concepts/containers/runtime-class/">Runtime Class</a> (handler, scheduling) · <a href="https://kubernetes.io/docs/concepts/scheduling-eviction/pod-overhead/">Pod Overhead</a> · <a href="https://kubernetes.io/docs/reference/kubernetes-api/cluster-resources/runtime-class-v1/">RuntimeClass API</a></li>
+<li><a href="https://knative.dev/docs/serving/configuration/feature-flags/">Knative feature flags (podspec-runtimeclassname)</a></li>
+</ul></aside>
+
+<!-- ============================================================ 12. gVisor -->
+<h2 id="gvisor">12. gVisor: 사용자 공간 커널</h2>
+
+<div class="tier" data-tier="1">
+  <h3>컨테이너와 커널 사이에 "가짜 커널" 을 하나 더</h3>
+  <p><strong>gVisor</strong>(Google 오픈소스, OCI 런타임 이름 <code>runsc</code>)는 Go 로 작성된 <strong>애플리케이션 커널</strong>(application kernel)이다. 리눅스와 비슷한 인터페이스(시스템 콜, <code>/proc</code>, 파일 시스템, 네트워크 스택)를 <strong>사용자 공간 프로세스</strong>로 구현한다. 이 프로세스가 <strong>Sentry</strong> 다.</p>
+  <ul>
+    <li>앱이 <code>open()</code>, <code>socket()</code> 같은 시스템 콜을 하면 호스트 커널이 아니라 Sentry 가 받아서 직접 처리한다. 공식 문서 표현으로 "Sentry 는 시스템 콜을 호스트 커널로 넘기지 않는다".</li>
+    <li>Sentry 자신은 호스트 커널에 <strong>좁고 정해진 목록</strong>의 시스템 콜만 쓸 수 있다(seccomp 로 묶임). 앱이 커널 버그를 노리려면 먼저 Sentry 를 뚫고, 그다음 좁은 목록으로 호스트 커널을 뚫어야 한다 → <strong>심층 방어</strong>(defense in depth).</li>
+    <li>파일 접근은 별도 프로세스 <strong>Gofer</strong> 가 중개한다(또는 directfs 모드에서 Gofer 가 넘겨준 파일 디스크립터로 Sentry 가 직접).</li>
+  </ul>
+  <p>VM(Kata, Firecracker)처럼 하드웨어 가상화를 쓰지 않으므로 중첩 가상화가 없는 곳(일반 클라우드 VM, Docker Desktop 의 리눅스 VM 안 kind 노드)에서도 돈다. 대신 시스템 콜이 많은 일(파일·네트워크 I/O)은 느려지고, 리눅스의 모든 기능을 구현하지는 않아 일부 프로그램과 호환되지 않는다.</p>
+  <p>FaaS 에 맞는 이유: "남이 올린 코드" 를 "우리 노드" 에서 돌린다. 작년 본선 2위 팀(Green)도 Knative + gVisor 조합이었다(04 README).</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>구성 요소</h3>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1100 600" role="img" aria-labelledby="f618-t">
+        <title id="f618-t">gVisor 구조: 앱, 플랫폼(systrap), Sentry, Gofer 와 directfs, netstack, 호스트 커널의 좁은 시스템 콜 표면</title>
+        <defs>
+          <marker id="f618-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f618-async" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-async"/></marker>
+          <marker id="f618-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+          <marker id="f618-fail" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+        </defs>
+        <rect x="20" y="20" width="800" height="430" rx="12" class="d-cp"/>
+        <text x="40" y="46" class="d-lbl">gVisor 샌드박스 (파드 하나 = Sentry 하나)</text>
+        <rect x="40" y="60" width="360" height="90" rx="12" class="d-user-box"/>
+        <text x="58" y="90" class="d-ttl-s">앱 프로세스들</text>
+        <text x="58" y="114" class="d-mono">/hello, python server.py ...</text>
+        <text x="58" y="136" class="d-sub">자기가 리눅스 위라고 믿는다</text>
+        <rect x="430" y="60" width="370" height="90" rx="12" class="d-plain-box"/>
+        <text x="448" y="90" class="d-ttl-s">플랫폼 (systrap 기본)</text>
+        <text x="448" y="114" class="d-sub">앱의 시스템 콜을 가로채</text>
+        <text x="448" y="136" class="d-sub">Sentry 로 돌린다</text>
+        <rect x="40" y="180" width="760" height="150" rx="12" class="d-agent"/>
+        <text x="58" y="210" class="d-ttl">Sentry (사용자 공간 커널, Go)</text>
+        <rect x="58" y="226" width="170" height="86" rx="12" class="d-card"/>
+        <text x="72" y="254" class="d-ttl-s">시스템 콜</text>
+        <text x="72" y="278" class="d-sub">리눅스 ABI 를</text>
+        <text x="72" y="298" class="d-sub">독자 구현</text>
+        <rect x="243" y="226" width="170" height="86" rx="12" class="d-card"/>
+        <text x="257" y="254" class="d-ttl-s">VFS, /proc</text>
+        <text x="257" y="278" class="d-sub">파일 시스템</text>
+        <text x="257" y="298" class="d-sub">가짜 커널 버전</text>
+        <rect x="428" y="226" width="170" height="86" rx="12" class="d-card"/>
+        <text x="442" y="254" class="d-ttl-s">netstack</text>
+        <text x="442" y="278" class="d-sub">사용자 공간</text>
+        <text x="442" y="298" class="d-sub">TCP/IP 스택</text>
+        <rect x="613" y="226" width="170" height="86" rx="12" class="d-card"/>
+        <text x="627" y="254" class="d-ttl-s">메모리, 스레드</text>
+        <text x="627" y="278" class="d-sub">신호, 스케줄링</text>
+        <text x="627" y="298" class="d-sub">타이머</text>
+        <rect x="40" y="360" width="360" height="76" rx="12" class="d-obs-box"/>
+        <text x="58" y="390" class="d-ttl-s">Gofer (파일 중개 프로세스)</text>
+        <text x="58" y="414" class="d-sub">rootfs 를 열어 FD 를 넘겨줌</text>
+        <rect x="430" y="360" width="370" height="76" rx="12" class="d-plain-box"/>
+        <text x="448" y="390" class="d-ttl-s">containerd-shim-runsc-v1</text>
+        <text x="448" y="414" class="d-sub">runsc 로 샌드박스 생성·관리</text>
+        <rect x="860" y="20" width="220" height="430" rx="12" class="d-card"/>
+        <text x="876" y="50" class="d-ttl-s">밖의 세계</text>
+        <text x="876" y="80" class="d-sub">파드 네트워크</text>
+        <text x="876" y="102" class="d-sub">namespace (veth)</text>
+        <text x="876" y="140" class="d-sub">컨테이너 rootfs</text>
+        <text x="876" y="162" class="d-sub">(containerd 스냅샷)</text>
+        <text x="876" y="200" class="d-sub">cgroup (자원 한도)</text>
+        <text x="876" y="240" class="d-lbl">Sentry 는 빈 마운트</text>
+        <text x="876" y="260" class="d-lbl">namespace 에서 돈다</text>
+        <rect x="20" y="480" width="1060" height="100" rx="12" class="d-fail-box"/>
+        <text x="40" y="510" class="d-ttl-s">호스트 리눅스 커널</text>
+        <text x="40" y="536" class="d-sub">Sentry 가 쓸 수 있는 것: FD 복제·닫기, 동기화(futex), 타이머, 신호, 메모리 매핑 등 정해진 목록 (seccomp 로 강제)</text>
+        <text x="40" y="560" class="d-sub">일반적으로 소켓 생성·파일 열기 불가 (host 네트워크 모드나 directfs 를 켜면 일부 허용)</text>
+        <path d="M400 105 L425 105" class="d-e-user" marker-end="url(#f618-user)"/>
+        <path d="M615 150 L615 175" class="d-e-user" marker-end="url(#f618-user)"/>
+        <path d="M220 330 L220 355" class="d-e-async" marker-end="url(#f618-async)"/>
+        <path d="M415 330 L415 475" class="d-e-api" marker-end="url(#f618-api)"/>
+        <path d="M800 270 L855 120" class="d-e-api" marker-end="url(#f618-api)"/>
+        <path d="M220 436 L220 475" class="d-e-api" marker-end="url(#f618-api)"/>
+        <path d="M40 125 L30 125 L30 475" class="d-e-fail" marker-end="url(#f618-fail)"/>
+        <text x="40" y="466" class="d-lbl">직접 길 없음</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-17.</b> gVisor 구조. 앱의 시스템 콜(파랑)은 플랫폼이 가로채 Sentry 로 보낸다. Sentry 는 VFS·netstack·메모리 관리를 스스로 구현하고, 파일은 Gofer 를 거치며(보라 점선), 호스트 커널에는 좁은 목록의 시스템 콜만 낸다(회색). 앱이 호스트 커널에 직접 닿는 길은 없다(왼쪽 빨간 점선은 "막힌 길" 표시).</figcaption>
+  </figure>
+
+  <h4>플랫폼: 시스템 콜을 어떻게 가로채나</h4>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 360" role="img" aria-labelledby="f619-t">
+        <title id="f619-t">gVisor 플랫폼 세 가지 systrap, ptrace, KVM 의 가로채기 방식과 쓰기 좋은 곳</title>
+        <rect x="20" y="20" width="290" height="320" rx="12" class="d-cp-box"/>
+        <text x="38" y="52" class="d-ttl">systrap (기본)</text>
+        <text x="38" y="84" class="d-sub">seccomp 의 SECCOMP_RET_TRAP</text>
+        <text x="38" y="108" class="d-sub">으로 시스템 콜에서 신호를</text>
+        <text x="38" y="132" class="d-sub">발생시켜 Sentry 로 넘김</text>
+        <text x="38" y="176" class="d-lbl">2023 년 중반부터 기본값</text>
+        <text x="38" y="206" class="d-sub">VM 안, 가상화 지원 없는</text>
+        <text x="38" y="230" class="d-sub">기계에 적합</text>
+        <text x="38" y="274" class="d-mono">우리: kind, EC2 t3 둘 다</text>
+        <rect x="335" y="20" width="290" height="320" rx="12" class="d-plain-box"/>
+        <text x="353" y="52" class="d-ttl">ptrace</text>
+        <text x="353" y="84" class="d-sub">PTRACE_SYSEMU 로 앱을</text>
+        <text x="353" y="108" class="d-sub">추적하며 시스템 콜마다</text>
+        <text x="353" y="132" class="d-sub">멈춰 Sentry 가 처리</text>
+        <text x="353" y="176" class="d-lbl">문맥 전환 비용이 큼</text>
+        <text x="353" y="206" class="d-sub">어디서나 돌지만 지원 종료</text>
+        <text x="353" y="230" class="d-sub">예정 (공식 문서)</text>
+        <text x="353" y="274" class="d-mono">04 README 9절의 비상 수단</text>
+        <rect x="650" y="20" width="290" height="320" rx="12" class="d-warn-box"/>
+        <text x="668" y="52" class="d-ttl">KVM</text>
+        <text x="668" y="84" class="d-sub">/dev/kvm 으로 Sentry 를</text>
+        <text x="668" y="108" class="d-sub">가상 CPU 의 커널 모드처럼</text>
+        <text x="668" y="132" class="d-sub">돌리고 앱은 게스트 유저</text>
+        <text x="668" y="176" class="d-lbl">하드웨어 가상화 확장 필요</text>
+        <text x="668" y="206" class="d-sub">베어메탈에서 가장 빠름</text>
+        <text x="668" y="230" class="d-sub">중첩 VM 에선 systrap 이 나음</text>
+        <text x="668" y="274" class="d-mono">우리: 해당 없음</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-18.</b> gVisor 플랫폼 세 가지. 플랫폼은 "앱의 시스템 콜을 Sentry 로 돌리는 방법" 이다. 기본값 systrap 은 seccomp 신호를 쓰므로 하드웨어 가상화가 없어도 된다.</figcaption>
+  </figure>
+
+  <pre class="mermaid">
+sequenceDiagram
+  autonumber
+  participant A as 앱 (/hello)
+  participant P as 플랫폼 (systrap)
+  participant S as Sentry
+  participant G as Gofer 또는 directfs
+  participant H as 호스트 커널
+  A->>P: write(fd, buf) 시스템 콜 명령 실행
+  P->>S: seccomp trap → 신호 → Sentry 가 제어권
+  S->>S: Sentry 의 VFS 에서 fd 해석, 페이지 캐시
+  alt 파일 내용이 호스트 파일에 있어야 함
+    S->>G: 파일 열기 요청 (처음 한 번)
+    G->>H: openat (Gofer 쪽 권한)
+    G-->>S: FD 전달
+    S->>H: pwrite(FD) 허용 목록 안의 콜
+  else /tmp 처럼 샌드박스 내부 메모리 파일
+    S->>S: 메모리에서 처리, 호스트 콜 없음
+  end
+  S-->>P: 결과 값
+  P-->>A: 시스템 콜 반환
+  </pre>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>세부: 파일, 네트워크, 보안 모델, 비용</h3>
+  <h4>파일 시스템: Gofer 와 directfs</h4>
+  <ul>
+    <li>원래 구조: Sentry 는 파일을 직접 열 수 없고, 컨테이너마다 뜨는 Gofer 프로세스에게 프로토콜(예전 9P, 지금 LISAFS)로 요청한다. Gofer 가 호스트에서 열고 결과를 돌려준다.</li>
+    <li><strong>directfs</strong>: Gofer 가 컨테이너 rootfs 의 디렉터리 FD 를 Sentry 에 넘겨주고, Sentry 가 그 FD 아래에서 <code>openat</code> 류를 직접 한다(seccomp 로 상대 경로 열기만 허용). 왕복이 줄어 빠르다. 최근 릴리스에서 기본으로 켜져 있다고 알려져 있다 【확인 필요: 20261012.0 기본값】.</li>
+    <li>오버레이: rootfs 위에 메모리 기반 쓰기 레이어(overlay)를 두어, 컨테이너가 쓴 파일이 호스트 디스크로 가지 않게 하는 설정이 있다. 그래서 함수의 <code>?work=io</code>(작은 파일 만들고 지우기)가 gVisor 에서 어느 경로를 타는지가 성능 차이를 결정한다 【확인 필요: 우리 설정의 overlay 기본값】.</li>
+  </ul>
+  <h4>네트워크: netstack vs host</h4>
+  <ul>
+    <li>기본은 <strong>netstack</strong>: Sentry 안의 사용자 공간 TCP/IP 스택. 앱의 소켓은 Sentry 안에만 있고, Sentry 는 파드 네트워크 namespace 의 인터페이스에 패킷 단위로 읽고 쓴다(AF_PACKET 등). 호스트 커널의 TCP 코드가 앱 입력에 노출되지 않는다.</li>
+    <li><code>--network=host</code>: 소켓 시스템 콜을 호스트로 넘긴다. 빠르지만 격리가 약해진다. 쿠버네티스 파드는 CNI(우리 Cilium)가 만든 namespace 안이므로 netstack 이 그 namespace 의 veth 에 붙는다. Cilium 의 eBPF 정책은 veth 바깥(호스트 쪽)에서 적용되므로 gVisor 와 같이 동작한다 【확인 필요: Cilium + gVisor 조합에서 소켓 단위 기능(socket LB)의 동작】.</li>
+  </ul>
+  <h4>보안 모델 (공식 Security Model 요약)</h4>
+  <div class="table-wrap"><table><thead><tr><th>다루는 위협</th><th>다루지 않는 위협</th></tr></thead><tbody>
+  <tr><td>시스템 API 공격: 커널 시스템 콜 인터페이스의 버그·경쟁 조건 (주 목표)</td><td>하드웨어 부채널 (Spectre, L1TF 등): 호스트 커널·펌웨어·하이퍼바이저에 기댄다</td></tr>
+  <tr><td>간접 공격: 뚫린 Sentry 를 발판으로 호스트를 노리는 것 → Sentry 의 호스트 접근을 제한</td><td>하드웨어나 특권 코드 경로의 시스템 ABI 공격</td></tr>
+  <tr><td></td><td>자원 고갈·DoS: 호스트 cgroup 에 맡긴다. 네트워크 정책도 컨테이너 수준에서 따로</td></tr>
+  <tr><td></td><td>"샌드박스는 안전한 아키텍처를 대신하지 않는다"</td></tr>
+  </tbody></table></div>
+  <p>원칙: (1) 앱의 시스템 콜은 Sentry 가 독자적으로 구현하고 호스트로 그대로 넘기지 않는다. (2) Sentry 가 쓸 수 있는 호스트 API 는 열거된 좁은 목록. (3) ioctl·raw 소켓 같은 특수 인터페이스는 넘기지 않는다(장치 에뮬레이션 없음). (4) 앱은 호스트 시스템 콜의 인자를 직접 만들 수 없다. (5) unsafe 코드는 <code>unsafe.go</code> 로 끝나는 파일에만, CGo 없음, 외부 의존성 제한. (6) 지속적인 퍼징.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 380" role="img" aria-labelledby="f620-t">
+        <title id="f620-t">runc 와 gVisor 의 호스트 시스템 콜 표면 비교</title>
+        <defs>
+          <marker id="f620-fail" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+          <marker id="f620-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <text x="20" y="30" class="d-ttl">runc</text>
+        <rect x="20" y="44" width="420" height="70" rx="12" class="d-user-box"/>
+        <text x="38" y="84" class="d-ttl-s">앱 (공격자 코드라고 가정)</text>
+        <rect x="20" y="240" width="420" height="120" rx="12" class="d-fail-box"/>
+        <text x="38" y="270" class="d-ttl-s">호스트 커널</text>
+        <text x="38" y="296" class="d-sub">seccomp 기본 프로필이 허용한</text>
+        <text x="38" y="320" class="d-sub">수백 개의 시스템 콜 전부가 표면</text>
+        <text x="38" y="344" class="d-lbl">버그 하나 = 노드 장악</text>
+        <path d="M80 114 L80 235" class="d-e-fail" marker-end="url(#f620-fail)"/>
+        <path d="M160 114 L160 235" class="d-e-fail" marker-end="url(#f620-fail)"/>
+        <path d="M240 114 L240 235" class="d-e-fail" marker-end="url(#f620-fail)"/>
+        <path d="M320 114 L320 235" class="d-e-fail" marker-end="url(#f620-fail)"/>
+        <path d="M400 114 L400 235" class="d-e-fail" marker-end="url(#f620-fail)"/>
+        <text x="500" y="30" class="d-ttl">gVisor</text>
+        <rect x="500" y="44" width="440" height="70" rx="12" class="d-user-box"/>
+        <text x="518" y="84" class="d-ttl-s">앱 (같은 코드)</text>
+        <rect x="500" y="134" width="440" height="80" rx="12" class="d-agent"/>
+        <text x="518" y="166" class="d-ttl-s">Sentry 가 전부 받음</text>
+        <text x="518" y="192" class="d-sub">버그가 있어도 Sentry 안에서 끝나야 한다</text>
+        <rect x="500" y="240" width="440" height="120" rx="12" class="d-plain-box"/>
+        <text x="518" y="270" class="d-ttl-s">호스트 커널</text>
+        <text x="518" y="296" class="d-sub">Sentry 의 seccomp 허용 목록에 있는</text>
+        <text x="518" y="320" class="d-sub">좁은 시스템 콜만 표면</text>
+        <text x="518" y="344" class="d-lbl">두 겹을 다 뚫어야 노드에 닿음</text>
+        <path d="M560 114 L560 129" class="d-e-api" marker-end="url(#f620-api)"/>
+        <path d="M680 114 L680 129" class="d-e-api" marker-end="url(#f620-api)"/>
+        <path d="M800 114 L800 129" class="d-e-api" marker-end="url(#f620-api)"/>
+        <path d="M900 114 L900 129" class="d-e-api" marker-end="url(#f620-api)"/>
+        <path d="M720 214 L720 235" class="d-e-api" marker-end="url(#f620-api)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-19.</b> 호스트 시스템 콜 표면. runc 는 앱이 호스트 커널의 넓은 표면에 직접 닿고(빨강), gVisor 는 Sentry 가 모든 호출을 받아 좁은 목록만 호스트로 보낸다. 표면의 크기 차이가 gVisor 보안의 핵심이다.</figcaption>
+  </figure>
+  <h4>비용과 호환성</h4>
+  <ul>
+    <li><strong>시스템 콜이 많은 일</strong>: 모든 시스템 콜이 가로채기 + Sentry 처리를 거친다. 계산만 하는 함수(<code>?work=cpu</code>)는 거의 같고, 작은 파일을 많이 만들고 지우는 함수(<code>?work=io</code>)나 네트워크 왕복이 많은 함수는 느려진다. 04 의 hello 함수가 이 두 모드를 가진 이유다.</li>
+    <li><strong>메모리</strong>: 파드마다 Sentry·Gofer 프로세스가 더 뜬다 → RuntimeClass <code>overhead</code>.</li>
+    <li><strong>시작</strong>: 샌드박스(Sentry) 기동이 더해져 콜드 스타트가 길어진다.</li>
+    <li><strong>호환성</strong>: 리눅스 시스템 콜 전부를 구현하지 않는다(공식 문서의 호환성 표). 특수 ioctl, 일부 <code>/proc</code>·<code>/sys</code> 파일, 커널 모듈, eBPF 프로그램 로드 같은 것은 안 된다. 일반 웹 함수(Go net/http, 파이썬 http.server)는 문제가 없다.</li>
+    <li><strong>관측</strong>: <code>uname -r</code> 이 gVisor 가 흉내 내는 버전(04 README 의 추정 <code>4.4.0</code>)을 돌려주고, <code>dmesg</code> 에 gVisor 의 농담 같은 시작 메시지가 나온다. 함수 응답의 <code>kernel</code> 칸으로 runc/gVisor 를 구분하는 원리.</li>
+  </ul>
+  <pre class="pseudo"><code><span class="k">Sentry</span> 이벤트 루프 (개념):
+  <span class="k">반복</span>:
+    (태스크, 번호, 인자) = 플랫폼.다음_시스템콜()     <span class="c">// systrap: seccomp trap 신호</span>
+    <span class="k">if</span> 번호 ∉ 구현된_표: 반환 ENOSYS                <span class="c">// 호환성 한계가 드러나는 곳</span>
+    결과 = 표[번호](태스크, 인자)                    <span class="c">// Go 로 짠 리눅스 동작</span>
+       <span class="c">// 내부에서 필요하면: VFS → (directfs FD | Gofer 요청)</span>
+       <span class="c">//                    netstack → 파드 NIC 로 패킷</span>
+       <span class="c">//                    호스트 콜은 seccomp 허용 목록 안에서만</span>
+    플랫폼.돌려주기(태스크, 결과)</code></pre>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+<ul>
+<li>04: <code>fn-runtime</code> 의 <code>hello-gvisor</code>(min-scale 0)와 <code>hello-gvisor-warm</code>(min-scale 1)이 gVisor, <code>hello-runc</code> 가 비교 기준. 같은 이미지·같은 자원, 다른 줄은 <code>runtimeClassName</code> 하나.</li>
+<li>05: 테넌트 함수 템플릿에서 gVisor 는 꺼 둠(주석). 07: EC2 실행 풀에 <code>enable_gvisor=true</code> 면 설치되고, 4단계 ksvc 를 그대로 다시 써서 runc vs gVisor 를 같은 클러스터에서 비교한다.</li>
+<li>04 README 9절 기록: Claude 의 클라우드 컨테이너에서는 runsc 설치·등록·스케줄까지 되고 샌드박스 시작은 실패(CAP_SYS_RESOURCE 없음, cgroup v1). 맥 Docker Desktop 과 EC2 가 첫 실제 검증이다.</li>
+</ul></aside>
+
+<aside class="callout why"><p class="callout-title">왜 gVisor 를 골랐나 (대안)</p>
+<ul>
+<li><strong>runc + seccomp + Pod Security</strong>: 가볍지만 커널 공유가 그대로. 우리 ksvc 의 securityContext 는 이미 이 수준이다. 그 위에 한 겹이 더 필요했다.</li>
+<li><strong>Kata Containers / Firecracker</strong>: 진짜 VM(게스트 커널)이라 격리가 더 강하지만 하드웨어 가상화가 필요하다(14절).</li>
+<li><strong>WASM</strong>: 시작이 아주 빠르지만 언어·라이브러리 제약이 크다(14절).</li>
+<li>gVisor 는 "VM 없이 커널 표면을 줄인다" 는 중간 지점이고, RuntimeClass 한 줄로 켜고 끌 수 있어 측정 비교가 쉽다.</li>
+</ul></aside>
+
+<aside class="callout fact"><p class="callout-title">공식 문서</p>
+<ul>
+<li><a href="https://gvisor.dev/docs/">gVisor 문서 개요</a> · <a href="https://gvisor.dev/docs/architecture_guide/intro/">Architecture Guide</a> · <a href="https://gvisor.dev/docs/architecture_guide/security/">Security Model</a> · <a href="https://gvisor.dev/docs/architecture_guide/platforms/">Platforms</a> · <a href="https://gvisor.dev/docs/architecture_guide/performance/">Performance</a></li>
+<li><a href="https://gvisor.dev/docs/user_guide/compatibility/">Compatibility</a> · <a href="https://gvisor.dev/docs/user_guide/networking/">Networking</a> · <a href="https://gvisor.dev/docs/user_guide/filesystem/">Filesystem</a> · <a href="https://gvisor.dev/blog/2023/04/28/systrap-release/">systrap 공개 글</a> · <a href="https://gvisor.dev/blog/2023/06/27/directfs/">directfs 글</a></li>
+<li>원문 저장소: <a href="https://github.com/google/gvisor/tree/master/g3doc">google/gvisor g3doc</a></li>
+</ul></aside>
+
+<!-- ============================================================ 13. 설치 -->
+<h2 id="install">13. gVisor 설치: kind 노드와 EC2 노드</h2>
+
+<div class="tier" data-tier="1">
+  <h3>할 일은 세 가지</h3>
+  <ol>
+    <li>노드 CPU 종류에 맞는 gVisor 묶음(<code>runsc</code>, <code>containerd-shim-runsc-v1</code>, <code>gvisor-bin/</code>)을 받아 무결성(sha512)을 확인하고 노드의 <code>/usr/local/bin</code> 에 넣는다. 04 README 는 2026-07 부터 배포가 이 세 개 묶음이라 옛 블로그처럼 <code>runsc</code> 하나만 복사하면 안 돈다고 적었다(설치 문서 기준, 이 장에서 다시 확인하지는 못했다 【확인 필요】).</li>
+    <li>노드 containerd 설정에 <code>runtimes.runsc</code> 표를 추가하고 containerd 를 재시작한다.</li>
+    <li>클러스터에 RuntimeClass <code>gvisor</code> 를 만든다(11절).</li>
+  </ol>
+  <p>kind 에서는 노드가 컨테이너라 맥에서 <code>docker cp</code>/<code>docker exec</code> 로 넣는다. EC2 에서는 노드가 진짜 VM 이라 첫 부팅 스크립트(user_data)가 노드 안에서 직접 한다.</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>두 환경 비교</h3>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 430" role="img" aria-labelledby="f621-t">
+        <title id="f621-t">kind 와 EC2 k3s 에서 gVisor 를 설치하는 경로 비교</title>
+        <defs>
+          <marker id="f621-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+        </defs>
+        <rect x="20" y="20" width="440" height="390" rx="12" class="d-pool"/>
+        <text x="38" y="46" class="d-lbl">04 · kind (맥)</text>
+        <rect x="40" y="60" width="400" height="70" rx="12" class="d-user-box"/>
+        <text x="58" y="90" class="d-ttl-s">맥: install-gvisor.sh</text>
+        <text x="58" y="114" class="d-mono">curl 받기 + sha512 → .cache/</text>
+        <rect x="40" y="170" width="400" height="220" rx="12" class="d-card"/>
+        <text x="58" y="200" class="d-ttl-s">exec 노드 컨테이너 (faas-worker3)</text>
+        <text x="58" y="228" class="d-mono">docker cp runsc, shim, gvisor-bin</text>
+        <text x="58" y="252" class="d-mono">  → /usr/local/bin/</text>
+        <text x="58" y="280" class="d-mono">/etc/containerd/config.toml 끝에</text>
+        <text x="58" y="304" class="d-mono">  runtimes.runsc 4줄 덧붙임</text>
+        <text x="58" y="332" class="d-mono">systemctl restart containerd</text>
+        <text x="58" y="364" class="d-sub">노드를 다시 만들면 사라진다 → 재실행</text>
+        <path d="M240 130 L240 165" class="d-e-prov" marker-end="url(#f621-prov)"/>
+        <text x="250" y="154" class="d-lbl">docker cp / exec</text>
+        <rect x="500" y="20" width="440" height="390" rx="12" class="d-pool"/>
+        <text x="518" y="46" class="d-lbl">07 · EC2 + k3s (코드만, apply 안 함)</text>
+        <rect x="520" y="60" width="400" height="70" rx="12" class="d-prov-box"/>
+        <text x="538" y="90" class="d-ttl-s">Terraform: enable_gvisor = true</text>
+        <text x="538" y="114" class="d-mono">user_data = install + gvisor.sh</text>
+        <rect x="520" y="170" width="400" height="220" rx="12" class="d-card"/>
+        <text x="538" y="200" class="d-ttl-s">실행 풀 EC2 (첫 부팅, root)</text>
+        <text x="538" y="228" class="d-mono">curl + sha512 + install /usr/local/bin</text>
+        <text x="538" y="252" class="d-mono">restart k3s-agent → crictl info</text>
+        <text x="538" y="280" class="d-mono">runsc 없으면 config(-v3).toml.tmpl</text>
+        <text x="538" y="304" class="d-mono">  = base 템플릿 + runsc 표</text>
+        <text x="538" y="332" class="d-mono">restart k3s-agent 다시 확인</text>
+        <text x="538" y="364" class="d-sub">스팟 교체 노드도 같은 user_data → 자동</text>
+        <path d="M720 130 L720 165" class="d-e-prov" marker-end="url(#f621-prov)"/>
+        <text x="730" y="154" class="d-lbl">첫 부팅</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-20.</b> 같은 일, 다른 손. kind 는 맥이 노드 컨테이너 안에 파일을 밀어 넣고 설정을 덧붙인다. EC2 는 노드가 스스로 받고, k3s 가 설정 파일을 매번 다시 만드므로 "템플릿" 에 runsc 를 적는다.</figcaption>
+  </figure>
+  <pre class="mermaid">
+flowchart TD
+  A["노드 목록: 인자 또는<br/>kubectl get nodes -l pool=exec"] --> B["노드마다 docker exec uname -m<br/>x86_64 또는 aarch64"]
+  B --> C{".cache/gvisor-버전/arch/runsc<br/>이미 있나"}
+  C -- "없음" --> D["gvisor.tar.bz2 와 .sha512 받기"]
+  D --> E{"sha512 일치"}
+  E -- "아니오" --> X["중단: sha512 불일치"]
+  E -- "예" --> F["tar -xjf 풀기"]
+  C -- "있음" --> G["docker cp runsc, shim, gvisor-bin"]
+  F --> G
+  G --> H["runsc --version 출력"]
+  H --> I{"config.toml 에<br/>runtimes.runsc 있나"}
+  I -- "없음" --> J["4줄 덧붙이고<br/>systemctl restart containerd"]
+  I -- "있음" --> K["건너뜀 (멱등)"]
+  J --> L["kubectl wait node Ready"]
+  K --> L
+  </pre>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>스크립트 한 줄씩</h3>
+  <div class="code-head"><span>poc/04-faas-runtime/scripts/install-gvisor.sh</span><span>발췌</span></div>
+  <pre><code>GVISOR_VERSION="${GVISOR_VERSION:-20261012.0}"   <span class="c"># 버전 고정. latest 를 쓰면 팀원마다 다른 게 깔린다</span>
+CACHE="$POC_DIR/.cache/gvisor-$GVISOR_VERSION"
+...
+<span class="k">for</span> n <span class="k">in</span> "${nodes[@]}"; <span class="k">do</span>
+  arch=$(docker exec "$n" uname -m)              <span class="c"># x86_64 (인텔) 또는 aarch64 (애플 실리콘)</span>
+  dir="$CACHE/$arch"
+  <span class="k">if</span> [ ! -x "$dir/runsc" ]; <span class="k">then</span>
+    url="https://storage.googleapis.com/gvisor/releases/release/$GVISOR_VERSION/$arch"
+    curl -fsSL -o "$dir/gvisor.tar.bz2" "$url/gvisor.tar.bz2"
+    curl -fsSL -o "$dir/gvisor.tar.bz2.sha512" "$url/gvisor.tar.bz2.sha512"
+    want=$(awk '{print $1}' "$dir/gvisor.tar.bz2.sha512")
+    got=$( (sha512sum "$dir/gvisor.tar.bz2" 2&gt;/dev/null || shasum -a 512 "$dir/gvisor.tar.bz2") | awk '{print $1}')
+    [ "$want" = "$got" ] || { echo "sha512 불일치"; exit 1; }
+    tar -xjf "$dir/gvisor.tar.bz2" -C "$dir"
+  <span class="k">fi</span>
+  docker cp "$dir/runsc" "$n:/usr/local/bin/runsc"
+  docker cp "$dir/containerd-shim-runsc-v1" "$n:/usr/local/bin/containerd-shim-runsc-v1"
+  docker cp "$dir/gvisor-bin" "$n:/usr/local/bin/"
+  docker exec "$n" runsc --version | head -1
+  <span class="k">if</span> ! docker exec "$n" grep -q 'runtimes.runsc]' /etc/containerd/config.toml; <span class="k">then</span>
+    docker exec "$n" sh -c 'cat &gt;&gt; /etc/containerd/config.toml &lt;&lt;TOML
+
+# gVisor (scripts/install-gvisor.sh)
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.runsc]
+  runtime_type = "io.containerd.runsc.v1"
+TOML'
+    docker exec "$n" systemctl restart containerd
+  <span class="k">fi</span>
+<span class="k">done</span>
+kubectl wait --for=condition=Ready node "${nodes[@]}" --timeout=120s</code></pre>
+  <ol>
+    <li><code>GVISOR_VERSION</code>: 날짜형 릴리스 번호 고정. 재현성.</li>
+    <li><code>docker exec "$n" uname -m</code>: <strong>노드</strong>의 arch 를 묻는다. 맥의 arch 가 아니라 노드 컨테이너의 arch 를 기준으로 받는 것이 핵심(애플 실리콘이면 aarch64). 받은 파일은 맥에 캐시되지만 맥에서 실행하지 않는다.</li>
+    <li>릴리스 URL 이 <code>.../release/&lt;버전&gt;/&lt;arch&gt;</code> 모양이라 arch 문자열을 그대로 쓴다.</li>
+    <li>sha512: 받은 파일이 중간에 바뀌지 않았는지(공급망). Linux 는 <code>sha512sum</code>, 맥은 <code>shasum -a 512</code>.</li>
+    <li><code>docker cp</code> 세 번: OCI 런타임, shim, 보조 바이너리 폴더.</li>
+    <li><code>grep -q 'runtimes.runsc]'</code>: 이미 등록됐으면 건너뜀 → 여러 번 돌려도 안전(멱등).</li>
+    <li>설정 덧붙이기: kind 노드의 containerd 설정이 version 2 형식이라는 전제(주석). containerd 2 의 version 3 형식이면 표 이름이 달라진다 → 07 의 템플릿은 두 형식을 모두 처리한다. kind 쪽은 【확인 필요】(3절과 같은 질문).</li>
+    <li><code>systemctl restart containerd</code>: 런타임 표는 재시작해야 읽힌다. 재시작 동안 그 노드의 kubelet 은 잠깐 런타임을 잃는다 → 마지막에 Ready 를 기다린다. 이미 떠 있던 컨테이너는 shim 이 붙잡고 있어서 죽지 않는다(shim 구조의 이유).</li>
+  </ol>
+  <div class="code-head"><span>poc/07-ec2-k3s/terraform/cluster/gvisor.sh.tftpl</span><span>발췌</span></div>
+  <pre><code>systemctl restart k3s-agent
+info=$(crictl_info) || { echo "[gvisor] containerd 가 안 뜸. journalctl -u k3s-agent 확인"; exit 1; }
+
+<span class="k">if</span> grep -q '"runsc"' &lt;&lt;&lt;"$info"; <span class="k">then</span>
+  echo "[gvisor] k3s 가 runsc 를 스스로 등록함"
+<span class="k">else</span>
+  D=/var/lib/rancher/k3s/agent/etc/containerd
+  <span class="k">if</span> grep -q '^version = 3' "$D/config.toml"; <span class="k">then</span>
+    F="$D/config-v3.toml.tmpl"; PLUGIN="'io.containerd.cri.v1.runtime'"
+  <span class="k">else</span>
+    F="$D/config.toml.tmpl";    PLUGIN='"io.containerd.grpc.v1.cri"'
+  <span class="k">fi</span>
+  {
+    echo '{{ template "base" . }}'
+    echo
+    echo "[plugins.$PLUGIN.containerd.runtimes.runsc]"
+    echo '  runtime_type = "io.containerd.runsc.v1"'
+  } &gt; "$F"
+  systemctl restart k3s-agent
+<span class="k">fi</span></code></pre>
+  <ul>
+    <li>k3s 는 자기 containerd 설정(<code>config.toml</code>)을 시작할 때마다 새로 만든다 → 직접 고치면 사라진다. 그래서 템플릿 파일을 둔다(k3s 문서 "Configuring containerd").</li>
+    <li><code>{{ template "base" . }}</code>: k3s 기본 설정 전체를 그대로 넣고 그 뒤에 runsc 표만 덧붙이는 Go 템플릿 문법.</li>
+    <li>containerd 2(설정 version 3)에서는 런타임 표의 플러그인 이름이 <code>io.containerd.cri.v1.runtime</code> 이다. kind 판(install-gvisor.sh)과 가장 크게 다른 곳.</li>
+    <li>k3s 가 PATH 의 일부 런타임을 자동 등록하는데 runsc 가 그 대상인지는 07 README 가 【미확인】으로 남겼다. 그래서 "먼저 보고, 없을 때만 쓴다" 로 짰다.</li>
+    <li>스팟 노드가 회수돼 ASG 가 새 노드를 띄워도 같은 user_data 라서 gVisor 가 다시 깔린다. kind 판에 없는 성질이다.</li>
+  </ul>
+  <h4>EC2 에서는 왜 될 것인가</h4>
+  <p>EC2 인스턴스는 진짜 리눅스 커널을 가진 VM 이다. systrap 플랫폼이 필요로 하는 것(seccomp, 신호, 일반 프로세스 권한)은 VM 안에서 정상적으로 쓸 수 있고, k3s agent 는 root 로 돈다. 04 README 9절의 Claude 컨테이너 실패 원인(CAP_SYS_RESOURCE 없음, cgroup v1)이 EC2(Ubuntu 최신, cgroup v2, root)에는 없다. 다만 07 README 도 "【추정, 당일 확인】" 으로 적었다.</p>
+  <div class="code-head"><span>poc/07-ec2-k3s/scripts/gvisor-ec2.sh</span><span>발췌 (image, deploy)</span></div>
+  <pre><code><span class="c"># 맥(애플 실리콘)은 arm64 로 빌드된다. t3 노드는 x86_64 → --platform linux/amd64 필수</span>
+IMG="ttl.sh/poc07-hello-$(LC_ALL=C tr -dc a-z0-9 &lt;/dev/urandom | head -c 8):24h"
+docker buildx build --platform linux/amd64 -t "$IMG" --push "$P04/functions/hello-src"
+...
+sed "s#image: kind-registry:5000/fn/hello:[^[:space:]]*#image: $IMG#" "$F" | kubectl apply -f -</code></pre>
+  <p>1절 그림 6-4 의 "플랫폼 맞추기" 가 여기서 실제 문제가 된다. 같은 Dockerfile 을 맥에서 빌드하면 arm64 매니페스트가 나오고, x86_64 노드는 그것을 실행하지 못한다(<code>exec format error</code>).</p>
+</div>
+
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+<ul>
+<li><strong>증상</strong>: <code>sha512 불일치</code> 로 중단. <strong>원인</strong>: 내려받기가 잘렸거나 프록시가 바꿈. <strong>고치는 법</strong>: <code>poc/04-faas-runtime/.cache/gvisor-*</code> 지우고 다시.</li>
+<li><strong>증상</strong>: 노드가 NotReady 로 오래 머무름. <strong>볼 곳</strong>: <code>docker exec faas-worker3 journalctl -u containerd --no-pager | tail -30</code>. <strong>원인</strong>: 덧붙인 TOML 이 설정 형식과 안 맞아 containerd 가 시작 실패. <strong>고치는 법</strong>: 덧붙인 4줄을 지우고 재시작, 설정 version 확인.</li>
+<li><strong>증상</strong>: 07 <code>gvisor-ec2.sh check</code> 에서 runsc 개수 0. <strong>볼 곳</strong>: <code>sudo grep gvisor /var/log/k3s-bootstrap.log</code>, 템플릿 파일 내용.</li>
+</ul></aside>
+
+<aside class="callout fact"><p class="callout-title">공식 문서</p>
+<ul>
+<li><a href="https://gvisor.dev/docs/user_guide/install/">gVisor Installation</a> · <a href="https://gvisor.dev/docs/user_guide/containerd/quick_start/">containerd Quick Start</a> · <a href="https://gvisor.dev/docs/user_guide/containerd/configuration/">containerd 설정 (runsc.toml)</a></li>
+<li><a href="https://docs.k3s.io/advanced#configuring-containerd">k3s: Configuring containerd</a> · <a href="https://docs.docker.com/build/building/multi-platform/">Docker multi-platform builds</a></li>
+</ul></aside>
+
+<!-- ============================================================ 14. 다른 샌드박스 -->
+<h2 id="sandbox-alt">14. 다른 샌드박스: Kata, Firecracker, WASM</h2>
+
+<div class="tier" data-tier="1">
+  <h3>격리 강도와 비용의 사다리</h3>
+  <div class="table-wrap"><table><thead><tr><th>방식</th><th>무엇으로 격리하나</th><th>필요한 것</th><th>kind 에서</th></tr></thead><tbody>
+  <tr><td>runc</td><td>커널 기능(namespace, cgroup, seccomp)</td><td>없음</td><td>됨 (기본)</td></tr>
+  <tr><td>gVisor</td><td>사용자 공간 커널 + 좁은 호스트 표면</td><td>seccomp, 일반 프로세스 권한 (systrap)</td><td>될 것으로 봄 (맥에서 첫 검증)</td></tr>
+  <tr><td>Kata Containers</td><td>파드마다 경량 VM + 게스트 커널</td><td>하드웨어 가상화 (<code>/dev/kvm</code>)</td><td>중첩 가상화가 필요해 사실상 안 됨</td></tr>
+  <tr><td>Firecracker (microVM)</td><td>KVM 위 최소 VMM (AWS Lambda 의 기반)</td><td><code>/dev/kvm</code></td><td>같은 이유로 안 됨</td></tr>
+  <tr><td>WASM 런타임</td><td>바이트코드 샌드박스(메모리 안전, 기능 허가)</td><td>WASM 으로 다시 빌드한 코드</td><td>됨 (containerd shim 으로)</td></tr>
+  </tbody></table></div>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>중첩 가상화 그림</h3>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 420" role="img" aria-labelledby="f622-t">
+        <title id="f622-t">맥의 kind 와 EC2 에서 Kata 와 gVisor 가 필요로 하는 가상화 층 비교</title>
+        <defs>
+          <marker id="f622-fail" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+        </defs>
+        <text x="20" y="30" class="d-ttl">맥 + kind</text>
+        <rect x="20" y="340" width="440" height="56" rx="12" class="d-plain-box"/>
+        <text x="38" y="374" class="d-ttl-s">맥 하드웨어 (Apple / Intel CPU)</text>
+        <rect x="20" y="274" width="440" height="56" rx="12" class="d-plain-box"/>
+        <text x="38" y="308" class="d-ttl-s">macOS 하이퍼바이저</text>
+        <rect x="20" y="208" width="440" height="56" rx="12" class="d-card"/>
+        <text x="38" y="242" class="d-ttl-s">Docker Desktop 리눅스 VM (커널 1개)</text>
+        <rect x="20" y="142" width="440" height="56" rx="12" class="d-card"/>
+        <text x="38" y="176" class="d-ttl-s">kind 노드 = 컨테이너</text>
+        <rect x="20" y="50" width="210" height="82" rx="12" class="d-agent"/>
+        <text x="36" y="80" class="d-ttl-s">gVisor 파드</text>
+        <text x="36" y="104" class="d-sub">seccomp 만 있으면</text>
+        <text x="36" y="124" class="d-sub">systrap 동작</text>
+        <rect x="250" y="50" width="210" height="82" rx="12" class="d-fail-box"/>
+        <text x="266" y="80" class="d-ttl-s">Kata 파드</text>
+        <text x="266" y="104" class="d-sub">VM 안에서 또 VM</text>
+        <text x="266" y="124" class="d-sub">/dev/kvm 필요</text>
+        <path d="M355 132 L355 268" class="d-e-fail" marker-end="url(#f622-fail)"/>
+        <text x="365" y="240" class="d-lbl">중첩 가상화</text>
+        <text x="500" y="30" class="d-ttl">EC2 + k3s</text>
+        <rect x="500" y="340" width="440" height="56" rx="12" class="d-plain-box"/>
+        <text x="518" y="374" class="d-ttl-s">AWS 하드웨어 + Nitro 하이퍼바이저</text>
+        <rect x="500" y="274" width="440" height="56" rx="12" class="d-card"/>
+        <text x="518" y="308" class="d-ttl-s">EC2 VM (t3, 진짜 리눅스 커널)</text>
+        <rect x="500" y="208" width="440" height="56" rx="12" class="d-card"/>
+        <text x="518" y="242" class="d-ttl-s">k3s agent + containerd (root)</text>
+        <rect x="500" y="50" width="210" height="82" rx="12" class="d-agent"/>
+        <text x="516" y="80" class="d-ttl-s">gVisor 파드</text>
+        <text x="516" y="104" class="d-sub">systrap, 문제 없음</text>
+        <text x="516" y="124" class="d-sub">(07 의 측정 장소)</text>
+        <rect x="730" y="50" width="210" height="82" rx="12" class="d-warn-box"/>
+        <text x="746" y="80" class="d-ttl-s">Kata / Firecracker</text>
+        <text x="746" y="104" class="d-sub">*.metal 인스턴스면 됨</text>
+        <text x="746" y="124" class="d-sub">t3 에는 /dev/kvm 없음</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 6-21.</b> 가상화 층. kind 노드는 이미 VM 안의 컨테이너라 Kata 가 VM 을 하나 더 만들려면 중첩 가상화가 필요하다(빨강). gVisor(systrap)는 하드웨어 가상화가 필요 없어 두 환경 모두에서 돈다. EC2 에서 Kata·Firecracker 를 쓰려면 bare-metal 인스턴스가 필요하다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>대안별 세부와 판단</h3>
+  <ul>
+    <li><strong>Kata Containers</strong>: 쿠버네티스에서 RuntimeClass handler <code>kata</code>(또는 <code>kata-qemu</code>, <code>kata-fc</code>)로 쓴다. containerd 의 <code>containerd-shim-kata-v2</code> 가 파드마다 경량 VM(QEMU, Cloud Hypervisor, Firecracker 중 하나)을 띄우고 그 안에서 게스트 커널 + kata-agent 가 컨테이너를 만든다. 우리 구조(RuntimeClass 한 줄)와 그대로 맞물리는 것이 장점이다. 맥의 Docker Desktop VM 은 중첩 가상화를 내주지 않는다 【확인 필요: Docker Desktop 최신판의 /dev/kvm 노출 여부】.</li>
+    <li><strong>Firecracker</strong>: AWS Lambda·Fargate 의 기반 VMM. 부팅이 매우 빠르고 장치 모델이 최소다. 단독으로는 쿠버네티스 런타임이 아니고 Kata 의 하이퍼바이저나 firecracker-containerd 로 붙인다. EC2 에서는 <code>.metal</code> 인스턴스(또는 중첩 가상화를 허용하는 일부 유형)가 필요하다.</li>
+    <li><strong>WASM</strong>(WebAssembly): 코드를 WASM 바이트코드로 빌드하고 Wasmtime·WasmEdge 같은 런타임이 실행한다. containerd 에는 runwasi 계열 shim 으로 붙어 RuntimeClass 로 고를 수 있다. 시작이 매우 빠르고 메모리가 작으며, 기능 기반 보안(파일·네트워크를 명시적으로 허가)이라 격리가 강하다. 대가: 사용자 코드를 WASM 으로 다시 빌드해야 하고, 파이썬처럼 인터프리터가 필요한 언어나 네이티브 라이브러리·스레드·소켓을 쓰는 코드는 제약이 크다. 작년 우승팀(Blue)이 WASM 을 썼다(04 README 결정 3).</li>
+  </ul>
+  <pre class="pseudo"><code><span class="k">선택</span> 격리_런타임(환경, 함수):
+  <span class="k">if</span> 함수가 WASM 으로 빌드 가능 <span class="k">and</span> 콜드 스타트가 최우선: WASM shim
+  <span class="k">elif</span> 노드에 /dev/kvm (베어메탈) <span class="k">and</span> 가장 강한 격리 필요: Kata (+ Firecracker)
+  <span class="k">elif</span> 일반 VM 또는 kind: gVisor (systrap)          <span class="c">// 우리</span>
+  <span class="k">else</span>: runc + seccomp + PSA restricted + 노드 풀 분리
+  <span class="c">// 어느 것이든 RuntimeClass 의 handler 만 바꾸면 위 층은 그대로</span></code></pre>
+</div>
+
+<aside class="callout why"><p class="callout-title">왜 Kata/Firecracker/WASM 을 안 골랐나</p>
+<p>Kata·Firecracker 는 로컬 kind 에서 못 돌려 "만들고 재 보기" 가 불가능하고, EC2 에서도 비싼 베어메탈이 필요하다. WASM 은 "코드만 올리면 된다" 는 약속을 "WASM 으로 빌드되는 코드만" 으로 좁힌다. gVisor 는 두 환경 모두에서 RuntimeClass 한 줄로 켜고 끌 수 있었다. 설계 문서에는 "격리 등급을 테넌트 요금제별 RuntimeClass 로(기본 gVisor, 프리미엄 Kata 전용 풀)" 를 확장안으로 적을 수 있다.</p></aside>
+
+<aside class="callout fact"><p class="callout-title">공식 문서</p>
+<ul>
+<li><a href="https://katacontainers.io/docs/">Kata Containers</a> · <a href="https://github.com/kata-containers/kata-containers/blob/main/docs/how-to/run-kata-with-k8s.md">Kata on Kubernetes</a></li>
+<li><a href="https://firecracker-microvm.github.io/">Firecracker</a> · <a href="https://github.com/firecracker-microvm/firecracker-containerd">firecracker-containerd</a></li>
+<li><a href="https://github.com/containerd/runwasi">containerd runwasi</a> · <a href="https://webassembly.org/">WebAssembly</a></li>
+</ul></aside>
+
+<!-- ============================================================ 15. 깨지면 -->
+<h2 id="break">15. 깨지면: 다섯 가지 장면</h2>
+
+<div class="tier" data-tier="1">
+  <h3>증상에서 층으로</h3>
+  <p>이 장의 부품은 층이 많아서, 증상이 난 곳과 원인이 있는 곳이 다른 경우가 많다. 아래 순서도는 "함수 파드가 안 뜬다 / 응답이 이상하다" 에서 출발해 어느 층을 볼지 고른다.</p>
+  <pre class="mermaid">
+flowchart TD
+  A["함수가 READY 가 아니다"] --> B{"빌드 Job 상태"}
+  B -- "Pending" --> B1["build 풀 라벨, taint, toleration<br/>kubectl describe pod"]
+  B -- "Failed" --> B2{"kaniko 로그"}
+  B2 -- "429 Too Many Requests" --> S1["장면 1: Docker Hub 한도"]
+  B2 -- "go.mod not found" --> B3["6절: ConfigMap 링크"]
+  B -- "Succeeded" --> C{"함수 파드 상태"}
+  C -- "Pending, untolerated taint<br/>또는 node affinity" --> C1["exec 풀 스케줄 설정"]
+  C -- "ImagePullBackOff" --> C2{"이벤트 메시지"}
+  C2 -- "HTTPS client" --> C3["3절: hosts.toml"]
+  C2 -- "no matching manifest" --> S3["장면 3: arch 불일치"]
+  C -- "FailedCreatePodSandBox" --> C4{"메시지"}
+  C4 -- "no runtime for runsc" --> S4["장면 4: runsc 없는 노드"]
+  C4 -- "runsc 기동 오류" --> S2["장면 2: Docker Desktop 의 gVisor"]
+  C -- "Running 인데 옛 코드" --> S5["장면 5: 같은 태그 덮어쓰기"]
+  </pre>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>장면별 증상, 볼 곳, 고치는 법</h3>
+
+  <h4>장면 1. Docker Hub 429 (다운로드 한도)</h4>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+  <ul>
+    <li><strong>증상</strong>: 빌드 Job Failed. kaniko 로그에 <code>GET https://index.docker.io/v2/library/golang/manifests/1.25-alpine: TOOMANYREQUESTS</code> 류. 05 면 상태 <code>BUILD_FAILED</code>.</li>
+    <li><strong>왜</strong>: Docker Hub 는 익명 pull 을 IP 단위로 제한한다. kind 노드와 kaniko 파드는 모두 맥 한 대의 공인 IP 로 나간다. 04 는 golang, 05 는 python 베이스를 빌드마다 받고(05 는 캐시도 없음), 클러스터 재생성마다 노드 이미지들도 다시 받는다.</li>
+    <li><strong>볼 곳</strong>: <code>kubectl -n fn-build logs -l app=fn-build --tail=20</code>, <code>kubectl -n faas-build logs job/build-... -c kaniko</code>.</li>
+    <li><strong>고치는 법 (04 README 9절 보충)</strong>: 맥에서 미러를 채운다 → kaniko 에 미러를 알려 준다.
+      <div class="code-head"><span>04 README 9절 보충의 절차</span><span>요약</span></div>
+<pre><code>docker pull mirror.gcr.io/library/golang:1.25-alpine
+docker tag  mirror.gcr.io/library/golang:1.25-alpine localhost:5001/library/golang:1.25-alpine
+docker push localhost:5001/library/golang:1.25-alpine
+<span class="c"># kaniko-job.yaml args 에 한 줄</span>
+- --registry-mirror=kind-registry:5000</code></pre>
+      <code>mirror.gcr.io</code> 는 Google 이 운영하는 Docker Hub 캐시다. kaniko 의 <code>--registry-mirror</code> 는 Docker Hub 이미지(<code>library/golang</code>)를 먼저 미러에서 찾고, 없으면 원래 Docker Hub 로 간다. 04 의 Job 에는 <code>--insecure-registry=kind-registry:5000</code> 이 이미 있어 미러를 http 로 읽을 수 있다. 05 의 Job 에는 <code>--insecure</code>(push 용)만 있으므로 같은 방법을 쓰려면 <code>--insecure-pull</code> 또는 <code>--insecure-registry=kind-registry:5000</code> 도 더해야 할 것이다 【확인 필요】.</li>
+    <li><strong>근본 대책</strong>: Docker Hub 로그인(인증 pull 은 한도가 크다), 사내 pull-through 캐시(registry:2 의 proxy 모드, Harbor), 베이스 이미지를 우리 레지스트리에 미리 복사해 두고 Dockerfile 의 FROM 을 그쪽으로.</li>
+  </ul></aside>
+
+  <h4>장면 2. Docker Desktop 에서 FailedCreatePodSandBox (gVisor)</h4>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+  <ul>
+    <li><strong>증상</strong>: <code>hello-gvisor</code> 만 READY 가 안 되고 <code>faas-functions</code> 가 Degraded. 파드 이벤트 <code>FailedCreatePodSandBox: ... failed to create containerd task ... runsc ...</code>.</li>
+    <li><strong>볼 곳 (04 README 9절 순서)</strong>: ① <code>kubectl -n fn-runtime describe pod -l serving.knative.dev/service=hello-gvisor | tail -5</code> ② <code>docker exec faas-worker3 journalctl -u containerd --no-pager | grep -i runsc | tail -20</code>.</li>
+    <li><strong>흔한 원인 (README 의 추정)</strong>: (가) arch 불일치(장면 3) (나) <code>gvisor-bin/</code> 누락 (다) systrap 이 VM 커널에서 막힘 → runsc 설정에 <code>platform = "ptrace"</code> 시도(<code>runtimes.runsc.options.ConfigPath</code> 가 가리키는 <code>runsc.toml</code>). Claude 컨테이너에서 실제로 본 원인은 CAP_SYS_RESOURCE 없음(shim 이 <code>oom_score_adj</code> 를 못 씀)과 cgroup v1 이었다.</li>
+    <li><strong>시간 상자</strong>: 30분 넘으면 범위를 줄인다. hello-gvisor 두 파일의 <code>runtimeClassName</code> 만 주석 처리하고 runc 로 측정, gVisor 측정은 07(EC2)로. 설계 문서 문장은 "격리 런타임은 RuntimeClass 한 줄로 갈아 끼우는 구조, 측정은 EC2 에서".</li>
+  </ul></aside>
+
+  <h4>장면 3. arch 불일치 (aarch64)</h4>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+  <ul>
+    <li><strong>증상 A (gVisor 바이너리)</strong>: 애플 실리콘 맥에서 runsc 가 <code>exec format error</code> 또는 shim 이 시작 못 함. <strong>볼 곳</strong>: <code>docker exec faas-worker3 file /usr/local/bin/runsc</code>(<code>file</code> 이 없으면 <code>uname -m</code> 과 캐시 폴더 이름 비교). <strong>원인</strong>: 캐시 폴더에 다른 arch 판이 남음. install-gvisor.sh 는 노드 arch 로 폴더를 나누므로 정상 경로에서는 생기지 않는다.</li>
+    <li><strong>증상 B (함수 이미지)</strong>: 07 의 x86_64 노드에서 함수 파드가 <code>CrashLoopBackOff</code>, 로그 <code>exec format error</code>, 또는 pull 단계에서 <code>no matching manifest for linux/amd64</code>. <strong>원인</strong>: 맥(arm64)에서 빌드한 단일 arch 이미지. <strong>고치는 법</strong>: <code>docker buildx build --platform linux/amd64</code>(07 <code>gvisor-ec2.sh image</code>), 또는 두 arch 를 인덱스로 묶어 push.</li>
+    <li>클러스터 안 kaniko 빌드는 빌드 노드의 arch 로 만들고 같은 클러스터의 exec 노드도 같은 arch 라서 kind 안에서는 이 문제가 나지 않는다. 노드 풀마다 arch 가 다른 클라우드(Graviton 빌드 + x86 실행)에서는 다시 나타난다.</li>
+  </ul></aside>
+
+  <h4>장면 4. gVisor 파드가 runsc 없는 노드로</h4>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+  <ul>
+    <li><strong>증상</strong>: <code>FailedCreatePodSandBox ... no runtime for "runsc" is configured</code>, 노드 칸이 build 나 system.</li>
+    <li><strong>어떻게 그렇게 되나</strong>: ANALYSIS 의 B8 실험. RuntimeClass 의 <code>scheduling.nodeSelector</code> 와 ksvc 의 nodeSelector 를 둘 다 지운다. 그래도 exec·build 에는 taint 가 있어 toleration 없는 파드는 못 가는데, RuntimeClass 의 toleration(<code>pool=exec</code>)이 남아 있으면 exec 로는 갈 수 있고, taint 가 없는 <strong>system 노드</strong>에는 누구나 갈 수 있다 → system 노드로 가서 실패한다.</li>
+    <li><strong>마지막 벽</strong>: 스케줄 단계에서는 아무것도 막지 않는다. 마지막 벽은 노드 containerd 의 "모르는 handler" 오류뿐이다(실패로 막힘, fail-closed: runc 로 몰래 바꿔 띄우지 않는다는 점은 좋은 성질).</li>
+    <li><strong>고치는 법</strong>: RuntimeClass <code>scheduling</code> 복구. 더 튼튼하게는 노드 라벨 <code>runtime/gvisor=true</code> 를 설치 스크립트가 붙이고 RuntimeClass 가 그 라벨을 고르게 하면 "설치된 노드" 와 "고르는 조건" 이 한 곳에서 맞물린다.</li>
+  </ul></aside>
+
+  <h4>장면 5. 같은 태그 덮어쓰기</h4>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+  <ul>
+    <li><strong>증상</strong>: 04 에서 <code>main.go</code> 를 고치고 <code>build.sh v1</code> 을 다시 돌렸는데 함수 응답이 그대로이거나, 어떤 파드는 새 코드 어떤 파드는 옛 코드. ksvc 를 바꾸지 않았으니 새 Revision 도 없다.</li>
+    <li><strong>왜</strong>: 태그 <code>v1</code> 은 새 매니페스트로 옮겨졌지만(2절 PUT 덮어쓰기), Knative 는 이 레지스트리의 태그 해석을 건너뛰므로 Revision 은 "태그 v1" 에 묶여 있다. 노드는 <code>imagePullPolicy</code>(태그가 latest 가 아니면 기본 IfNotPresent)에 따라 이미 받은 옛 이미지를 그대로 쓰고, 이미지가 없는 새 노드에서 뜬 파드만 새 이미지를 받는다.</li>
+    <li><strong>볼 곳</strong>: <code>curl -s localhost:5001/v2/fn/hello/tags/list</code>, 노드에서 <code>docker exec faas-worker3 crictl images | grep fn/hello</code> 의 IMAGE ID 비교.</li>
+    <li><strong>고치는 법</strong>: 빌드마다 새 태그(<code>v2</code>)와 ksvc 이미지 변경 → 새 Revision. 근본적으로는 05 처럼 digest 고정.</li>
+  </ul></aside>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>진단 명령 모음 (읽기 전용)</h3>
+  <div class="code-head"><span>맥 터미널</span><span>층별 확인</span></div>
+  <pre><code><span class="c"># 레지스트리 층</span>
+curl -s localhost:5001/v2/_catalog
+curl -s localhost:5001/v2/tenant-a/hello/tags/list
+<span class="c"># 빌드 층</span>
+kubectl -n faas-build get jobs,pods -o wide
+kubectl -n faas-build logs job/build-&lt;id&gt; -c kaniko --tail=30
+kubectl -n faas-build get pod -l job-name=build-&lt;id&gt; \
+  -o jsonpath='{.items[0].status.containerStatuses[0].state.terminated.message}'
+<span class="c"># 스케줄·런타임 층</span>
+kubectl get runtimeclass gvisor -o yaml
+kubectl -n fn-runtime get pods -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,RC:.spec.runtimeClassName
+kubectl -n fn-runtime get events --sort-by=.lastTimestamp | tail -20
+<span class="c"># 노드 층 (kind 노드 = 컨테이너)</span>
+docker exec faas-worker3 runsc --version
+docker exec faas-worker3 grep -A1 'runtimes.runsc' /etc/containerd/config.toml
+docker exec faas-worker3 ls /etc/containerd/certs.d
+docker exec faas-worker3 crictl images | grep -E 'fn/hello|tenant-a'
+<span class="c"># 결과 확인: kernel 칸이 노드 커널과 다르면 gVisor</span>
+curl -s -H "Host: hello-gvisor.fn-runtime.faas.local" localhost:8081/ ; echo
+docker exec faas-worker3 uname -r</code></pre>
+  <pre class="pseudo"><code><span class="k">진단</span>(증상):
+  층 = [레지스트리, 빌드, 스케줄, 이미지 pull, 샌드박스, 앱]
+  <span class="k">for</span> 층 <span class="k">in</span> 아래에서 위로:          <span class="c">// 뒤 층은 앞 층이 맞아야 의미가 있다</span>
+    확인 = 그 층의 "있나/맞나" 명령 하나
+    <span class="k">if</span> 실패: <span class="k">반환</span> 층, 그 층의 고치는 법
+  <span class="k">반환</span> "앱 코드" <span class="c">// 여기까지 다 맞으면 사용자 코드 문제 (handler.py 예외 → 500)</span></code></pre>
+</div>
+
+<!-- ============================================================ 정리 -->
+<h2 id="recap">정리</h2>
+
+<h3>핵심 개념 체크리스트</h3>
+<ul class="checklist">
+  <li>이미지 = 매니페스트(목차) + 설정(JSON) + 레이어(tar 변경분). 연결은 전부 digest.</li>
+  <li>레이어 digest 는 압축본, diff_id 는 압축 해제본의 sha256. 매니페스트 digest 가 이미지의 진짜 이름.</li>
+  <li>이미지 인덱스 = 플랫폼별 매니페스트 목록. 노드가 자기 arch 를 고른다.</li>
+  <li>태그는 레지스트리 안의 움직이는 포인터. 매니페스트 PUT 은 같은 태그를 덮어쓴다.</li>
+  <li>push = blob(HEAD → POST → PATCH → PUT?digest) 다음 매니페스트 PUT. pull = 매니페스트 GET 다음 blob GET.</li>
+  <li><code>localhost:5001</code>(맥, 노드 hosts.toml)과 <code>kind-registry:5000</code>(Docker 네트워크 이름)은 같은 저장소. hosts.toml 이 http 미러로 바꾼다.</li>
+  <li>Knative 태그 해석을 건너뛰면 태그 참조 Revision 이 태그에 묶인다 → digest 로 넣으면 문제가 없다.</li>
+  <li>멀티 스테이지: 컴파일러는 버리고 결과물만. ENV/USER/CMD 는 레이어가 아니라 설정.</li>
+  <li>kaniko = 데몬 없이 자기 루트에 베이스를 풀고, 명령마다 스냅샷 → 레이어 → push. 특권 불필요, 그러나 보안 경계는 아님.</li>
+  <li>ConfigMap 볼륨 파일은 심볼릭 링크 → tar.gz 또는 <code>cp -L</code>.</li>
+  <li>빌드 Job: backoffLimit 0, activeDeadlineSeconds, ttlSecondsAfterFinished, requests 작게 limits 크게, build 풀.</li>
+  <li>digest 고정: <code>--digest-file=/dev/termination-log</code> → 파드 상태 → <code>image@sha256</code>.</li>
+  <li>kubelet → CRI → containerd → shim v2 → OCI 런타임(runc/runsc) → 커널.</li>
+  <li>RuntimeClass: handler(노드 런타임 이름), scheduling(자동 nodeSelector·toleration), overhead(스케줄·쿼터·cgroup).</li>
+  <li>gVisor: Sentry(사용자 공간 커널) + Gofer/directfs + 플랫폼(systrap 기본) + netstack. 호스트 표면 축소 = 심층 방어. 비용은 시스템 콜 많은 일, 메모리, 시작, 호환성.</li>
+  <li>Kata/Firecracker 는 /dev/kvm(중첩 가상화) 필요 → kind 불가, EC2 는 베어메탈. gVisor 는 둘 다 가능.</li>
+</ul>
+
+<h3>이 장의 핵심 결정</h3>
+<div class="table-wrap"><table><thead><tr><th>결정</th><th>선택</th><th>대안</th><th>버린 이유</th></tr></thead><tbody>
+<tr><td>레지스트리</td><td>클러스터 밖 <code>registry:2</code> 컨테이너, http, 두 이름</td><td>클러스터 안 레지스트리 / Harbor(TLS+인증) / <code>kind load</code></td><td>노드 containerd 가 클러스터 DNS 를 모름, 재생성 때 이미지 소실 / 셋업 시간 / kaniko 가 push 할 곳이 필요</td></tr>
+<tr><td>Knative 태그 해석</td><td>kind-registry 는 건너뜀</td><td>레지스트리에 TLS + CA 를 controller 에 주입</td><td>PoC 셋업 단순화. 05 는 digest 를 직접 넣어 영향 없음</td></tr>
+<tr><td>함수 이미지 베이스</td><td>Go = scratch 멀티 스테이지, Python = slim 한 단계</td><td>distroless / alpine / Buildpacks</td><td>크기·공격 표면 최소(Go). 파이썬은 의존성 없을 때 단순함 우선</td></tr>
+<tr><td>클러스터 안 빌드 도구</td><td>kaniko Job (v1.23.2)</td><td>BuildKit rootless / Buildpacks / 외부 CI / Docker 소켓</td><td>seccomp·AppArmor 완화와 설정량 / 빌더 이미지 무게 / 코드가 Git 에 없음 / 노드 root</td></tr>
+<tr><td>빌드 재료 전달</td><td>ConfigMap (04 tar.gz, 05 initContainer cp -L)</td><td>Git context / S3 context</td><td>외부 저장소 없이 끝냄. 1MiB 한도는 코드 크기 검사로</td></tr>
+<tr><td>빌드 Job 실패 정책</td><td>backoffLimit 0, deadline 600s, TTL 600s/3600s</td><td>재시도 1~2 / podFailurePolicy</td><td>코드 오류는 재시도 무의미, 빠른 실패. podFailurePolicy 는 확장안</td></tr>
+<tr><td>이미지 고정</td><td>digest (termination-log 경유)</td><td>태그만 / 레지스트리에 HEAD 로 묻기 / 로그 파싱</td><td>태그는 덮어써짐 / 권한·경쟁 조건 / 형식 취약</td></tr>
+<tr><td>격리 런타임</td><td>gVisor RuntimeClass (exec 풀에만 설치, scheduling 으로 고정)</td><td>runc 만 / Kata·Firecracker / WASM / 기본 런타임 전체 교체</td><td>커널 공유 / 중첩 가상화·베어메탈 / 언어 제약 / 시스템 파드 호환성</td></tr>
+<tr><td>gVisor 측정 장소</td><td>kind 에서 시도, 안 되면 EC2(07)</td><td>kind 만 고집</td><td>Docker Desktop VM 의 커널·권한 제약이 결과를 흐린다</td></tr>
+</tbody></table></div>
+
+<h3>본선에서 떠올릴 패턴</h3>
+<div class="grid">
+  <div class="item"><h4>내용 주소 지정</h4><p>"이름 대신 내용의 해시로 가리키면 캐시·검증·재현이 공짜로 따라온다." 설정 배포, ML 모델 버전, 데이터셋, 함수 코드 아카이브 어디에나. 해커톤 주제가 "버전 관리"·"롤백" 이면 digest 고정을 그대로 옮긴다.</p></div>
+  <div class="item"><h4>2단계 커밋 (blob 먼저, 목차 나중)</h4><p>레지스트리는 내용이 다 올라간 뒤에만 매니페스트를 받는다. 파일 업로드 API, 대용량 결과 저장, 이벤트 소싱의 스냅샷에도 같은 순서를 쓰면 "반쯤 보이는 상태" 가 없다.</p></div>
+  <div class="item"><h4>결과값을 상태로 꺼내기</h4><p>termination-log 처럼 "일회성 작업의 출력 하나" 를 오케스트레이터 상태에 실어 나르면 별도 저장소가 필요 없다. Job → 다음 단계 연결(예: 학습 Job → 모델 digest → 서빙)에 그대로.</p></div>
+  <div class="item"><h4>표면 줄이기</h4><p>gVisor 의 핵심은 "신뢰 못 할 입력이 닿는 인터페이스를 좁히고, 좁힌 곳을 검사한다". API 게이트웨이, MCP 도구 설계(도구 3개 + 가드레일, 07장), 테넌트 RBAC 모두 같은 사고다.</p></div>
+  <div class="item"><h4>한 줄로 갈아 끼우는 구조</h4><p>RuntimeClass·storageClass·ingressClass 처럼 "이름 하나로 구현을 고른다" 는 쿠버네티스의 반복 패턴. 새 기술(다른 샌드박스, 다른 빌더)을 제안할 때 "어디 한 줄만 바꾸면 되는가" 로 설명한다.</p></div>
+  <div class="item"><h4>권한 없이 하는 법 찾기</h4><p>Docker 소켓 → kaniko, 특권 컨테이너 → user namespace. "이 일에 정말 root 가 필요한가" 를 먼저 묻는 습관이 심사 Q&amp;A 의 보안 질문에 가장 잘 먹힌다.</p></div>
+</div>
+
+<h3>스스로 답해 볼 질문</h3>
+<ol>
+  <li>매니페스트 JSON 의 공백 하나를 바꾸면 무엇이 바뀌고 무엇이 그대로인가? (레이어 digest, 설정 digest, 이미지 digest)</li>
+  <li>레지스트리가 매니페스트를 blob 보다 먼저 받지 않는 이유는? 그 규칙이 없으면 pull 하는 쪽에서 어떤 장애가 보이나?</li>
+  <li>kaniko 파드 안에서 <code>localhost:5001</code> 로 push 하면 왜 실패하나? 노드의 containerd 는 왜 <code>localhost:5001</code> 로 받을 수 있나?</li>
+  <li>Knative 의 태그 해석을 건너뛰게 한 대가는 04 와 05 중 어디에 나타나나? 왜 다른 쪽은 영향이 없나?</li>
+  <li>Python 런타임 Dockerfile 에서 <code>USER</code> 줄을 <code>COPY</code> 위로 옮기면 레이어 수와 캐시 동작이 어떻게 바뀌나?</li>
+  <li>kaniko 가 privileged 없이도 빌드할 수 있는 이유와, 그런데도 "보안 경계가 아니다" 라고 하는 이유를 각각 한 문장으로.</li>
+  <li>05 에서 <code>ttlSecondsAfterFinished</code> 를 0 으로 바꾸면 어떤 경쟁 조건이 생기나? 증상은 어느 상태에서 멈추는 것으로 보이나?</li>
+  <li>컨트롤 플레인 <code>build-timeout</code>(5분)과 Job <code>activeDeadlineSeconds</code>(10분)의 틈에서 무슨 일이 생길 수 있나? 고치는 설계 두 가지는?</li>
+  <li>runc 컨테이너와 gVisor 컨테이너에서 <code>uname -r</code> 결과가 다른 이유를 런타임 스택 그림의 층 이름으로 설명하라.</li>
+  <li>RuntimeClass 의 <code>scheduling</code> 을 지웠을 때 gVisor 파드를 막는 마지막 벽은 무엇이고, 그 벽이 fail-closed 인 것이 왜 중요한가?</li>
+  <li><code>?work=cpu</code> 와 <code>?work=io</code> 중 gVisor 에서 더 느려지는 쪽은? Sentry, 플랫폼, Gofer/directfs 중 어디에서 시간이 더해지나?</li>
+  <li>Kata 를 쓰고 싶다는 심사위원 질문에, kind·EC2 각각에서 무엇이 필요하고 우리 구조의 어디를 바꾸면 되는지 30초로 답하라.</li>
+</ol>
+
+<nav class="pager" aria-label="이전 다음 장"></nav>
+</article>
+</main>
+</div>
+</body>
+</html>

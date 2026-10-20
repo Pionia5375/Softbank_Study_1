@@ -1,0 +1,2278 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>04 네트워크: eBPF와 Cilium · FaaS PoC 가이드</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="guide.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="guide.js" defer></script>
+</head>
+<body>
+<div class="shell">
+<nav class="nav" aria-label="장 목록"></nav>
+<main>
+<article class="page">
+
+<header class="chapter-head">
+  <p class="eyebrow">04장 · 관련 폴더 poc/03-tenant-isolation · poc/04-faas-runtime · poc/06-fault-injection</p>
+  <h1>네트워크: eBPF와 Cilium</h1>
+  <p class="lede">파드 하나가 IP 를 받는 순간부터, 맥의 <code>curl</code> 이 tenant-a 함수에 닿거나 tenant-b 의 공격 패킷이 커널 안에서 버려지는 순간까지를 리눅스 부품, CNI, Service, DNS, eBPF, Cilium, NetworkPolicy, Hubble 순서로 따라간다. 다 읽으면 "A 테넌트가 B 를 못 부르는 건 정확히 무엇 때문인가" 에 커널 수준까지 내려가서 답할 수 있다.</p>
+  <div class="chapter-meta">
+    <span class="chip">PoC 폴더 <b>poc/03 · poc/04 · poc/06</b></span>
+    <span class="chip">핵심 기술 <b>CNI · kube-proxy · CoreDNS · eBPF · Cilium · NetworkPolicy · Hubble</b></span>
+    <span class="chip">클러스터 <b>kind faas (kind-faas)</b></span>
+  </div>
+</header>
+
+<h2 id="map">이 장의 지도</h2>
+<p>전체 아키텍처에서 이 장이 다루는 층은 "노드와 파드 사이를 패킷이 어떻게 다니고, 누가 그걸 막는가" 다. 03 단계가 kind 기본 CNI(kindnet)를 빼고 Cilium 을 넣었고, 04 단계가 그 위에 Kourier 입구와 맥 8081 → 노드 31080 길을 냈다. 3장(멀티테넌시)의 울타리 6겹 중 4번째 겹(NetworkPolicy)을 실제로 집행하는 곳이 이 장의 주인공이다.</p>
+
+<figure>
+  <div class="fig scroll">
+    <svg viewBox="0 0 960 360" role="img" aria-labelledby="f1-t">
+      <title id="f1-t">이 장이 다루는 층: kind 클러스터 노드 4대 아래를 가로지르는 Cilium 데이터패스</title>
+      <defs>
+        <marker id="f1-u" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+        <marker id="f1-o" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-obs"/></marker>
+      </defs>
+      <rect x="20" y="40" width="210" height="280" rx="12" class="d-card"/>
+      <text x="36" y="70" class="d-ttl">맥 (Docker Desktop)</text>
+      <text x="36" y="104" class="d-mono">curl localhost:8081</text>
+      <text x="36" y="130" class="d-mono">localhost:5001</text>
+      <text x="36" y="150" class="d-sub">kind-registry</text>
+      <text x="36" y="186" class="d-mono">cilium · hubble CLI</text>
+      <text x="36" y="206" class="d-sub">설치·상태·흐름 보기</text>
+      <text x="36" y="250" class="d-lbl">Docker 네트워크 "kind"</text>
+      <text x="36" y="270" class="d-sub">노드 4대와 레지스트리가</text>
+      <text x="36" y="290" class="d-sub">같은 망에 붙어 있다</text>
+      <path d="M230 104 L278 104" class="d-e-user" marker-end="url(#f1-u)"/>
+      <path d="M230 196 L278 245" class="d-e-obs" marker-end="url(#f1-o)"/>
+      <rect x="260" y="20" width="685" height="320" rx="12" class="d-pool"/>
+      <text x="280" y="44" class="d-lbl">kind 클러스터 faas</text>
+      <rect x="280" y="58" width="155" height="140" rx="12" class="d-card"/>
+      <text x="294" y="86" class="d-ttl-s">control-plane</text>
+      <text x="294" y="112" class="d-mono">NodePort 31080</text>
+      <text x="294" y="136" class="d-sub">API 서버</text>
+      <text x="294" y="158" class="d-sub">kube-proxy</text>
+      <rect x="447" y="58" width="155" height="140" rx="12" class="d-card"/>
+      <text x="461" y="86" class="d-ttl-s">system 풀</text>
+      <text x="461" y="112" class="d-sub">Kourier 입구</text>
+      <text x="461" y="136" class="d-sub">activator</text>
+      <text x="461" y="158" class="d-sub">CoreDNS</text>
+      <rect x="614" y="58" width="155" height="140" rx="12" class="d-card"/>
+      <text x="628" y="86" class="d-ttl-s">build 풀</text>
+      <text x="628" y="112" class="d-sub">kaniko Job</text>
+      <text x="628" y="136" class="d-sub">taint NoSchedule</text>
+      <rect x="781" y="58" width="150" height="140" rx="12" class="d-card"/>
+      <text x="795" y="86" class="d-ttl-s">exec 풀</text>
+      <text x="795" y="112" class="d-sub">tenant-a 함수</text>
+      <text x="795" y="136" class="d-sub">fn-runtime 함수</text>
+      <text x="795" y="158" class="d-sub">gVisor</text>
+      <rect x="280" y="218" width="651" height="56" rx="12" class="d-user-box"/>
+      <text x="300" y="243" class="d-ttl-s">이 장: Cilium 데이터패스 (eBPF)</text>
+      <text x="300" y="264" class="d-subd">노드마다 cilium-agent · 파드마다 veth 위 eBPF · NetworkPolicy 집행 · Hubble 기록</text>
+      <text x="280" y="304" class="d-sub">노드 사이 파드 트래픽 = VXLAN 터널 (cilium_vxlan). 서비스 이름 = CoreDNS. 입구 = Kourier.</text>
+    </svg>
+  </div>
+  <figcaption><b>그림 4-1.</b> 이 장의 위치. 노드 카드 아래를 가로지르는 파란 띠가 이 장의 범위다. 노드 4대 모두에 같은 층이 깔려 있다.</figcaption>
+</figure>
+
+<div class="table-wrap"><table>
+<thead><tr><th>절</th><th>한 줄</th></tr></thead>
+<tbody>
+<tr><td><a href="#k8s-model">1. 쿠버네티스 네트워크 모델</a></td><td>모든 파드가 자기 IP 를 갖고, 파드끼리 NAT 없이 닿는다는 약속</td></tr>
+<tr><td><a href="#linux">2. 리눅스 부품</a></td><td>network namespace, veth, bridge, 라우팅, netfilter 훅, conntrack. 모든 CNI 가 이 부품으로 만든다</td></tr>
+<tr><td><a href="#cni">3. CNI 와 파드 생성</a></td><td>kubelet → containerd → CNI 플러그인 ADD. kind 에서 kindnet 을 끄고 Cilium 을 넣는 이유와 NotReady</td></tr>
+<tr><td><a href="#service">4. Service 와 kube-proxy</a></td><td>ClusterIP·NodePort·LoadBalancer, EndpointSlice, iptables/ipvs 모드, Cilium 의 eBPF 서비스 처리</td></tr>
+<tr><td><a href="#dns">5. DNS</a></td><td>CoreDNS, resolv.conf, ndots, default-deny 가 DNS 를 깨는 이유, 파드가 <code>kind-registry</code> 를 찾는 길</td></tr>
+<tr><td><a href="#ebpf">6. eBPF 기초</a></td><td>프로그램·훅·맵·검증기·JIT·CO-RE·헬퍼. 커널 안에 안전하게 코드를 꽂는 방법</td></tr>
+<tr><td><a href="#cilium">7. Cilium 구조와 데이터패스</a></td><td>agent·operator·CNI·Hubble, 엔드포인트, 라벨에서 나오는 보안 identity, ipcache, 정책 맵. tenant-b → tenant-a 패킷이 버려지는 순서</td></tr>
+<tr><td><a href="#netpol">8. NetworkPolicy 의미론과 우리 정책</a></td><td>선택자 AND/OR, 방향, 합집합, 기본 거부. 우리 정책 4장 한 줄씩과 10/20 Knative 이음새</td></tr>
+<tr><td><a href="#cnp">9. CiliumNetworkPolicy, L7, FQDN</a></td><td>Envoy 로 넘겨 HTTP 메서드·경로로 자르기, DNS 이름으로 나가기 허용</td></tr>
+<tr><td><a href="#hubble">10. Hubble</a></td><td>에이전트 안의 observer, relay, UI, 흐름 기록과 판정, <code>hubble observe</code> 필터</td></tr>
+<tr><td><a href="#ingress-path">11. 맥에서 함수까지 요청 길</a></td><td>curl → localhost:8081 → 노드 31080 → kube-proxy → Kourier → activator 또는 함수 파드</td></tr>
+<tr><td><a href="#break">12. 깨지면</a></td><td>DNS 막힘, allow-from-namespaces 빠짐, 공격자 쪽 정책 삭제. 증상·볼 곳·고치는 법</td></tr>
+<tr><td><a href="#recap">정리</a></td><td>체크리스트, 결정 표(Cilium vs kindnet vs Calico, 표준 vs CNP), 옮겨 쓸 패턴, 질문</td></tr>
+</tbody></table></div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+<p>이 장의 근거 파일은 다섯 묶음이다. <code>poc/03-tenant-isolation/cluster/kind-config.yaml</code>·<code>scripts/rebuild-cluster.sh</code>(Cilium 설치), <code>charts/tenant/templates/networkpolicy.yaml</code>·<code>tenants/tenant-a.yaml</code>(정책), <code>scripts/test-isolation.sh</code>(격리 실험), <code>poc/04-faas-runtime/cluster/kind-config.yaml</code>·<code>scripts/setup.sh</code>·<code>scripts/rebuild-cluster.sh</code>(8081 길, 레지스트리 DNS, Kourier NodePort), <code>poc/06-fault-injection/scripts/s4-tenant-breach.sh</code>·<code>results/s4-*.csv</code>(침범 시도, Calico 비교). 클러스터 위 실행은 맥에서 처음 하는 것이 첫 검증이다 (RUN-ALL.md 0절).</p></aside>
+
+<h2 id="k8s-model">1. 쿠버네티스 네트워크 모델</h2>
+
+<div class="tier" data-tier="1">
+  <h3>모델은 무엇이고 왜 이렇게 정했나</h3>
+  <p>쿠버네티스는 네트워크를 직접 구현하지 않는다. 대신 "어떤 모양이어야 하는가" 라는 <b>모델(약속)</b> 만 정하고, 실제 배선은 네트워크 플러그인(CNI 플러그인)에게 맡긴다. 공식 문서가 정한 약속은 세 줄이다.</p>
+  <ol>
+    <li>클러스터 안의 <b>모든 파드는 클러스터 전체에서 유일한 자기 IP</b> 를 갖는다. 파드 안의 컨테이너들은 그 IP 와 네트워크 namespace 를 같이 쓴다 (그래서 같은 파드의 컨테이너끼리는 <code>localhost</code> 로 부른다. Knative 함수 파드의 queue-proxy 가 사용자 컨테이너를 <code>localhost:8080</code> 으로 부르는 것이 이 경우다).</li>
+    <li>모든 파드는 어느 노드에 있든 다른 모든 파드와 <b>NAT(주소 변환) 없이</b> 직접 통신할 수 있다. 보낸 쪽 IP 가 받는 쪽에 그대로 보인다.</li>
+    <li>노드 위의 에이전트(kubelet, 시스템 데몬)는 그 노드의 모든 파드와 통신할 수 있다.</li>
+  </ol>
+  <p>왜 이렇게 정했나. Docker 초기 방식은 컨테이너마다 노드 포트를 하나씩 빌려 와 "노드IP:무작위 포트" 로 서로 부르게 했다. 그러면 프로그램이 자기 주소를 모르고, 포트 충돌을 사람이 관리해야 한다. 쿠버네티스는 파드를 "IP 하나 가진 작은 VM" 처럼 다루게 해서 이 문제를 없앴다. 대가는 누군가 파드 IP 를 나눠 주고(IPAM), 노드 사이로 파드 패킷을 실어 날라야 한다는 것이다. 그 일이 CNI 플러그인 몫이고, 우리 PoC 에서는 Cilium 이다.</p>
+  <p>이 약속에는 "막는다" 는 말이 없다. 기본은 <b>전부 열림</b> 이다. 그래서 테넌트를 나누려면 NetworkPolicy 로 닫아야 하고, 그 정책을 실제로 집행하는 것도 CNI 다 (8절).</p>
+
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 380" role="img" aria-labelledby="f2-t">
+        <title id="f2-t">노드마다 파드 대역을 받고, 파드는 NAT 없이 서로 닿는다</title>
+        <defs>
+          <marker id="f2-u" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+        </defs>
+        <rect x="20" y="20" width="920" height="340" rx="12" class="d-pool"/>
+        <text x="40" y="46" class="d-lbl">클러스터 파드 대역 10.244.0.0/16 (kind 기본값)</text>
+        <rect x="40" y="64" width="270" height="230" rx="12" class="d-card"/>
+        <text x="58" y="92" class="d-ttl-s">노드 faas-worker</text>
+        <text x="58" y="114" class="d-mono">podCIDR 10.244.1.0/24</text>
+        <rect x="58" y="132" width="234" height="60" rx="10" class="d-cp-box"/>
+        <text x="74" y="158" class="d-subd">Kourier 파드</text>
+        <text x="74" y="180" class="d-mono">10.244.1.12</text>
+        <rect x="58" y="206" width="234" height="60" rx="10" class="d-cp-box"/>
+        <text x="74" y="232" class="d-subd">CoreDNS 파드</text>
+        <text x="74" y="254" class="d-mono">10.244.1.7</text>
+        <rect x="345" y="64" width="270" height="230" rx="12" class="d-card"/>
+        <text x="363" y="92" class="d-ttl-s">노드 faas-worker2</text>
+        <text x="363" y="114" class="d-mono">podCIDR 10.244.2.0/24</text>
+        <rect x="363" y="132" width="234" height="60" rx="10" class="d-prov-box"/>
+        <text x="379" y="158" class="d-subd">kaniko 빌드 파드</text>
+        <text x="379" y="180" class="d-mono">10.244.2.30</text>
+        <rect x="650" y="64" width="270" height="230" rx="12" class="d-card"/>
+        <text x="668" y="92" class="d-ttl-s">노드 faas-worker3</text>
+        <text x="668" y="114" class="d-mono">podCIDR 10.244.3.0/24</text>
+        <rect x="668" y="132" width="234" height="60" rx="10" class="d-agent"/>
+        <text x="684" y="158" class="d-subd">tenant-a/hello 파드</text>
+        <text x="684" y="180" class="d-mono">10.244.3.21</text>
+        <rect x="668" y="206" width="234" height="60" rx="10" class="d-agent"/>
+        <text x="684" y="232" class="d-subd">tenant-b/attacker 파드</text>
+        <text x="684" y="254" class="d-mono">10.244.3.40</text>
+        <path d="M292 162 C 460 230, 520 240, 666 168" class="d-e-user" marker-end="url(#f2-u)"/>
+        <text x="380" y="248" class="d-sub">src 10.244.1.12 → dst 10.244.3.21</text>
+        <text x="40" y="324" class="d-subd">약속: 보낸 IP 가 그대로 도착한다 (NAT 없음). 노드 대역은 kube-controller-manager 가 나눈다.</text>
+        <text x="40" y="346" class="d-sub">IP 숫자는 설명용 예시다. 실제 값은 kubectl get pods -o wide 로 본다.</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-2.</b> 쿠버네티스 네트워크 모델. 노드마다 /24 파드 대역을 받고, 파드 IP 는 클러스터 전체에서 유일하다. 노드를 건너가도 출발 IP 가 그대로 보인다. 이 성질 덕분에 NetworkPolicy 가 "누가 보냈나" 로 판단할 수 있다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>모델을 실제로 만드는 두 가지 방식</h3>
+  <p>파드 IP 는 실제 물리망(우리 경우 Docker 네트워크 <code>kind</code>)이 모르는 주소다. 다른 노드의 파드로 보내려면 두 방법 중 하나를 쓴다.</p>
+  <dl class="terms">
+    <dt>오버레이 (overlay, 터널)</dt><dd>파드 패킷을 통째로 노드 IP 패킷 안에 한 번 더 싸서(캡슐화) 보내고, 받는 노드가 벗긴다. VXLAN(UDP 8472), Geneve(UDP 6081) 가 대표. 물리망은 노드 IP 만 알면 되니 어디서나 돈다. 대가는 헤더만큼 MTU 가 줄고 싸고 벗기는 비용이 든다.</dd>
+    <dt>네이티브 라우팅 (native routing)</dt><dd>파드 대역을 물리망 라우터가 알게 한다 (노드에 정적 경로, BGP, 클라우드 경로표). 캡슐화가 없어 빠르지만 물리망을 손댈 수 있어야 한다. AWS VPC CNI 는 아예 VPC IP 를 파드에 준다.</dd>
+  </dl>
+  <p>Cilium CLI(<code>cilium install</code>)는 클러스터 종류를 알아본다. 소스(cilium-cli <code>install/autodetect.go</code>, <code>install/helm.go</code>)를 보면 kind 로 판단하면 데이터패스를 <b>터널(기본 VXLAN)</b> 로, IPAM 을 <b><code>ipam.mode=kubernetes</code></b>(노드 객체의 <code>spec.podCIDR</code> 를 그대로 쓰기)로 정한다. 그래서 우리 파드 IP 는 kind 기본 파드 대역 <code>10.244.0.0/16</code> 에서 나온다. 【확인 필요: 우리가 쓰는 v1.20.3 CLI 에서도 같은 기본값인지 <code>cilium config view | grep -E "routing-mode|tunnel-protocol|ipam"</code> 로 본다】</p>
+
+  <pre class="mermaid">
+flowchart LR
+  A["파드 안 컨테이너 1"] -- "localhost" --> B["같은 파드 컨테이너 2"]
+  C["파드 A 10.244.1.12"] -- "파드 IP 직접 (NAT 없음)" --> D["파드 B 10.244.3.21"]
+  E["파드"] -- "Service 이름·ClusterIP" --> F["Service (가상 IP)"]
+  F -- "DNAT 로 골라서" --> D
+  G["클러스터 밖 (맥 curl)"] -- "NodePort·LoadBalancer" --> F
+  </pre>
+  <p>위 그림은 공식 문서가 꼽는 네트워크 문제 네 가지(컨테이너끼리, 파드끼리, 파드에서 Service, 밖에서 Service)를 한 장에 놓은 것이다. 첫째는 network namespace 공유(2절), 둘째는 CNI(3절), 셋째·넷째는 Service(4절)가 푼다.</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>VXLAN 캡슐화와 Cilium 의 identity 운반</h3>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 250" role="img" aria-labelledby="f3-t">
+        <title id="f3-t">VXLAN 으로 싼 파드 패킷의 헤더 층</title>
+        <rect x="20" y="40" width="150" height="80" rx="10" class="d-plain-box"/>
+        <text x="34" y="70" class="d-ttl-s">바깥 이더넷</text>
+        <text x="34" y="96" class="d-mono">노드 MAC</text>
+        <rect x="175" y="40" width="160" height="80" rx="10" class="d-plain-box"/>
+        <text x="189" y="70" class="d-ttl-s">바깥 IP</text>
+        <text x="189" y="96" class="d-mono">172.18.0.3→.0.5</text>
+        <rect x="340" y="40" width="130" height="80" rx="10" class="d-plain-box"/>
+        <text x="354" y="70" class="d-ttl-s">UDP</text>
+        <text x="354" y="96" class="d-mono">dport 8472</text>
+        <rect x="475" y="40" width="150" height="80" rx="10" class="d-obs-box"/>
+        <text x="489" y="70" class="d-ttl-s">VXLAN</text>
+        <text x="489" y="96" class="d-mono">VNI = 보낸 identity</text>
+        <rect x="630" y="40" width="310" height="80" rx="10" class="d-user-box"/>
+        <text x="644" y="70" class="d-ttl-s">안쪽 원래 파드 패킷</text>
+        <text x="644" y="96" class="d-mono">10.244.1.12 → 10.244.3.21:8012</text>
+        <text x="20" y="160" class="d-subd">물리망(Docker 네트워크 kind, 172.18.0.0/16 예시)은 바깥 IP 만 보고 노드에서 노드로 나른다.</text>
+        <text x="20" y="186" class="d-subd">받는 노드의 cilium_vxlan 장치에 붙은 eBPF 가 바깥 헤더를 벗기고, VNI 에서 출발 파드의 identity 를 읽는다.</text>
+        <text x="20" y="212" class="d-sub">덧붙는 헤더 = 이더넷 14 + IP 20 + UDP 8 + VXLAN 8 = 50 바이트. 그래서 파드 MTU 는 노드 MTU 보다 50 작다.</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-3.</b> VXLAN 캡슐화. Cilium 은 VXLAN 헤더의 24비트 네트워크 식별자(VNI) 자리에 보낸 쪽 보안 identity 를 실어 보낸다. 받는 노드는 IP 를 다시 조회하지 않고도 "누가 보냈나" 를 안다 (7절).</figcaption>
+  </figure>
+  <pre class="pseudo"><code><span class="k">함수</span> 노드_밖으로_보내기(파드패킷):
+  dst = 파드패킷.목적지IP
+  <span class="k">만약</span> dst 가 내 노드 podCIDR 안:  <span class="c">// 같은 노드</span>
+      그 파드의 veth 로 바로 넘김 (터널 안 탐)
+  <span class="k">아니면</span>:
+      원격노드IP = ipcache[dst].터널끝점     <span class="c">// Cilium: IP → (identity, 노드IP)</span>
+      바깥헤더 = 이더넷 + IP(내 노드IP → 원격노드IP) + UDP(8472) + VXLAN(VNI = 내 파드 identity)
+      cilium_vxlan 장치로 내보냄
+<span class="k">함수</span> 터널에서_받기(바깥패킷):
+  identity = 바깥패킷.VXLAN.VNI
+  파드패킷 = 바깥헤더 벗기기(바깥패킷)
+  목적지 파드의 ingress 정책 검사(identity, 포트)   <span class="c">// 8절 정책은 여기서도 걸린다</span></code></pre>
+
+  <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+  <p>노드 4대는 맥 Docker Desktop 의 리눅스 VM 안에서 도는 컨테이너다. 그래서 "물리망" 은 Docker 의 사용자 정의 브리지 네트워크 <code>kind</code> 다. 04 <code>setup.sh</code> 가 레지스트리 컨테이너를 이 망에 붙이는 줄(<code>docker network connect kind kind-registry</code>)이 이 사실을 보여 준다. 파드 IP 대역(10.244.0.0/16)과 Service 대역(10.96.0.0/16)은 kind 기본값이다. 우리 kind-config 에 <code>podSubnet</code>·<code>serviceSubnet</code> 을 따로 적지 않았기 때문이다.</p></aside>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+  <p><b>증상</b>: 같은 노드 파드끼리는 되는데 다른 노드 파드로는 큰 응답만 멈춘다 (작은 요청은 됨). <b>볼 곳</b>: <code>kubectl -n kube-system exec ds/cilium -c cilium-agent -- cilium-dbg status --verbose</code> 의 터널·MTU 줄, 노드 사이 <code>ping -M do -s 1450</code>. <b>원인</b>: 캡슐화 50바이트를 빼지 않은 MTU. <b>고치기</b>: Cilium 은 기본적으로 장치 MTU 를 보고 맞추므로, 손으로 MTU 를 바꿨다면 되돌린다. kind 위에서 이 문제를 겪은 적은 없다 (예방 지식).</p></aside>
+  <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
+  <p>터널 모드는 cilium CLI 가 kind 에 고른 기본값을 그대로 둔 것이다. 네이티브 라우팅은 노드 사이에 파드 대역 경로를 깔아야 하는데 kind 노드는 같은 L2 망에 있어서 <code>autoDirectNodeRoutes</code> 로 가능은 하다. 그러나 PoC 의 목적(격리 증명)과 무관하고 설정이 늘어서 버렸다. 07 단계 EC2 에서는 k3s 기본(flannel VXLAN) 또는 Cilium 을 다시 고른다.</p></aside>
+  <aside class="callout fact"><p class="callout-title">공식 문서</p>
+  <p><a href="https://kubernetes.io/docs/concepts/services-networking/">Kubernetes: Services, Load Balancing, and Networking (네트워크 모델)</a> · <a href="https://kubernetes.io/docs/concepts/cluster-administration/networking/">Cluster Networking</a> · <a href="https://docs.cilium.io/en/stable/network/concepts/routing/">Cilium: Routing (encapsulation / native)</a> · <a href="https://docs.cilium.io/en/stable/network/concepts/ipam/">Cilium: IPAM 모드</a> · <a href="https://kind.sigs.k8s.io/docs/user/configuration/#networking">kind: networking 설정</a></p></aside>
+</div>
+
+<h2 id="linux">2. 리눅스 부품: namespace, veth, bridge, 라우팅, netfilter, conntrack</h2>
+
+<div class="tier" data-tier="1">
+  <h3>모든 CNI 는 같은 커널 부품으로 만든다</h3>
+  <p>Cilium 이든 kindnet 이든 Calico 든, 파드 네트워크는 리눅스 커널이 이미 가진 부품 몇 개를 조립한 것이다. 이 부품을 알면 어떤 CNI 를 만나도 "패킷이 어디로 지나가고 어디서 버려질 수 있나" 를 그릴 수 있다.</p>
+  <dl class="terms">
+    <dt>network namespace</dt><dd>네트워크 장치·IP·라우팅 표·방화벽 규칙의 독립된 사본. 파드 하나 = netns 하나. 파드 안에서 <code>ip addr</code> 을 치면 그 파드의 <code>eth0</code> 과 <code>lo</code> 만 보인다.</dd>
+    <dt>veth pair</dt><dd>양 끝이 연결된 가상 랜선. 한쪽 끝을 파드 netns 에(<code>eth0</code>), 다른 끝을 노드 netns 에(Cilium 은 <code>lxcXXXX</code> 라는 이름) 둔다. 한쪽에 넣으면 다른 쪽으로 나온다.</dd>
+    <dt>bridge</dt><dd>커널 안의 가상 스위치. 여러 veth 를 꽂아 같은 L2 로 묶는다 (Docker 의 <code>docker0</code>, CNI bridge 플러그인의 <code>cni0</code>). Cilium 은 bridge 를 쓰지 않는다.</dd>
+    <dt>라우팅 표</dt><dd>"목적지 IP 가 이 대역이면 이 장치로" 의 목록. kindnet 은 파드마다 <code>/32</code> 경로와 노드마다 파드 대역 경로를 깐다.</dd>
+    <dt>netfilter / iptables</dt><dd>커널 IP 처리 경로의 다섯 군데 훅(PREROUTING, INPUT, FORWARD, OUTPUT, POSTROUTING)에 규칙을 거는 틀. kube-proxy 의 Service 주소 변환(DNAT)과 많은 CNI 의 NetworkPolicy 가 여기에 걸린다.</dd>
+    <dt>conntrack</dt><dd>연결 추적 표. "이 패킷은 이미 허락된 연결의 답장인가" 를 기억한다. 정책이 "들어오는 것만" 허용해도 답장이 나갈 수 있는 이유, DNAT 된 연결의 답장 주소를 되돌리는 근거.</dd>
+  </dl>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>노드 안에서 파드 패킷이 지나가는 두 가지 배선</h3>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1180 470" role="img" aria-labelledby="f4-t">
+        <title id="f4-t">bridge 방식과 Cilium 의 veth 별 eBPF 방식 비교</title>
+        <defs>
+          <marker id="f4-u" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+        </defs>
+        <rect x="20" y="20" width="560" height="430" rx="12" class="d-pool"/>
+        <text x="40" y="46" class="d-ttl">(가) bridge 방식</text>
+        <text x="40" y="68" class="d-sub">CNI bridge 플러그인, flannel 류</text>
+        <rect x="40" y="86" width="220" height="90" rx="10" class="d-card"/>
+        <text x="56" y="112" class="d-ttl-s">파드 A netns</text>
+        <text x="56" y="136" class="d-mono">eth0 10.244.1.5</text>
+        <text x="56" y="158" class="d-mono">기본경로 → cni0</text>
+        <rect x="320" y="86" width="220" height="90" rx="10" class="d-card"/>
+        <text x="336" y="112" class="d-ttl-s">파드 B netns</text>
+        <text x="336" y="136" class="d-mono">eth0 10.244.1.6</text>
+        <text x="336" y="158" class="d-mono">기본경로 → cni0</text>
+        <rect x="40" y="200" width="500" height="230" rx="10" class="d-plain-box"/>
+        <text x="56" y="226" class="d-ttl-s">노드 netns</text>
+        <rect x="70" y="240" width="140" height="40" rx="8" class="d-card"/>
+        <text x="84" y="265" class="d-mono">vethA (호스트쪽)</text>
+        <rect x="350" y="240" width="140" height="40" rx="8" class="d-card"/>
+        <text x="364" y="265" class="d-mono">vethB (호스트쪽)</text>
+        <rect x="70" y="300" width="420" height="44" rx="8" class="d-warn-box"/>
+        <text x="86" y="327" class="d-subd">bridge cni0 (L2 스위치, 10.244.1.1)</text>
+        <rect x="70" y="362" width="420" height="50" rx="8" class="d-fail-box"/>
+        <text x="86" y="384" class="d-subd">netfilter (iptables): kube-proxy DNAT,</text>
+        <text x="86" y="404" class="d-subd">NetworkPolicy 규칙, 노드 eth0 로 라우팅</text>
+        <path d="M140 176 L140 238" class="d-e-user" marker-end="url(#f4-u)"/>
+        <path d="M140 280 L140 298" class="d-e-user" marker-end="url(#f4-u)"/>
+        <path d="M420 298 L420 282" class="d-e-user" marker-end="url(#f4-u)"/>
+        <path d="M420 238 L420 178" class="d-e-user" marker-end="url(#f4-u)"/>
+
+        <rect x="600" y="20" width="560" height="430" rx="12" class="d-pool"/>
+        <text x="620" y="46" class="d-ttl">(나) Cilium 방식 (우리 PoC)</text>
+        <text x="620" y="68" class="d-sub">bridge 없음, veth 마다 eBPF</text>
+        <rect x="620" y="86" width="220" height="90" rx="10" class="d-card"/>
+        <text x="636" y="112" class="d-ttl-s">파드 A netns</text>
+        <text x="636" y="136" class="d-mono">eth0 10.244.1.5</text>
+        <text x="636" y="158" class="d-mono">경로 → 게이트웨이</text>
+        <rect x="900" y="86" width="220" height="90" rx="10" class="d-card"/>
+        <text x="916" y="112" class="d-ttl-s">파드 B netns</text>
+        <text x="916" y="136" class="d-mono">eth0 10.244.1.6</text>
+        <text x="916" y="158" class="d-mono">경로 → 게이트웨이</text>
+        <rect x="620" y="200" width="500" height="230" rx="10" class="d-plain-box"/>
+        <text x="636" y="226" class="d-ttl-s">노드 netns</text>
+        <rect x="650" y="240" width="140" height="40" rx="8" class="d-card"/>
+        <text x="664" y="265" class="d-mono">lxcA (호스트쪽)</text>
+        <rect x="930" y="240" width="140" height="40" rx="8" class="d-card"/>
+        <text x="944" y="265" class="d-mono">lxcB (호스트쪽)</text>
+        <rect x="650" y="300" width="420" height="56" rx="8" class="d-obs-box"/>
+        <text x="666" y="324" class="d-subd">tc 훅의 eBPF (bpf_lxc): 서비스 변환,</text>
+        <text x="666" y="344" class="d-subd">정책 맵 조회, 같은 노드면 바로 넘김</text>
+        <rect x="650" y="372" width="420" height="44" rx="8" class="d-plain-box"/>
+        <text x="666" y="399" class="d-subd">다른 노드면 cilium_vxlan 장치로 (그림 4-3)</text>
+        <path d="M720 176 L720 238" class="d-e-user" marker-end="url(#f4-u)"/>
+        <path d="M720 280 L720 298" class="d-e-user" marker-end="url(#f4-u)"/>
+        <path d="M1000 298 L1000 282" class="d-e-user" marker-end="url(#f4-u)"/>
+        <path d="M1000 238 L1000 178" class="d-e-user" marker-end="url(#f4-u)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-4.</b> 노드 안 배선 두 가지. (가) 는 veth 를 bridge 에 꽂고 iptables 로 걸러 낸다. (나) Cilium 은 bridge 없이 호스트쪽 veth(<code>lxc…</code>)의 tc 훅에 eBPF 프로그램을 붙여, 패킷이 파드를 나서는 첫 지점에서 서비스 변환·정책 판단·전달을 끝낸다. 파란 화살표는 파드 A → 파드 B 길이다.</figcaption>
+  </figure>
+
+  <h4>netfilter 훅과 conntrack 의 자리</h4>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 330" role="img" aria-labelledby="f5-t">
+        <title id="f5-t">netfilter 다섯 훅과 패킷 흐름</title>
+        <defs>
+          <marker id="f5-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <rect x="20" y="60" width="120" height="60" rx="10" class="d-plain-box"/>
+        <text x="36" y="96" class="d-subd">장치로 들어옴</text>
+        <rect x="170" y="50" width="150" height="80" rx="10" class="d-warn-box"/>
+        <text x="186" y="80" class="d-ttl-s">PREROUTING</text>
+        <text x="186" y="104" class="d-mono">conntrack, nat</text>
+        <rect x="350" y="60" width="120" height="60" rx="10" class="d-card"/>
+        <text x="366" y="96" class="d-subd">경로 결정</text>
+        <rect x="500" y="10" width="140" height="70" rx="10" class="d-warn-box"/>
+        <text x="516" y="40" class="d-ttl-s">INPUT</text>
+        <text x="516" y="62" class="d-mono">filter</text>
+        <rect x="500" y="100" width="140" height="70" rx="10" class="d-warn-box"/>
+        <text x="516" y="130" class="d-ttl-s">FORWARD</text>
+        <text x="516" y="152" class="d-mono">filter</text>
+        <rect x="670" y="10" width="130" height="70" rx="10" class="d-card"/>
+        <text x="686" y="40" class="d-subd">노드의</text>
+        <text x="686" y="62" class="d-subd">프로세스</text>
+        <rect x="670" y="190" width="130" height="70" rx="10" class="d-warn-box"/>
+        <text x="686" y="220" class="d-ttl-s">OUTPUT</text>
+        <text x="686" y="242" class="d-mono">nat, filter</text>
+        <rect x="500" y="250" width="160" height="70" rx="10" class="d-warn-box"/>
+        <text x="516" y="280" class="d-ttl-s">POSTROUTING</text>
+        <text x="516" y="302" class="d-mono">nat (SNAT)</text>
+        <rect x="330" y="255" width="140" height="60" rx="10" class="d-plain-box"/>
+        <text x="346" y="291" class="d-subd">장치로 나감</text>
+        <path d="M140 90 L168 90" class="d-e-api" marker-end="url(#f5-a)"/>
+        <path d="M320 90 L348 90" class="d-e-api" marker-end="url(#f5-a)"/>
+        <path d="M470 80 L498 50" class="d-e-api" marker-end="url(#f5-a)"/>
+        <path d="M470 100 L498 130" class="d-e-api" marker-end="url(#f5-a)"/>
+        <path d="M640 45 L668 45" class="d-e-api" marker-end="url(#f5-a)"/>
+        <path d="M735 80 L735 188" class="d-e-api" marker-end="url(#f5-a)"/>
+        <path d="M700 260 L662 280" class="d-e-api" marker-end="url(#f5-a)"/>
+        <path d="M570 170 L570 248" class="d-e-api" marker-end="url(#f5-a)"/>
+        <path d="M500 285 L472 285" class="d-e-api" marker-end="url(#f5-a)"/>
+        <text x="820" y="120" class="d-lbl">kube-proxy 가 쓰는 곳</text>
+        <text x="820" y="144" class="d-sub">PREROUTING·OUTPUT</text>
+        <text x="820" y="164" class="d-sub">nat: KUBE-SERVICES</text>
+        <text x="820" y="188" class="d-sub">POSTROUTING nat:</text>
+        <text x="820" y="208" class="d-sub">KUBE-POSTROUTING</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-5.</b> netfilter 의 다섯 훅. 파드에서 다른 노드로 가는 패킷은 노드 입장에서 PREROUTING → FORWARD → POSTROUTING 을 지나고, 노드의 프로세스(kubelet 등)가 보낸 패킷은 OUTPUT → POSTROUTING 을 지난다. conntrack 은 PREROUTING·OUTPUT 의 가장 앞에서 연결을 식별하고, nat 표의 규칙은 연결의 첫 패킷에서만 평가된다. Cilium 의 eBPF 는 이 훅보다 앞(tc)에서 일을 끝내는 경우가 많다.</figcaption>
+  </figure>
+
+  <pre class="mermaid">
+stateDiagram-v2
+  [*] --> NEW: 첫 패킷 (SYN)
+  NEW --> ESTABLISHED: 반대 방향 답장을 봄
+  ESTABLISHED --> ESTABLISHED: 같은 5-튜플의 패킷
+  ESTABLISHED --> CLOSING: FIN 또는 RST
+  CLOSING --> [*]: 시간 초과로 표에서 지움
+  NEW --> [*]: 답장 없이 시간 초과 (정책 drop 이면 여기)
+  </pre>
+  <p>conntrack 은 연결을 (출발 IP, 출발 포트, 도착 IP, 도착 포트, 프로토콜) 다섯 값으로 식별한다. NetworkPolicy 공식 문서의 "허용된 연결의 답장은 암묵적으로 허용된다" 가 이 표 덕분이다. Cilium 은 커널 netfilter conntrack 대신 <b>자기 eBPF 맵에 연결 추적 표</b> 를 따로 둔다 (7절). 정책에 막혀 SYN 이 버려지면 연결은 NEW 에서 더 나아가지 못하고, 보낸 쪽은 거절(RST)도 받지 못한 채 재전송만 하다 시간 초과가 된다. 그래서 막힌 연결이 "Connection refused" 가 아니라 <b>타임아웃</b> 으로 보인다 (test-isolation.sh 가 3초를 기준으로 BLOCKED 를 판정하는 이유).</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>kind 노드에서 직접 확인하는 법과 패킷 경로 의사코드</h3>
+  <p>kind 노드는 컨테이너라서 <code>docker exec</code> 로 노드 netns 에 들어갈 수 있다. 04 <code>setup.sh</code> 가 레지스트리 설정을 노드마다 넣을 때 쓰는 방식과 같다.</p>
+  <div class="code-head"><span>poc/04-faas-runtime/scripts/setup.sh</span><span>발췌 (노드 = 컨테이너)</span></div>
+  <pre><code><span class="k">for</span> n <span class="k">in</span> $(kind get nodes --name "$CLUSTER"); <span class="k">do</span>
+  <span class="k">for</span> r <span class="k">in</span> kind-registry:5000 localhost:5001; <span class="k">do</span>
+    docker exec "$n" mkdir -p "/etc/containerd/certs.d/$r"
+    printf '[host."http://kind-registry:5000"]\n  capabilities = ["pull", "resolve"]\n' |
+      docker exec -i "$n" cp /dev/stdin "/etc/containerd/certs.d/$r/hosts.toml"
+  <span class="k">done</span>
+<span class="k">done</span></code></pre>
+  <ul>
+    <li><code>kind get nodes</code>: 노드 = Docker 컨테이너 이름 목록 (faas-control-plane, faas-worker, faas-worker2, faas-worker3).</li>
+    <li><code>docker exec "$n" …</code>: 그 노드 컨테이너의 namespace 들 안에서 명령을 돈다. 같은 방법으로 <code>ip link</code>, <code>ip route</code>, <code>iptables-save</code> 를 볼 수 있다.</li>
+  </ul>
+  <div class="code-head"><span>확인 명령 (맥, 읽기만)</span><span>예시</span></div>
+  <pre><code>docker exec faas-worker3 ip -br link | grep -E 'lxc|cilium'
+<span class="c"># lxc…@if… = 파드 veth 의 호스트쪽 끝. cilium_host, cilium_net, cilium_vxlan = Cilium 이 만든 장치</span>
+docker exec faas-worker3 ip route
+<span class="c"># 10.244.x.0/24 via … dev cilium_host 같은 줄: 다른 노드 파드 대역은 Cilium 장치로</span>
+docker exec faas-control-plane sh -c 'iptables-save -t nat | grep -c KUBE-'
+<span class="c"># kube-proxy 가 만든 nat 규칙 수. 0 이 아니면 kube-proxy 가 살아 있다 (4절)</span>
+kubectl -n tenant-a exec iso-client -- cat /proc/net/route
+<span class="c"># 파드 netns 의 경로표. 기본 경로 하나뿐이다</span></code></pre>
+  <pre class="pseudo"><code><span class="c">// 같은 노드의 파드 A → 파드 B (Cilium)</span>
+파드A 프로세스 send() → 파드A netns 의 IP 스택 → eth0
+  → veth 반대편 lxcA 에 도착 → <span class="k">tc ingress 훅</span>(bpf_lxc "파드에서 나감")
+      서비스 IP 면 백엔드로 DNAT (4절)
+      목적지 identity = ipcache 조회
+      <span class="k">파드A 의 egress 정책</span> 맵 조회 → 거부면 DROP + Hubble 이벤트
+      conntrack 맵 갱신
+      목적지가 이 노드의 엔드포인트면 → <span class="k">파드B 의 ingress 정책</span> 검사 → lxcB 로 바로 넘김
+  → 파드B eth0 → 파드B 프로세스 recv()
+<span class="c">// bridge 방식이면: lxcA → cni0 스위칭 → (br_netfilter 로) iptables FORWARD 체인 규칙 순서대로 → vethB</span></code></pre>
+  <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+  <p>Cilium 이 붙인 파드 veth 의 호스트쪽 이름은 <code>lxc</code> 로 시작한다. 노드에는 <code>cilium_host</code>/<code>cilium_net</code>(노드와 Cilium 경로를 잇는 veth 쌍)과 <code>cilium_vxlan</code>(터널 장치)이 생긴다. kube-proxy 도 살아 있어서 각 노드에 KUBE- iptables 규칙이 있다 (4절에서 이 둘이 어떻게 나눠 일하는지 본다).</p></aside>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+  <p><b>증상</b>: 파드는 Running 인데 <code>kubectl exec</code> 로 들어가 보면 <code>eth0</code> 이 없거나 IP 가 없다. <b>볼 곳</b>: <code>kubectl describe pod</code> 이벤트의 <code>FailedCreatePodSandBox ... failed to setup network for sandbox</code>, 그 노드의 cilium 파드 로그. <b>원인</b>: CNI ADD 실패 (3절). <b>고치기</b>: Cilium 에이전트가 그 노드에서 Ready 인지(<code>cilium status</code>) 먼저 본다.</p></aside>
+  <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
+  <p>bridge + iptables 방식은 규칙이 체인 안에서 위에서 아래로 차례로 평가된다. 서비스·정책이 늘면 규칙 수가 늘고, 하나 바꿀 때 표 전체를 다시 쓰는 일이 생긴다. Cilium 의 veth 별 eBPF 는 해시 맵을 한 번 찾아 결정한다. 이 PoC 규모에선 차이를 재지 않았다 (03 README 1.5 【추정】). 고른 이유는 성능보다 Hubble·L7·identity 기반 정책이다 (정리 절 결정 표).</p></aside>
+  <aside class="callout fact"><p class="callout-title">공식 문서</p>
+  <p><a href="https://man7.org/linux/man-pages/man7/network_namespaces.7.html">man7: network_namespaces(7)</a> · <a href="https://man7.org/linux/man-pages/man4/veth.4.html">man7: veth(4)</a> · <a href="https://www.netfilter.org/documentation/">netfilter.org 문서</a> · <a href="https://docs.cilium.io/en/stable/network/ebpf/intro/">Cilium: eBPF Datapath 소개</a> · <a href="https://docs.cilium.io/en/stable/network/ebpf/lifeofapacket/">Cilium: Life of a Packet</a></p></aside>
+</div>
+
+<h2 id="cni">3. CNI 와 파드가 생길 때 일어나는 일 (kind 에서 kindnet 대신 Cilium)</h2>
+
+<div class="tier" data-tier="1">
+  <h3>CNI 는 "규격 + 실행 파일" 이다</h3>
+  <p>CNI(Container Network Interface)는 컨테이너 런타임과 네트워크 플러그인 사이의 <b>약속 문서</b> 다. 내용은 단순하다. 런타임(우리는 kind 노드 안의 containerd)이 파드용 network namespace 를 만든 뒤, 노드 디스크의 설정 파일(<code>/etc/cni/net.d/*.conflist</code>)이 가리키는 플러그인 <b>실행 파일</b>(<code>/opt/cni/bin/…</code>)을 환경 변수와 표준 입력(JSON)으로 부른다. 플러그인은 그 netns 에 인터페이스를 만들고 IP 를 주고, 결과를 JSON 으로 돌려준다. 이게 전부다.</p>
+  <p>그래서 "CNI 를 바꾼다" 는 것은 노드의 <code>/etc/cni/net.d</code> 에 어떤 설정 파일이 있고 그게 어떤 실행 파일을 부르느냐를 바꾸는 일이다. Cilium 은 DaemonSet 파드가 뜨면서 이 두 파일을 노드에 깔아 넣는다.</p>
+  <p>kind 는 기본으로 자기 CNI 인 <b>kindnet</b> 을 깐다. 03 단계 <code>kind-config.yaml</code> 의 <code>disableDefaultCNI: true</code> 는 "kindnet 을 깔지 마" 라는 뜻이다. 그러면 클러스터가 처음 뜰 때 노드에 CNI 설정이 없어서 <b>노드가 NotReady</b> 로 보인다. 고장이 아니라 "파드 네트워크를 만들 사람이 아직 없다" 는 정상 상태이고, <code>cilium install</code> 이 끝나면 Ready 로 바뀐다 (RUN-ALL.md 의 platform 기대 출력이 이 모습이다).</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>파드 하나가 IP 를 받기까지</h3>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 470" role="img" aria-labelledby="f6-t">
+        <title id="f6-t">노드 위 CNI 부품 배치: kubelet, containerd, cilium-cni, cilium-agent</title>
+        <defs>
+          <marker id="f6-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f6-p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+        </defs>
+        <rect x="20" y="20" width="920" height="430" rx="12" class="d-pool"/>
+        <text x="40" y="46" class="d-lbl">kind 노드 하나 (Docker 컨테이너 faas-worker3)</text>
+        <rect x="40" y="64" width="190" height="80" rx="12" class="d-cp-box"/>
+        <text x="56" y="94" class="d-ttl-s">kubelet</text>
+        <text x="56" y="118" class="d-sub">파드를 띄우라 지시</text>
+        <rect x="290" y="64" width="210" height="80" rx="12" class="d-card"/>
+        <text x="306" y="94" class="d-ttl-s">containerd (CRI)</text>
+        <text x="306" y="118" class="d-sub">샌드박스·netns 생성</text>
+        <rect x="560" y="64" width="360" height="80" rx="12" class="d-plain-box"/>
+        <text x="576" y="94" class="d-ttl-s">노드 디스크</text>
+        <text x="576" y="118" class="d-mono">/etc/cni/net.d/05-cilium.conflist</text>
+        <text x="576" y="136" class="d-mono">/opt/cni/bin/cilium-cni</text>
+        <rect x="290" y="200" width="210" height="80" rx="12" class="d-prov-box"/>
+        <text x="306" y="230" class="d-ttl-s">cilium-cni</text>
+        <text x="306" y="254" class="d-sub">ADD/DEL 받는 실행 파일</text>
+        <rect x="560" y="200" width="360" height="110" rx="12" class="d-agent"/>
+        <text x="576" y="230" class="d-ttl-s">cilium-agent (DaemonSet 파드)</text>
+        <text x="576" y="254" class="d-sub">IP 배정 (ipam=kubernetes: 노드 podCIDR)</text>
+        <text x="576" y="276" class="d-sub">veth 생성, eBPF 붙이기, 엔드포인트 등록</text>
+        <text x="576" y="296" class="d-mono">/var/run/cilium/cilium.sock</text>
+        <rect x="40" y="340" width="460" height="90" rx="12" class="d-card"/>
+        <text x="56" y="370" class="d-ttl-s">새 파드 netns (pause 컨테이너가 붙잡음)</text>
+        <text x="56" y="394" class="d-mono">eth0 10.244.3.21/32 ↔ lxc1a2b (노드쪽)</text>
+        <text x="56" y="414" class="d-sub">이후 앱 컨테이너들이 이 netns 에 합류</text>
+        <path d="M230 104 L288 104" class="d-e-api" marker-end="url(#f6-a)"/>
+        <text x="236" y="94" class="d-lbl">CRI</text>
+        <path d="M500 104 L558 104" class="d-e-api" marker-end="url(#f6-a)"/>
+        <path d="M395 144 L395 198" class="d-e-api" marker-end="url(#f6-a)"/>
+        <text x="404" y="176" class="d-mono">CNI_COMMAND=ADD</text>
+        <path d="M500 240 L558 240" class="d-e-api" marker-end="url(#f6-a)"/>
+        <path d="M640 310 L470 338" class="d-e-prov" marker-end="url(#f6-p)"/>
+        <text x="560" y="346" class="d-lbl">netns 안을 배선</text>
+        <path d="M340 144 L200 338" class="d-e-api" marker-end="url(#f6-a)"/>
+        <text x="150" y="250" class="d-lbl">netns 생성</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-6.</b> 노드 위 CNI 부품. kubelet 은 CRI 로 containerd 에 "샌드박스를 만들어" 라고만 하고, containerd 가 netns 를 만든 뒤 설정 파일이 가리키는 <code>cilium-cni</code> 를 <code>CNI_COMMAND=ADD</code> 로 실행한다. 실제 일(IP 배정, veth, eBPF)은 cilium-cni 가 유닉스 소켓으로 부르는 cilium-agent 가 한다. 파일 이름은 Cilium 기본값 기준이다 【확인 필요: <code>docker exec faas-worker3 ls /etc/cni/net.d</code>】.</figcaption>
+  </figure>
+
+  <pre class="mermaid">
+sequenceDiagram
+  participant S as 스케줄러
+  participant K as kubelet
+  participant C as containerd
+  participant P as cilium-cni
+  participant A as cilium-agent
+  S->>K: 파드를 이 노드에 배정 (API 서버 경유)
+  K->>C: RunPodSandbox (CRI)
+  C->>C: netns 생성, pause 컨테이너 시작
+  C->>P: 실행 CNI_COMMAND=ADD, stdin=conflist
+  P->>A: 엔드포인트 만들어 줘 (cilium.sock)
+  A->>A: IPAM 에서 IP 하나 할당
+  A->>A: veth 생성, 한쪽을 파드 netns 로
+  A->>A: 라벨로 identity 정함, 정책 맵과 eBPF 준비
+  A-->>P: IP, 게이트웨이, 경로
+  P-->>C: 결과 JSON (interfaces, ips, routes)
+  C-->>K: 샌드박스 준비 완료
+  K->>C: 이미지 받기, 앱 컨테이너 시작 (같은 netns)
+  </pre>
+
+  <h4>왜 CNI 를 깔기 전에는 노드가 NotReady 인가</h4>
+  <pre class="mermaid">
+stateDiagram-v2
+  [*] --> NotReady: kind create cluster
+  NotReady --> NotReady: containerd 가 NetworkReady=false 보고 (CNI 설정 없음)
+  NotReady --> Ready: cilium 파드가 conflist 와 cilium-cni 를 노드에 설치
+  Ready --> NotReady: 설정 파일이 사라지거나 kubelet 이 멈춤
+  Ready --> [*]
+  </pre>
+  <p>kubelet 은 노드 상태를 보고할 때 컨테이너 런타임의 상태(<code>RuntimeReady</code>, <code>NetworkReady</code>)를 함께 본다. containerd 의 CRI 플러그인은 CNI 설정 디렉터리에 쓸 만한 설정이 없으면 <code>NetworkReady=false</code>(사유 <code>NetworkPluginNotReady</code>, "cni plugin not initialized")를 내고, kubelet 은 노드 조건 Ready 를 False 로 둔다. 이 상태에서는 <code>hostNetwork: true</code> 파드(노드 네트워크를 그대로 쓰는 파드. kube-proxy, cilium 에이전트 자신)만 뜰 수 있고, CoreDNS 같은 일반 파드는 Pending 으로 기다린다. Cilium 에이전트가 hostNetwork 파드이기 때문에 이 닭과 달걀 문제가 풀린다.</p>
+
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1180 440" role="img" aria-labelledby="f7-t">
+        <title id="f7-t">맥 Docker Desktop 위의 kind 클러스터 배치와 포트 연결</title>
+        <defs>
+          <marker id="f7-u" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+          <marker id="f7-p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+        </defs>
+        <rect x="20" y="20" width="230" height="400" rx="12" class="d-card"/>
+        <text x="38" y="50" class="d-ttl">맥 호스트</text>
+        <text x="38" y="88" class="d-mono">localhost:8081</text>
+        <text x="38" y="108" class="d-sub">Kourier 입구</text>
+        <text x="38" y="150" class="d-mono">127.0.0.1:5001</text>
+        <text x="38" y="170" class="d-sub">kind-registry</text>
+        <text x="38" y="212" class="d-mono">localhost:8080·8090</text>
+        <text x="38" y="232" class="d-sub">port-forward (API 경유)</text>
+        <text x="38" y="274" class="d-mono">API 서버 포트</text>
+        <text x="38" y="294" class="d-sub">kind 가 임의로 연결</text>
+        <rect x="290" y="20" width="870" height="400" rx="12" class="d-pool"/>
+        <text x="310" y="46" class="d-lbl">Docker Desktop 리눅스 VM · Docker 네트워크 "kind" (172.18.0.0/16 예시)</text>
+        <rect x="310" y="66" width="260" height="150" rx="12" class="d-cp-box"/>
+        <text x="326" y="94" class="d-ttl-s">faas-control-plane</text>
+        <text x="326" y="118" class="d-mono">containerPort 31080</text>
+        <text x="326" y="138" class="d-mono">hostPort 8081</text>
+        <text x="326" y="166" class="d-sub">API 서버, etcd, 스케줄러</text>
+        <text x="326" y="188" class="d-sub">kube-proxy, cilium-agent</text>
+        <rect x="600" y="66" width="260" height="150" rx="12" class="d-card"/>
+        <text x="616" y="94" class="d-ttl-s">faas-worker (system)</text>
+        <text x="616" y="122" class="d-sub">Kourier, Knative, CoreDNS</text>
+        <text x="616" y="144" class="d-sub">Argo CD, Prometheus</text>
+        <text x="616" y="166" class="d-sub">hubble-relay, hubble-ui</text>
+        <text x="616" y="188" class="d-sub">cilium-agent</text>
+        <rect x="890" y="66" width="250" height="150" rx="12" class="d-card"/>
+        <text x="906" y="94" class="d-ttl-s">faas-worker2 (build)</text>
+        <text x="906" y="122" class="d-sub">kaniko Job</text>
+        <text x="906" y="144" class="d-mono">pool=build:NoSchedule</text>
+        <text x="906" y="188" class="d-sub">cilium-agent</text>
+        <rect x="600" y="240" width="260" height="150" rx="12" class="d-card"/>
+        <text x="616" y="268" class="d-ttl-s">faas-worker3 (exec)</text>
+        <text x="616" y="296" class="d-sub">Knative 함수 파드</text>
+        <text x="616" y="318" class="d-mono">pool=exec:NoSchedule</text>
+        <text x="616" y="340" class="d-sub">runsc (gVisor)</text>
+        <text x="616" y="362" class="d-sub">cilium-agent</text>
+        <rect x="310" y="240" width="260" height="150" rx="12" class="d-prov-box"/>
+        <text x="326" y="268" class="d-ttl-s">kind-registry (registry:2)</text>
+        <text x="326" y="296" class="d-mono">컨테이너 포트 5000</text>
+        <text x="326" y="320" class="d-sub">bridge 망 + kind 망 둘 다</text>
+        <text x="326" y="342" class="d-sub">이름 kind-registry 로 보임</text>
+        <rect x="890" y="240" width="250" height="150" rx="12" class="d-plain-box"/>
+        <text x="906" y="268" class="d-ttl-s">Docker 내장 DNS</text>
+        <text x="906" y="296" class="d-mono">127.0.0.11:53</text>
+        <text x="906" y="320" class="d-sub">컨테이너 이름 → IP</text>
+        <text x="906" y="342" class="d-sub">사용자 정의 망에서만</text>
+        <path d="M250 98 L308 112" class="d-e-user" marker-end="url(#f7-u)"/>
+        <path d="M250 160 L308 290" class="d-e-prov" marker-end="url(#f7-p)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-7.</b> 맥 위 kind 배치. 노드 4대와 레지스트리가 모두 Docker 네트워크 <code>kind</code> 에 붙은 형제 컨테이너다. 맥 8081 은 kind 의 <code>extraPortMappings</code> 로 control-plane 컨테이너의 31080 에, 맥 5001 은 <code>docker run -p 127.0.0.1:5001:5000</code> 으로 레지스트리에 연결된다. 사용자 정의 Docker 망에서는 Docker 내장 DNS 가 컨테이너 이름을 풀어 준다 (5절에서 파드가 이걸 쓰는 길을 본다).</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>CNI 규격 세부 (spec 1.1.0)</h3>
+  <h4>연산</h4>
+  <div class="table-wrap"><table>
+  <thead><tr><th>CNI_COMMAND</th><th>뜻</th><th>규칙</th></tr></thead>
+  <tbody>
+  <tr><td><code>ADD</code></td><td>컨테이너를 망에 붙인다 (인터페이스, IP, 경로)</td><td>conflist 의 <code>plugins</code> 를 <b>앞에서부터</b> 차례로 실행. 두 번째부터는 앞 플러그인 결과를 <code>prevResult</code> 로 받는다. 하나라도 에러면 멈춘다. 런타임은 마지막 결과를 저장해 둔다</td></tr>
+  <tr><td><code>DEL</code></td><td>붙인 것을 걷어 낸다</td><td>플러그인을 <b>거꾸로</b> 실행. ADD 가 실패했어도 DEL 은 반드시 불린다. 여러 번 불려도 안전해야 한다(멱등)</td></tr>
+  <tr><td><code>CHECK</code></td><td>붙인 상태가 아직 맞나 확인</td><td>ADD 때와 같은 파라미터로. 0.4.0 에서 추가</td></tr>
+  <tr><td><code>STATUS</code></td><td>플러그인이 새 ADD 를 받을 준비가 됐나</td><td>1.1.0 에서 추가. 정보용이며 런타임이 꼭 부를 필요는 없다</td></tr>
+  <tr><td><code>GC</code></td><td>남은 찌꺼기(사라진 컨테이너의 IP 등) 청소</td><td>1.1.0 에서 추가. 진행 중인 ADD/DEL 과 동시에 돌지 않는다</td></tr>
+  <tr><td><code>VERSION</code></td><td>지원하는 규격 버전 묻기</td><td>플러그인이 버전 목록을 답한다</td></tr>
+  </tbody></table></div>
+  <p>함께 넘기는 환경 변수: <code>CNI_CONTAINERID</code>(컨테이너 ID), <code>CNI_NETNS</code>(netns 경로, 예 <code>/var/run/netns/cni-…</code>), <code>CNI_IFNAME</code>(파드 안 인터페이스 이름, 보통 <code>eth0</code>), <code>CNI_ARGS</code>(<code>K8S_POD_NAMESPACE=…;K8S_POD_NAME=…</code> 같은 키=값), <code>CNI_PATH</code>(플러그인 실행 파일 찾을 경로). 붙인 것 하나(attachment)는 <code>(CNI_CONTAINERID, CNI_IFNAME)</code> 쌍으로 식별된다. 런타임은 같은 컨테이너에 대해 동시에 두 연산을 부르지 않지만, 다른 컨테이너끼리는 동시에 부를 수 있어서 플러그인은 IPAM 같은 공유 자원에 잠금을 걸어야 한다.</p>
+  <h4>플러그인 체이닝과 IPAM 위임</h4>
+  <ul>
+    <li><b>체이닝(chaining)</b>: 하나의 conflist 에 플러그인을 여러 개 줄 세운다. 예: 주 플러그인(인터페이스·IP) → <code>portmap</code>(hostPort) → <code>bandwidth</code>(속도 제한). Cilium 은 다른 CNI 위에 정책만 얹는 "chaining 모드" 도 지원한다 (AWS VPC CNI + Cilium 정책 같은 조합).</li>
+    <li><b>IPAM 위임</b>: 주 플러그인이 IP 배정만 다른 플러그인(<code>host-local</code>, <code>dhcp</code> 등)에 맡길 수 있다. 위임받은 플러그인도 같은 규격으로 실행된다. Cilium 은 IPAM 을 에이전트 안에서 직접 한다 (모드: <code>cluster-pool</code> 기본, kind 에서는 CLI 가 <code>kubernetes</code> 로 바꿈, 클라우드는 <code>eni</code>·<code>azure</code> 등).</li>
+  </ul>
+  <div class="code-head"><span>/etc/cni/net.d/05-cilium.conflist (노드 위, Cilium 이 씀)</span><span>모양 예시 【확인 필요】</span></div>
+  <pre><code>{
+  <span class="k">"cniVersion"</span>: <span class="s">"0.3.1"</span>,
+  <span class="k">"name"</span>: <span class="s">"cilium"</span>,
+  <span class="k">"plugins"</span>: [
+    { <span class="k">"type"</span>: <span class="s">"cilium-cni"</span>, <span class="k">"enable-debug"</span>: false, <span class="k">"log-file"</span>: <span class="s">"/var/run/cilium/cilium-cni.log"</span> }
+  ]
+}</code></pre>
+  <p>체인에 플러그인이 하나뿐이다. IP 배정·veth·eBPF 를 모두 cilium-cni 가 에이전트에 맡기기 때문이다. 정확한 내용은 노드에서 <code>docker exec faas-worker3 cat /etc/cni/net.d/05-cilium.conflist</code> 로 확인한다.</p>
+
+  <h4>우리 PoC 파일</h4>
+  <div class="code-head"><span>poc/04-faas-runtime/cluster/kind-config.yaml</span><span>발췌</span></div>
+  <pre><code><span class="k">kind</span>: Cluster
+<span class="k">apiVersion</span>: kind.x-k8s.io/v1alpha4
+<span class="k">name</span>: faas
+<span class="k">networking</span>:
+  <span class="c"># 3단계와 같다: kindnet 을 빼고 Cilium. 3단계를 건너뛰고 이 단계만 하면 false 로 (이 단계 검증은 false 로 했다)</span>
+  <span class="k">disableDefaultCNI</span>: true
+<span class="k">nodes</span>:
+  - <span class="k">role</span>: control-plane
+    <span class="k">image</span>: kindest/node:v1.37.0
+    <span class="k">extraPortMappings</span>:
+      <span class="c"># 맥 8081 → 노드 31080 (setup.sh 가 Kourier Service 를 NodePort 31080 으로 바꾼다).</span>
+      - <span class="k">containerPort</span>: 31080
+        <span class="k">hostPort</span>: 8081
+        <span class="k">protocol</span>: TCP</code></pre>
+  <ul>
+    <li><code>disableDefaultCNI: true</code>: kind 가 kindnet 매니페스트를 적용하지 않는다. 노드에 CNI 설정이 없으니 NotReady 로 시작.</li>
+    <li><code>podSubnet</code>·<code>serviceSubnet</code>·<code>kubeProxyMode</code> 를 적지 않았다: kind 기본값(파드 10.244.0.0/16, 서비스 10.96.0.0/16, kube-proxy iptables 모드)을 쓴다. kube-proxy 가 남는다는 점이 4절의 열쇠다.</li>
+    <li><code>extraPortMappings</code>: Docker 의 포트 공개(<code>-p 8081:31080</code>)와 같다. control-plane 컨테이너에만 걸었으니 맥 8081 은 이 노드의 31080 으로만 들어간다 (11절).</li>
+  </ul>
+  <div class="code-head"><span>poc/04-faas-runtime/scripts/rebuild-cluster.sh</span><span>발췌</span></div>
+  <pre><code>step "2/6 새 클러스터 (노드 풀 라벨 + taint)"
+kind create cluster --config "$ROOT/poc/04-faas-runtime/cluster/kind-config.yaml"
+kubectl get nodes -L pool
+<span class="k">if</span> [ "${NO_CILIUM:-0}" != "1" ]; <span class="k">then</span>
+  step "3/6 Cilium + Hubble (3단계와 같음)"
+  cilium install --version "$CILIUM_VERSION"          <span class="c"># 1.20.3</span>
+  cilium status --wait --wait-duration 5m
+  cilium hubble enable --ui
+  cilium status --wait --wait-duration 5m
+<span class="k">else</span>
+  step "3/6 Cilium 건너뜀 (kindnet)"
+<span class="k">fi</span>
+kubectl wait --for=condition=Ready nodes --all --timeout=180s</code></pre>
+  <ul>
+    <li><code>cilium install</code>: Helm 차트를 CLI 가 대신 설치한다. 클러스터 종류(kind)를 알아보고 값을 고른다: <code>ipam.mode=kubernetes</code>, 터널 데이터패스, 오퍼레이터 복제 1. kube-proxy DaemonSet 이 있는지도 본다 (4절).</li>
+    <li><code>cilium status --wait</code>: 에이전트 DaemonSet·오퍼레이터가 다 뜰 때까지. 이때 노드가 Ready 가 된다.</li>
+    <li><code>cilium hubble enable --ui</code>: hubble-relay 와 hubble-ui 를 추가로 켠다 (10절).</li>
+    <li><code>kubectl wait --for=condition=Ready nodes --all</code>: 노드 4대가 Ready 인지 마지막 확인. NO_CILIUM 경로(kindnet)에서도 이 줄은 돈다.</li>
+  </ul>
+  <pre class="pseudo"><code><span class="k">함수</span> CNI_ADD(containerID, netns, ifname, args):
+  ep = agent.엔드포인트_만들기(pod = args.K8S_POD_NAMESPACE/args.K8S_POD_NAME)
+  ip = IPAM.할당(노드.podCIDR)                 <span class="c">// 잠금 필요: 동시에 여러 파드</span>
+  (host_veth, pod_veth) = veth쌍_생성("lxc" + 해시, ifname)
+  pod_veth 를 netns 로 옮기고 ip/32 와 기본 경로(게이트웨이=cilium_host) 설정
+  identity = 라벨로_identity_구함(파드라벨 + namespace 라벨)   <span class="c">// 7절</span>
+  host_veth 의 tc 훅에 bpf_lxc 프로그램 붙이기 (이 엔드포인트 전용 상수로 컴파일 또는 재사용)
+  정책 맵 = 이 identity 에 적용되는 규칙으로 채움
+  <span class="k">반환</span> {interfaces:[ifname], ips:[ip], routes:[0.0.0.0/0]}
+<span class="k">함수</span> CNI_DEL(containerID, ...):
+  엔드포인트 지우기, IP 반납, veth 삭제   <span class="c">// 이미 없으면 성공으로 (멱등)</span></code></pre>
+
+  <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+  <p>03·04 의 kind-config 는 둘 다 <code>disableDefaultCNI: true</code> 다. run-all.sh 의 platform 단계(04 rebuild-cluster.sh) 출력에서 노드 4대가 <code>NotReady</code> 로 찍히는 것이 정상이고, 3/6 단계 뒤에 Ready 가 된다. Cilium 버전은 <code>CILIUM_VERSION=1.20.3</code> (03·04 스크립트 공통).</p></aside>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+  <p><b>증상 1</b>: 노드가 몇 분째 NotReady, CoreDNS 가 Pending. <b>볼 곳</b>: <code>kubectl describe node faas-worker | grep -A3 Ready</code> 의 "cni plugin not initialized", <code>cilium status</code>. <b>원인</b>: Cilium 이 아직 안 깔렸거나 에이전트가 메모리 부족으로 못 떴다 (RUN-ALL.md 4절 1번). <b>고치기</b>: Docker Desktop 메모리 10GB 이상, <code>kubectl -n kube-system logs ds/cilium -c cilium-agent</code>.<br><b>증상 2</b>: <code>disableDefaultCNI: false</code> 인데 Cilium 도 깔았다. <b>보이는 것</b>: 두 CNI 가 <code>/etc/cni/net.d</code> 에 같이 있어 이름 순으로 앞선 파일이 쓰이고, 일부 파드는 kindnet, 일부는 Cilium 으로 붙는 혼란. <b>고치기</b>: 클러스터를 지우고 다시 만든다. CNI 는 클러스터를 만들 때 고르는 것이다.</p></aside>
+  <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
+  <p>kindnet 은 가장 단순하고, kind v0.24 부터는 kube-network-policies 로 표준 NetworkPolicy 도 집행한다 (03 README 1.5, 06 <code>standin/kind-config.yaml</code> 주석). 그래도 Cilium 으로 바꾼 이유는 Hubble 로 "왜 버려졌나" 를 증거로 보여 주고, L7·identity 정책을 설명할 거리가 있기 때문이다. 대가는 클러스터 재생성이다 (CNI 는 나중에 갈아 끼우기 어렵다).</p></aside>
+  <aside class="callout warn"><p class="callout-title">주의: 레포 안의 엇갈린 설명</p>
+  <p><code>poc/03-tenant-isolation/cluster/kind-config.yaml</code> 머리 주석은 "kindnet 은 NetworkPolicy 를 강제하지 않아서" 라고 쓰지만, 같은 단계 README 1.5 는 이를 "최신 kind 기준으로 틀린 말" 이라고 고쳐 적었다. 06 대역(<code>standin/kind-config.yaml</code>)도 kindnet 이 집행한다고 쓴다. 다만 06 의 실측에서는 클라우드 컨테이너 커널이 kindnet 의 nftables 구현을 못 돌려서 정책이 무시됐다 (12절). 정리하면 "kindnet 도 집행한다. 단 커널이 받쳐 줄 때" 다.</p></aside>
+  <aside class="callout fact"><p class="callout-title">공식 문서</p>
+  <p><a href="https://github.com/containernetworking/cni/blob/main/SPEC.md">CNI Specification (1.1.0)</a> · <a href="https://kubernetes.io/docs/concepts/extend-kubernetes/compute-storage-net/network-plugins/">Kubernetes: Network Plugins</a> · <a href="https://kind.sigs.k8s.io/docs/user/configuration/#disable-default-cni">kind: Disable Default CNI</a> · <a href="https://docs.cilium.io/en/stable/installation/kind/">Cilium: Installation Using Kind</a> · <a href="https://docs.cilium.io/en/stable/installation/cni-chaining/">Cilium: CNI Chaining</a></p></aside>
+</div>
+
+<h2 id="service">4. Service: ClusterIP·NodePort·LoadBalancer, kube-proxy 와 Cilium</h2>
+
+<div class="tier" data-tier="1">
+  <h3>Service 는 "움직이는 파드 앞의 고정 주소" 다</h3>
+  <p>파드 IP 는 파드가 다시 뜰 때마다 바뀐다. Knative 함수 파드는 0개와 N개를 오가니 더하다. <b>Service</b> 는 라벨 선택자로 고른 파드 묶음 앞에 <b>바뀌지 않는 가상 IP(ClusterIP)와 DNS 이름</b> 을 붙인다. 가상 IP 는 어떤 장치에도 실제로 붙어 있지 않다. 그 주소로 가는 패킷을 누군가 중간에서 진짜 파드 IP 로 바꿔(DNAT) 줘야 한다. 그 "누군가" 가 각 노드의 <b>kube-proxy</b>(iptables·ipvs·nftables 규칙)이거나, Cilium 같은 CNI 의 <b>eBPF 서비스 처리</b> 다.</p>
+  <dl class="terms">
+    <dt>ClusterIP (기본)</dt><dd>클러스터 안에서만 닿는 가상 IP. kind 기본 대역 10.96.0.0/16 에서 받는다. 예: <code>iso-echo.tenant-b</code>, <code>kube-dns</code>(10.96.0.10).</dd>
+    <dt>NodePort</dt><dd>ClusterIP 에 더해, <b>모든 노드</b> 의 같은 포트(기본 범위 30000~32767)로 들어온 것을 서비스로 보낸다. 우리 Kourier 입구가 31080.</dd>
+    <dt>LoadBalancer</dt><dd>NodePort 에 더해, 클라우드의 외부 로드밸런서를 붙인다 (클라우드 컨트롤러가 만들어 줌). kind 에는 이걸 만들어 줄 사람이 없어서 Kourier 를 NodePort 로 바꿨다.</dd>
+    <dt>EndpointSlice</dt><dd>Service 가 고른 파드들의 실제 IP·포트·준비 상태 목록. 컨트롤러가 파드 변화를 보고 갱신하고, kube-proxy 와 Cilium 은 이걸 읽어 규칙을 만든다.</dd>
+  </dl>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 400" role="img" aria-labelledby="f8-t">
+        <title id="f8-t">Service 종류의 포함 관계와 EndpointSlice</title>
+        <defs>
+          <marker id="f8-u" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+          <marker id="f8-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <rect x="20" y="20" width="560" height="360" rx="12" class="d-pool"/>
+        <text x="40" y="46" class="d-ttl-s">LoadBalancer</text>
+        <text x="160" y="46" class="d-sub">외부 LB → 노드들의 NodePort (kind 엔 없음)</text>
+        <rect x="40" y="62" width="520" height="300" rx="12" class="d-user-box"/>
+        <text x="60" y="90" class="d-ttl-s">NodePort</text>
+        <text x="150" y="90" class="d-sub">모든 노드:31080 → 아래 ClusterIP 규칙</text>
+        <rect x="60" y="106" width="480" height="236" rx="12" class="d-card"/>
+        <text x="80" y="134" class="d-ttl-s">ClusterIP</text>
+        <text x="170" y="134" class="d-mono">kourier 10.96.x.y:80</text>
+        <text x="80" y="164" class="d-sub">가상 IP:포트 → 백엔드 파드 IP:targetPort 로 DNAT</text>
+        <rect x="80" y="184" width="440" height="138" rx="10" class="d-obs-box"/>
+        <text x="96" y="210" class="d-ttl-s">EndpointSlice (kourier-xxxxx)</text>
+        <text x="96" y="236" class="d-mono">10.244.1.12:8080  ready=true</text>
+        <text x="96" y="258" class="d-mono">(파드가 늘면 줄이 는다)</text>
+        <text x="96" y="290" class="d-sub">컨트롤러가 파드 라벨·준비 상태를 보고 갱신</text>
+        <text x="96" y="310" class="d-sub">kube-proxy·Cilium 이 이걸 읽어 규칙·맵을 만든다</text>
+        <rect x="640" y="60" width="300" height="130" rx="12" class="d-card"/>
+        <text x="658" y="90" class="d-ttl-s">맥 curl</text>
+        <text x="658" y="116" class="d-mono">localhost:8081</text>
+        <text x="658" y="140" class="d-sub">→ control-plane 노드 31080</text>
+        <text x="658" y="162" class="d-sub">(extraPortMappings)</text>
+        <rect x="640" y="230" width="300" height="130" rx="12" class="d-cp-box"/>
+        <text x="658" y="260" class="d-ttl-s">Kourier 파드 (Envoy)</text>
+        <text x="658" y="286" class="d-mono">10.244.1.12:8080</text>
+        <text x="658" y="310" class="d-sub">kourier-system, system 노드</text>
+        <path d="M640 126 L562 100" class="d-e-user" marker-end="url(#f8-u)"/>
+        <path d="M520 254 L638 290" class="d-e-user" marker-end="url(#f8-u)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-8.</b> Service 종류는 겹겹이 포함된다. LoadBalancer 는 NodePort 를, NodePort 는 ClusterIP 를 품는다. 실제 목적지는 EndpointSlice 에 적힌 파드 IP 다. 우리 Kourier 입구는 setup.sh 가 LoadBalancer 를 NodePort 31080 으로 바꾼 것이다. IP 는 예시.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>kube-proxy(iptables) 와 Cilium(eBPF) 은 어떻게 주소를 바꾸나</h3>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1180 420" role="img" aria-labelledby="f9-t">
+        <title id="f9-t">kube-proxy iptables 체인과 Cilium eBPF 서비스 맵 비교</title>
+        <defs>
+          <marker id="f9-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f9-o" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-obs"/></marker>
+        </defs>
+        <rect x="20" y="20" width="560" height="380" rx="12" class="d-pool"/>
+        <text x="40" y="46" class="d-ttl">kube-proxy iptables 모드</text>
+        <rect x="40" y="66" width="250" height="50" rx="8" class="d-warn-box"/>
+        <text x="56" y="96" class="d-mono">PREROUTING / OUTPUT (nat)</text>
+        <rect x="40" y="136" width="250" height="50" rx="8" class="d-warn-box"/>
+        <text x="56" y="166" class="d-mono">KUBE-SERVICES</text>
+        <rect x="40" y="206" width="250" height="50" rx="8" class="d-warn-box"/>
+        <text x="56" y="236" class="d-mono">KUBE-SVC-해시 (서비스별)</text>
+        <rect x="40" y="276" width="240" height="50" rx="8" class="d-warn-box"/>
+        <text x="56" y="306" class="d-mono">KUBE-SEP-1 (확률 1/2)</text>
+        <rect x="310" y="276" width="250" height="50" rx="8" class="d-warn-box"/>
+        <text x="326" y="306" class="d-mono">KUBE-SEP-2 (나머지)</text>
+        <rect x="40" y="346" width="520" height="40" rx="8" class="d-plain-box"/>
+        <text x="56" y="372" class="d-sub">각 SEP: -j DNAT --to-destination 파드IP:포트</text>
+        <path d="M165 116 L165 134" class="d-e-api" marker-end="url(#f9-a)"/>
+        <path d="M165 186 L165 204" class="d-e-api" marker-end="url(#f9-a)"/>
+        <path d="M165 256 L165 274" class="d-e-api" marker-end="url(#f9-a)"/>
+        <path d="M290 240 L420 274" class="d-e-api" marker-end="url(#f9-a)"/>
+        <text x="320" y="166" class="d-sub">서비스 수만큼 규칙이</text>
+        <text x="320" y="188" class="d-sub">위에서 아래로 늘어선다</text>
+
+        <rect x="600" y="20" width="560" height="380" rx="12" class="d-pool"/>
+        <text x="620" y="46" class="d-ttl">Cilium eBPF 서비스 처리</text>
+        <rect x="620" y="66" width="520" height="50" rx="8" class="d-obs-box"/>
+        <text x="636" y="96" class="d-mono">파드 veth 의 tc 훅 (bpf_lxc) 또는 소켓 connect 훅</text>
+        <rect x="620" y="136" width="250" height="80" rx="8" class="d-card"/>
+        <text x="636" y="162" class="d-ttl-s">서비스 맵</text>
+        <text x="636" y="186" class="d-mono">VIP:포트:프로토콜</text>
+        <text x="636" y="204" class="d-mono">→ 백엔드 개수, 번호</text>
+        <rect x="890" y="136" width="250" height="80" rx="8" class="d-card"/>
+        <text x="906" y="162" class="d-ttl-s">백엔드 맵</text>
+        <text x="906" y="186" class="d-mono">번호 → 파드IP:포트</text>
+        <rect x="620" y="236" width="520" height="56" rx="8" class="d-card"/>
+        <text x="636" y="260" class="d-ttl-s">연결 추적 맵 (CT)</text>
+        <text x="636" y="280" class="d-sub">고른 백엔드를 기억해 같은 연결은 같은 파드로</text>
+        <rect x="620" y="312" width="520" height="74" rx="8" class="d-plain-box"/>
+        <text x="636" y="338" class="d-sub">해시 맵을 한 번 찾고 끝. 서비스 수와 무관하게 비용이 거의 같다.</text>
+        <text x="636" y="362" class="d-sub">kube-proxy 대체 모드면 NodePort·외부 트래픽도 eBPF 가 처리.</text>
+        <path d="M745 116 L745 134" class="d-e-obs" marker-end="url(#f9-o)"/>
+        <path d="M870 176 L888 176" class="d-e-obs" marker-end="url(#f9-o)"/>
+        <path d="M745 216 L745 234" class="d-e-obs" marker-end="url(#f9-o)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-9.</b> 같은 일을 하는 두 방법. kube-proxy 는 netfilter nat 표에 서비스·엔드포인트마다 체인을 만들고 <code>statistic --mode random --probability</code> 로 백엔드를 고른다. Cilium 은 eBPF 해시 맵 세 개(서비스·백엔드·연결 추적)로 같은 결정을 내린다. 우리 클러스터에는 두 방법이 함께 있다 (아래 표).</figcaption>
+  </figure>
+
+  <pre class="mermaid">
+flowchart TD
+  A["패킷 도착 dst 10.96.x.y:80"] --> B{"KUBE-SERVICES 에<br/>이 VIP:포트 규칙?"}
+  B -- "없음" --> Z["그대로 라우팅"]
+  B -- "있음" --> C["KUBE-SVC-해시로 점프"]
+  C --> D{"백엔드가 있나"}
+  D -- "0개" --> R["REJECT 규칙 (filter 표)"]
+  D -- "있음" --> E["확률 규칙으로 KUBE-SEP 하나 고름"]
+  E --> F["DNAT dst = 파드IP:targetPort"]
+  F --> G["conntrack 에 기록<br/>답장은 자동으로 역변환"]
+  G --> H{"출발이 클러스터 밖이거나<br/>노드를 건너가나"}
+  H -- "예" --> I["KUBE-MARK-MASQ 표시<br/>POSTROUTING 에서 SNAT"]
+  H -- "아니오" --> J["출발 IP 유지"]
+  </pre>
+
+  <div class="table-wrap"><table>
+  <thead><tr><th>트래픽</th><th>우리 클러스터에서 주소를 바꾸는 쪽 (추정)</th><th>근거</th></tr></thead>
+  <tbody>
+  <tr><td>파드 → ClusterIP (예: tenant-a 파드 → kube-dns, Kourier → activator Service)</td><td>Cilium bpf_lxc 가 파드 veth 에서 먼저 DNAT. kube-proxy 규칙은 이미 바뀐 패킷이라 걸리지 않음</td><td>Cilium 문서: Helm 기본 <code>kubeProxyReplacement=false</code> 는 "ClusterIP 서비스의 클러스터 안 패킷 단위 로드밸런싱만 켠다"</td></tr>
+  <tr><td>맥 → 노드 31080 (NodePort)</td><td>control-plane 노드의 kube-proxy iptables (KUBE-NODEPORTS → DNAT + SNAT)</td><td>KPR=false 에서는 NodePort 를 Cilium 이 맡지 않음</td></tr>
+  <tr><td>노드 프로세스 → ClusterIP (kubelet 등)</td><td>kube-proxy iptables (OUTPUT 체인)</td><td>소켓 LB 는 기본 꺼짐 (<code>socketLB.enabled: false</code>)</td></tr>
+  </tbody></table></div>
+  <p>우리 kind-config 에 <code>kubeProxyMode: none</code> 이 없으니 kind 는 kube-proxy DaemonSet 을 깐다. cilium CLI 소스는 kube-system 에 kube-proxy DaemonSet 이 있으면 "kube-proxy 가 설치돼 있다" 고 판단하고 <code>kubeProxyReplacement</code> 를 건드리지 않는다 (없을 때만 <code>true</code> 로 넣는다). 그래서 우리 설치는 <b>kube-proxy 대체를 쓰지 않는 혼합 모드</b> 일 가능성이 높다. 【확인 필요: <code>kubectl -n kube-system get ds kube-proxy</code> 와 <code>kubectl -n kube-system exec ds/cilium -c cilium-agent -- cilium-dbg status | grep KubeProxyReplacement</code> 가 각각 "있음", "False" 인지】</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>세부: 모드, 트래픽 정책, EndpointSlice 필드, 우리 Kourier 패치</h3>
+  <div class="table-wrap"><table>
+  <thead><tr><th>구현</th><th>자료 구조</th><th>백엔드 고르기</th><th>바꿀 때</th></tr></thead>
+  <tbody>
+  <tr><td>kube-proxy iptables</td><td>nat 표 체인 (서비스·엔드포인트마다)</td><td>확률 규칙을 차례로 (첫 규칙 1/n, 다음 1/(n-1) …)</td><td>iptables-restore 로 표를 다시 씀</td></tr>
+  <tr><td>kube-proxy ipvs</td><td>커널 IPVS 가상 서버 + ipset</td><td>rr, lc, sh 등 IPVS 스케줄러</td><td>가상 서버 단위로 갱신</td></tr>
+  <tr><td>kube-proxy nftables</td><td>nftables 맵·집합</td><td>numgen random 맵</td><td>트랜잭션 단위 갱신 (쿠버네티스 1.33 GA)</td></tr>
+  <tr><td>Cilium eBPF</td><td>서비스·백엔드·CT·rev-NAT 맵</td><td>random 기본, Maglev 선택 가능</td><td>맵 원소만 바꿈</td></tr>
+  </tbody></table></div>
+  <ul>
+    <li><b>externalTrafficPolicy</b>: <code>Cluster</code>(기본)는 어느 노드로 들어와도 아무 노드의 백엔드로 보내되, 답장이 같은 길로 돌아오도록 출발 IP 를 노드 IP 로 SNAT 한다. 그래서 Kourier 에서 보는 클라이언트 IP 는 맥이 아니라 control-plane 노드 IP 다. <code>Local</code> 은 그 노드에 백엔드가 있을 때만 받고 출발 IP 를 보존한다.</li>
+    <li><b>internalTrafficPolicy</b>: 클러스터 안 트래픽을 같은 노드 백엔드로만 보낼지.</li>
+    <li><b>sessionAffinity: ClientIP</b>: 같은 출발 IP 는 같은 백엔드로 (기본 10800초).</li>
+    <li><b>EndpointSlice</b>: <code>endpoints[].addresses</code>, <code>conditions.ready / serving / terminating</code>, <code>nodeName</code>, <code>zone</code>, <code>ports[].name/port/protocol</code>. 한 조각에 기본 최대 100개 엔드포인트. 라벨 <code>kubernetes.io/service-name</code> 으로 Service 와 이어진다. Knative 는 Revision 마다 Service 를 두 개(public, private) 만들고 activator 를 끼울지 말지를 EndpointSlice 내용으로 바꾼다 (5장).</li>
+  </ul>
+  <div class="code-head"><span>poc/04-faas-runtime/scripts/setup.sh</span><span>발췌 (3/5 Kourier)</span></div>
+  <pre><code>kubectl apply -f "$KOURIER"
+kubectl -n kourier-system rollout status deploy --timeout=300s
+<span class="c"># Knative 에게 "입구는 Kourier 다"</span>
+kubectl -n knative-serving patch configmap config-network --type merge \
+  -p '{"data":{"ingress-class":"kourier.ingress.networking.knative.dev"}}'
+<span class="c"># Kourier 입구 Service 를 LoadBalancer → NodePort 31080 으로 (kind 엔 LoadBalancer 가 없다)</span>
+kubectl -n kourier-system patch service kourier --type merge \
+  -p '{"spec":{"type":"NodePort","ports":[{"name":"http2","port":80,"protocol":"TCP","targetPort":8080,"nodePort":31080}]}}'</code></pre>
+  <ul>
+    <li><code>type: NodePort</code>: LoadBalancer 를 내린다. 클라우드 컨트롤러가 없는 kind 에서 LoadBalancer 는 EXTERNAL-IP 가 영원히 <code>&lt;pending&gt;</code> 이다. 단, LoadBalancer 도 NodePort 를 품으므로 사실은 nodePort 만 고정해도 동작한다.</li>
+    <li><code>port: 80</code> → <code>targetPort: 8080</code>: Service 포트 80 을 Kourier Envoy 컨테이너의 8080 으로.</li>
+    <li><code>nodePort: 31080</code>: 무작위 대신 고정. kind-config 의 <code>containerPort: 31080</code> 과 짝이다.</li>
+    <li><code>--type merge</code> 로 <code>ports</code> 목록을 주면 목록 전체가 바뀐다. 원래 있던 https(443) 포트 항목은 이 패치로 사라진다 【확인 필요: <code>kubectl -n kourier-system get svc kourier -o yaml</code>】. PoC 는 http 만 써서 영향은 없다.</li>
+  </ul>
+  <pre class="pseudo"><code><span class="c">// Cilium bpf_lxc 의 서비스 처리 (파드에서 나가는 패킷)</span>
+key = (dst IP, dst 포트, 프로토콜)
+svc = 서비스맵[key]
+<span class="k">만약</span> svc 없음: 그대로 진행 (일반 파드 IP)
+ct = CT맵[5-튜플]
+<span class="k">만약</span> ct 있음: backend = ct.backend               <span class="c">// 이미 고른 연결</span>
+<span class="k">아니면</span>: backend = 백엔드맵[svc.슬롯[random() % svc.개수]]; CT맵에 기록(rev_nat = svc.id)
+<span class="k">만약</span> svc.개수 == 0: DROP (사유: no service backend)
+패킷.dst = backend.IP:포트    <span class="c">// 이후 정책 검사는 "백엔드 파드" 의 identity 로 한다</span>
+<span class="c">// 답장: CT 의 rev_nat 으로 src 를 다시 VIP:포트로 바꿔 파드에 돌려줌</span></code></pre>
+  <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+  <p>NetworkPolicy 는 Service IP 가 아니라 <b>DNAT 뒤의 파드</b> 를 기준으로 판단한다. 그래서 allow-dns 가 <code>kube-dns</code> Service 가 아니라 <code>k8s-app: kube-dns</code> 라벨의 파드와 포트 53 을 고른다. iso-echo Service 는 port 80 → targetPort <code>http</code>(5678) 이니, 이 서비스에 대한 포트 제한 규칙을 쓴다면 80 이 아니라 5678(또는 이름 <code>http</code>)이어야 한다.</p></aside>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+  <p><b>증상</b>: 맥 <code>curl localhost:8081</code> 이 즉시 "Connection refused" 또는 빈 응답. <b>볼 곳</b>: <code>kubectl -n kourier-system get svc kourier</code> 의 PORT(S) 가 <code>80:31080/TCP</code> 인지, <code>kubectl -n kourier-system get endpointslices</code> 에 준비된 주소가 있는지, <code>docker port faas-control-plane</code> 에 <code>31080/tcp -&gt; 0.0.0.0:8081</code> 이 있는지. <b>고치기</b>: setup.sh 의 3/5 패치를 다시, kind-config 를 바꿨다면 클러스터 재생성 (포트 매핑은 생성 때만 정해진다). 타임아웃이면 NodePort 가 아니라 그 뒤의 정책 문제다 (12절).</p></aside>
+  <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
+  <p>kube-proxy 대체(KPR)를 켜려면 kind 를 <code>kubeProxyMode: none</code> 으로 만들고 cilium 에 API 서버 주소를 알려 줘야 한다 (CLI 가 kind 에서 자동으로 해 주는 경로가 있다). 설정 한 줄이 더 들고, 이 PoC 의 목적(격리 증명)에는 필요 없어서 기본값에 맡겼다. 본선에서 "왜 kube-proxy 가 남아 있나" 를 물으면 "Helm 기본 혼합 모드. 큰 클러스터라면 KPR 로 iptables 규칙 폭증을 없앤다" 로 답한다. 대안 ipvs·nftables 모드는 kube-proxy 를 남긴 채 규칙 비용을 줄이는 길이다.</p></aside>
+  <aside class="callout fact"><p class="callout-title">공식 문서</p>
+  <p><a href="https://kubernetes.io/docs/concepts/services-networking/service/">Kubernetes: Service</a> · <a href="https://kubernetes.io/docs/concepts/services-networking/endpoint-slices/">EndpointSlices</a> · <a href="https://kubernetes.io/docs/reference/networking/virtual-ips/">Virtual IPs and Service Proxies (iptables·ipvs·nftables)</a> · <a href="https://docs.cilium.io/en/stable/network/kubernetes/kubeproxy-free/">Cilium: Kubernetes Without kube-proxy</a> · <a href="https://kind.sigs.k8s.io/docs/user/configuration/#kube-proxy-mode">kind: kube-proxy mode</a></p></aside>
+</div>
+
+<h2 id="dns">5. DNS: CoreDNS, resolv.conf, ndots, 그리고 default-deny</h2>
+
+<div class="tier" data-tier="1">
+  <h3>파드는 이름을 어떻게 IP 로 바꾸나</h3>
+  <p>kubelet 은 파드를 만들 때 파드 안 <code>/etc/resolv.conf</code> 를 써 넣는다. 기본 정책(<code>dnsPolicy: ClusterFirst</code>)에서 내용은 이렇다.</p>
+  <pre><code>nameserver 10.96.0.10                         <span class="c"># kube-dns Service 의 ClusterIP (kind 기본 대역 기준)</span>
+search tenant-a.svc.cluster.local svc.cluster.local cluster.local   <span class="c"># + 노드의 search 목록</span>
+options ndots:5</code></pre>
+  <p>질의는 kube-system 의 <b>CoreDNS</b> 파드(라벨 <code>k8s-app: kube-dns</code>)가 받는다. CoreDNS 는 <code>cluster.local</code> 아래 이름(<code>&lt;서비스&gt;.&lt;ns&gt;.svc.cluster.local</code>)은 쿠버네티스 API 를 보고 직접 답하고, 나머지는 위(노드의 resolv.conf)로 넘긴다. 그래서 같은 namespace 에서는 <code>iso-echo</code>, 다른 namespace 는 <code>iso-echo.tenant-b</code> 만 써도 된다.</p>
+  <p>여기서 테넌트 격리와 부딪친다. NetworkPolicy 로 <b>나가는 것(egress)을 전부 막으면 DNS 질의(UDP/TCP 53)도 막힌다</b>. 이름으로 부르면 실패하는데 IP 로 부르면 되는, 처음 보는 사람을 가장 헷갈리게 하는 장애가 여기서 나온다. 그래서 우리 차트는 default-deny 와 함께 <code>allow-dns</code> 를 꼭 둔다.</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>질의 순서와 두 갈래 길 (클러스터 이름, kind-registry)</h3>
+  <pre class="mermaid">
+flowchart TD
+  A["앱이 이름 조회 N"] --> B{"N 이 점으로 끝나나<br/>(절대 이름)"}
+  B -- "예" --> F["N 그대로 한 번 질의"]
+  B -- "아니오" --> C{"N 안의 점이 ndots(5)개 이상인가"}
+  C -- "예" --> D["N 먼저, 실패하면 search 붙여서"]
+  C -- "아니오" --> E["search 목록을 차례로 붙여 질의<br/>N.tenant-a.svc.cluster.local<br/>N.svc.cluster.local<br/>N.cluster.local ..."]
+  E --> G{"어느 하나 답이 있나"}
+  G -- "예" --> H["그 IP 사용"]
+  G -- "아니오" --> F
+  F --> I{"답 있음"}
+  I -- "예" --> H
+  I -- "아니오" --> J["NXDOMAIN, 앱 오류"]
+  </pre>
+  <p><code>example.com</code> 처럼 점이 5개 미만인 바깥 이름은 search 목록 길이만큼 헛질의(NXDOMAIN)를 먼저 하고, A·AAAA 를 따로 물으니 질의가 몇 배로 는다. ndots 5 는 <code>svc.ns.svc.cluster</code> 같은 클러스터 이름을 짧게 쓰게 해 주는 대가다. 성능이 문제면 이름 끝에 점을 붙이거나 파드 <code>dnsConfig</code> 로 ndots 를 낮춘다.</p>
+
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1180 430" role="img" aria-labelledby="f10-t">
+        <title id="f10-t">파드 DNS 질의가 CoreDNS 와 Docker 내장 DNS 로 가는 길</title>
+        <defs>
+          <marker id="f10-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <rect x="20" y="40" width="230" height="130" rx="12" class="d-agent"/>
+        <text x="38" y="70" class="d-ttl-s">tenant-a 파드</text>
+        <text x="38" y="96" class="d-mono">resolv.conf</text>
+        <text x="38" y="116" class="d-mono">nameserver 10.96.0.10</text>
+        <text x="38" y="140" class="d-sub">egress: allow-dns 필요</text>
+        <text x="38" y="160" class="d-lbl d-tag-fail">없으면 → 화살표에서 DROP</text>
+        <rect x="20" y="230" width="230" height="130" rx="12" class="d-prov-box"/>
+        <text x="38" y="260" class="d-ttl-s">kaniko 파드</text>
+        <text x="38" y="286" class="d-mono">faas-build ns</text>
+        <text x="38" y="306" class="d-sub">push kind-registry:5000</text>
+        <text x="38" y="330" class="d-sub">(정책 없는 ns)</text>
+        <rect x="320" y="40" width="250" height="110" rx="12" class="d-card"/>
+        <text x="338" y="70" class="d-ttl-s">kube-dns Service</text>
+        <text x="338" y="96" class="d-mono">10.96.0.10:53</text>
+        <text x="338" y="120" class="d-sub">bpf_lxc 가 파드 IP 로 DNAT</text>
+        <rect x="320" y="190" width="250" height="170" rx="12" class="d-cp-box"/>
+        <text x="338" y="220" class="d-ttl-s">CoreDNS 파드 2개</text>
+        <text x="338" y="246" class="d-mono">k8s-app=kube-dns</text>
+        <text x="338" y="272" class="d-sub">cluster.local: API 로 답</text>
+        <text x="338" y="296" class="d-sub">나머지: forward 로</text>
+        <text x="338" y="318" class="d-mono">/etc/resolv.conf</text>
+        <text x="338" y="338" class="d-sub">(노드 것을 물려받음)</text>
+        <rect x="640" y="190" width="250" height="170" rx="12" class="d-card"/>
+        <text x="658" y="220" class="d-ttl-s">kind 노드 netns</text>
+        <text x="658" y="246" class="d-sub">resolv.conf 의 127.0.0.11 을</text>
+        <text x="658" y="268" class="d-sub">Docker 호스트 IP 로 바꿔 둠</text>
+        <text x="658" y="294" class="d-sub">iptables DNAT 로</text>
+        <text x="658" y="316" class="d-mono">→ 127.0.0.11:53</text>
+        <text x="658" y="338" class="d-sub">(kind entrypoint)</text>
+        <rect x="940" y="190" width="220" height="170" rx="12" class="d-plain-box"/>
+        <text x="958" y="220" class="d-ttl-s">Docker 내장 DNS</text>
+        <text x="958" y="246" class="d-mono">kind-registry</text>
+        <text x="958" y="266" class="d-mono">→ 172.18.0.x</text>
+        <text x="958" y="294" class="d-sub">바깥 이름은 맥의</text>
+        <text x="958" y="314" class="d-sub">DNS 로 다시 넘김</text>
+        <path d="M250 100 L318 96" class="d-e-api" marker-end="url(#f10-a)"/>
+        <path d="M445 150 L445 188" class="d-e-api" marker-end="url(#f10-a)"/>
+        <path d="M250 296 L318 296" class="d-e-api" marker-end="url(#f10-a)"/>
+        <path d="M570 275 L638 275" class="d-e-api" marker-end="url(#f10-a)"/>
+        <path d="M890 275 L938 275" class="d-e-api" marker-end="url(#f10-a)"/>
+        <rect x="640" y="40" width="520" height="110" rx="12" class="d-plain-box"/>
+        <text x="658" y="70" class="d-ttl-s">containerd 의 이미지 받기는 다른 길</text>
+        <text x="658" y="96" class="d-sub">노드의 containerd 가 hosts.toml 을 보고 kind-registry:5000 을</text>
+        <text x="658" y="118" class="d-sub">노드 resolv.conf 로 직접 푼다. 파드가 아니라서 NetworkPolicy 와 무관.</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-10.</b> DNS 의 두 갈래. 클러스터 이름은 CoreDNS 가 직접 답한다. <code>kind-registry</code> 같은 바깥 이름은 search 목록을 다 실패한 뒤 CoreDNS 의 <code>forward . /etc/resolv.conf</code> 로 노드에게, 노드는 kind 가 고쳐 둔 DNAT 규칙으로 Docker 내장 DNS(127.0.0.11)에게 넘긴다. tenant-a 파드에서 kube-dns 로 가는 첫 화살표가 default-deny 에서 끊기는 자리다 (빨간 글씨).</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>세부: Corefile, kind 의 DNS 손질, 우리 allow-dns 와 실험</h3>
+  <div class="code-head"><span>kube-system/configmap coredns (kubeadm 기본 Corefile)</span><span>모양 예시 【확인 필요: kubectl -n kube-system get cm coredns -o yaml】</span></div>
+  <pre><code>.:53 {
+    errors
+    health { lameduck 5s }
+    ready
+    <span class="k">kubernetes</span> cluster.local in-addr.arpa ip6.arpa {
+       pods insecure
+       fallthrough in-addr.arpa ip6.arpa
+       ttl 30
+    }
+    prometheus :9153
+    <span class="k">forward</span> . /etc/resolv.conf { max_concurrent 1000 }
+    cache 30
+    loop
+    reload
+    loadbalance
+}</code></pre>
+  <ul>
+    <li><code>kubernetes cluster.local …</code>: 이 영역은 API 서버의 Service·EndpointSlice 를 보고 직접 답한다.</li>
+    <li><code>forward . /etc/resolv.conf</code>: 나머지는 CoreDNS 파드의 resolv.conf 가 가리키는 서버로. CoreDNS Deployment 는 <code>dnsPolicy: Default</code> 라서 그 파일은 <b>노드의</b> resolv.conf 다.</li>
+    <li><code>cache 30</code>: 30초 캐시. <code>loop</code>: 자기 자신에게 되돌아오는 forward 고리를 찾으면 멈춘다.</li>
+  </ul>
+  <p>kind 노드의 resolv.conf 는 원래 Docker 내장 DNS <code>127.0.0.11</code> 을 가리킨다. 그런데 127.0.0.11 은 노드 netns 의 루프백이라 파드 netns 에서는 닿지 않는다. kind 이미지의 entrypoint(<code>enable_network_magic</code>)는 이를 풀려고 ① 노드 resolv.conf 의 127.0.0.11 을 "Docker 호스트 IP"(맥 Docker Desktop 이면 <code>host.docker.internal</code> 이 가리키는 주소, 없으면 기본 게이트웨이)로 바꾸고, ② Docker 가 만든 DNS DNAT 규칙을 그 IP 로 고쳐 PREROUTING(파드에서 온 패킷)에도 걸리게 복사한다. 그래서 CoreDNS → 노드 IP:53 → DNAT → 127.0.0.11 → Docker 가 <code>kind-registry</code> 를 같은 <code>kind</code> 망의 컨테이너 IP 로 답한다. Cilium 환경에서 이 PREROUTING 규칙을 거치는지는 호스트 라우팅 모드에 달렸다 【확인 필요: 첫 빌드 Job 이 push 에 성공하면 이 길이 동작한 것이다】.</p>
+  <pre class="pseudo"><code><span class="c">// faas-build 의 kaniko 파드가 "kind-registry" 를 푸는 순서 (ndots 5, 점 0개)</span>
+질의 kind-registry.faas-build.svc.cluster.local  → CoreDNS kubernetes 플러그인 → NXDOMAIN
+질의 kind-registry.svc.cluster.local             → NXDOMAIN
+질의 kind-registry.cluster.local                 → NXDOMAIN
+(노드 search 목록이 있으면 그것도 차례로)
+질의 kind-registry.                              → forward → 노드 resolv.conf → DNAT → 127.0.0.11
+                                                  → 172.18.0.x (kind 망의 레지스트리 컨테이너)
+TCP 연결 172.18.0.x:5000                          → Cilium: 목적지 identity = world → faas-build 엔 정책 없음 → 허용</code></pre>
+
+  <div class="code-head"><span>poc/03-tenant-isolation/charts/tenant/templates/networkpolicy.yaml</span><span>발췌 (3) allow-dns</span></div>
+  <pre><code><span class="c"># 3) DNS 조회(kube-system 의 CoreDNS, 53번 포트)는 허용. 이게 없으면 서비스 이름으로 못 부른다</span>
+<span class="k">apiVersion</span>: networking.k8s.io/v1
+<span class="k">kind</span>: NetworkPolicy
+<span class="k">metadata</span>:
+  <span class="k">name</span>: allow-dns
+  <span class="k">namespace</span>: {{ .Values.name }}
+<span class="k">spec</span>:
+  <span class="k">podSelector</span>: {}
+  <span class="k">policyTypes</span>:
+    - Egress
+  <span class="k">egress</span>:
+    - <span class="k">to</span>:
+        - <span class="k">namespaceSelector</span>:
+            <span class="k">matchLabels</span>:
+              <span class="k">kubernetes.io/metadata.name</span>: kube-system
+          <span class="k">podSelector</span>:
+            <span class="k">matchLabels</span>:
+              <span class="k">k8s-app</span>: kube-dns
+      <span class="k">ports</span>:
+        - <span class="k">protocol</span>: UDP
+          <span class="k">port</span>: 53
+        - <span class="k">protocol</span>: TCP
+          <span class="k">port</span>: 53</code></pre>
+  <ul>
+    <li><code>podSelector: {}</code>: 이 namespace 의 모든 파드에 적용.</li>
+    <li><code>policyTypes: [Egress]</code>: 나가는 방향만 다룬다. 들어오는 방향엔 영향 없음.</li>
+    <li><code>namespaceSelector</code> 와 <code>podSelector</code> 가 <b>같은 <code>-</code> 항목</b> 안에 있다 → AND: "kube-system namespace 에 있으면서 k8s-app=kube-dns 인 파드". 앞에 <code>-</code> 를 하나 더 붙여 둘로 나누면 OR 이 되어 "kube-system 의 모든 파드 + <b>모든 namespace</b> 의 kube-dns 라벨 파드" 로 넓어진다 (03 README 7절 확인 질문의 답).</li>
+    <li><code>kubernetes.io/metadata.name</code>: API 서버가 모든 namespace 에 자동으로 붙이는 바뀌지 않는 라벨. namespace 이름으로 고르는 표준 방법이다.</li>
+    <li><code>ports</code> UDP·TCP 53: 보통 UDP, 응답이 크면(512바이트 초과, DNSSEC 등) TCP 로 다시 묻는다. 둘 다 열어야 한다.</li>
+  </ul>
+  <div class="code-head"><span>poc/03-tenant-isolation/README.md 7절</span><span>깨뜨렸다 고치기 명령</span></div>
+  <pre><code>KEEP=1 poc/03-tenant-isolation/scripts/test-isolation.sh net
+<span class="c"># 기대: a -&gt; a (같은 테넌트) 가 FAIL (BLOCKED). 같은 namespace 인데도!</span>
+kubectl -n tenant-a exec iso-client -- curl -s --max-time 3 http://iso-echo         <span class="c"># 이름으로: 실패</span>
+kubectl -n tenant-a exec iso-client -- curl -s --max-time 3 http://$(kubectl -n tenant-a get svc iso-echo -o jsonpath='{.spec.clusterIP}')   <span class="c"># IP 로: iso-echo</span>
+kubectl -n kube-system exec ds/cilium -c cilium-agent -- hubble observe --namespace tenant-a --verdict DROPPED --port 53 --last 5</code></pre>
+  <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+  <p>테넌트 파드의 DNS 질의는 tenant-a 의 egress 정책 세 장 중 <code>allow-dns</code> 로만 나간다. 그 밖의 이름 풀이(바깥 도메인)는 CoreDNS 가 대신 해 주므로 파드가 인터넷 DNS 에 직접 닿을 필요는 없다. 다만 풀린 IP 로 나가는 연결 자체는 egress 정책에 막힌다 (test-isolation 의 <code>a -&gt; 인터넷(example.com)</code> 이 BLOCKED 인 이유). kind-registry 이름은 테넌트 파드가 아니라 kaniko(faas-build)와 노드 containerd 가 쓴다.</p></aside>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: DNS 를 막으면</p>
+  <p><b>증상</b>: 같은 namespace 인데도 <code>curl http://iso-echo</code> 가 "Could not resolve host" 또는 3초 타임아웃, <code>curl http://10.96.x.y</code> 는 성공. <b>볼 곳</b>: <code>hubble observe --namespace tenant-a --verdict DROPPED --port 53</code> 에 <code>UDP</code> 53 으로 가는 DROPPED, <code>kubectl -n tenant-a get networkpolicy</code> 에 allow-dns 가 있는지. <b>고치기</b>: allow-dns 블록 복구 → push → Argo CD 반영. 셀렉터를 바꿨다면 CoreDNS 파드 라벨이 정말 <code>k8s-app=kube-dns</code> 인지 <code>kubectl -n kube-system get pods --show-labels</code> 로.</p></aside>
+  <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
+  <p>DNS 허용을 kube-system 전체(포트 53)로 열 수도 있다. 06 대역의 <code>standin/targets.yaml</code> 이 그렇게 썼다. 03 차트는 <code>k8s-app: kube-dns</code> 파드로 좁혔다. kube-system 에 53번을 여는 다른 파드가 생겨도 테넌트가 닿지 못하게 하기 위해서다. Cilium 의 DNS 프록시(FQDN 정책, 9절)는 질의 내용까지 거를 수 있지만 표준 정책이 아니라서 기본에서 뺐다.</p></aside>
+  <aside class="callout fact"><p class="callout-title">공식 문서</p>
+  <p><a href="https://kubernetes.io/docs/concepts/services-networking/dns-pod-service/">Kubernetes: DNS for Services and Pods</a> · <a href="https://kubernetes.io/docs/tasks/administer-cluster/dns-custom-nameservers/">Customizing DNS Service (Corefile)</a> · <a href="https://coredns.io/plugins/kubernetes/">CoreDNS kubernetes 플러그인</a> · <a href="https://coredns.io/plugins/forward/">CoreDNS forward 플러그인</a> · <a href="https://man7.org/linux/man-pages/man5/resolv.conf.5.html">man7: resolv.conf(5) ndots</a> · <a href="https://github.com/kubernetes-sigs/kind/blob/main/images/base/files/usr/local/bin/entrypoint">kind 노드 entrypoint (enable_network_magic)</a></p></aside>
+</div>
+
+<h2 id="ebpf">6. eBPF 기초: 커널 안에 안전하게 코드를 꽂는 법</h2>
+
+<div class="tier" data-tier="1">
+  <h3>eBPF 는 무엇이고 왜 네트워크가 이걸 쓰나</h3>
+  <p><b>eBPF</b> 는 리눅스 커널 소스를 고치거나 커널 모듈을 올리지 않고도, 커널 안의 정해진 지점(훅)에 작은 프로그램을 붙여 실행하게 하는 기술이다. 비유하면 커널이라는 서버에 "이벤트 핸들러" 를 등록하는 것과 같다. 패킷이 장치에 도착할 때, 소켓이 연결할 때, 어떤 커널 함수가 불릴 때 그 핸들러가 돈다.</p>
+  <p>왜 안전한가. 프로그램은 붙기 전에 커널의 <b>검증기(verifier)</b> 를 통과해야 한다. 끝나지 않는 루프, 범위 밖 메모리 접근, 확인 안 한 널 포인터가 있으면 거절된다. 왜 빠른가. 통과한 바이트코드는 <b>JIT</b> 컴파일러가 그 CPU 의 기계어로 바꾼다. 상태는 어떻게 갖나. 커널과 사용자 공간이 같이 읽고 쓰는 <b>맵(map)</b> 이라는 키·값 저장소를 쓴다. Cilium 에이전트(사용자 공간)는 맵에 "이 IP 는 identity 몇", "이 identity 에서 포트 8012 허용" 같은 표를 써 두고, 패킷마다 도는 eBPF 프로그램은 그 표를 찾아보기만 한다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 420" role="img" aria-labelledby="f11-t">
+        <title id="f11-t">eBPF 프로그램의 일생: 컴파일, 적재, 검증, JIT, 훅에 붙이기, 맵</title>
+        <defs>
+          <marker id="f11-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f11-p" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+          <marker id="f11-o" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-obs"/></marker>
+        </defs>
+        <rect x="20" y="20" width="920" height="150" rx="12" class="d-pool"/>
+        <text x="40" y="46" class="d-lbl">사용자 공간 (cilium-agent 컨테이너)</text>
+        <rect x="40" y="64" width="190" height="86" rx="10" class="d-card"/>
+        <text x="56" y="92" class="d-ttl-s">C 소스</text>
+        <text x="56" y="116" class="d-mono">bpf_lxc.c 등</text>
+        <rect x="270" y="64" width="190" height="86" rx="10" class="d-card"/>
+        <text x="286" y="92" class="d-ttl-s">clang/LLVM</text>
+        <text x="286" y="116" class="d-mono">→ eBPF 바이트코드</text>
+        <rect x="500" y="64" width="190" height="86" rx="10" class="d-prov-box"/>
+        <text x="516" y="92" class="d-ttl-s">로더</text>
+        <text x="516" y="116" class="d-mono">bpf() 시스템 콜</text>
+        <rect x="730" y="64" width="190" height="86" rx="10" class="d-agent"/>
+        <text x="746" y="92" class="d-ttl-s">맵 쓰기</text>
+        <text x="746" y="116" class="d-mono">정책·ipcache·서비스</text>
+        <rect x="20" y="200" width="920" height="200" rx="12" class="d-cp"/>
+        <text x="40" y="226" class="d-lbl">커널</text>
+        <rect x="40" y="244" width="190" height="86" rx="10" class="d-warn-box"/>
+        <text x="56" y="272" class="d-ttl-s">검증기</text>
+        <text x="56" y="296" class="d-sub">모든 경로를 시뮬레이션</text>
+        <rect x="270" y="244" width="190" height="86" rx="10" class="d-card"/>
+        <text x="286" y="272" class="d-ttl-s">JIT</text>
+        <text x="286" y="296" class="d-sub">CPU 기계어로</text>
+        <rect x="500" y="244" width="190" height="86" rx="10" class="d-obs-box"/>
+        <text x="516" y="272" class="d-ttl-s">훅에 붙음</text>
+        <text x="516" y="296" class="d-mono">tc · XDP · cgroup</text>
+        <rect x="730" y="244" width="190" height="86" rx="10" class="d-agent"/>
+        <text x="746" y="272" class="d-ttl-s">맵 (공유 메모리)</text>
+        <text x="746" y="296" class="d-sub">해시·배열·LPM·링</text>
+        <text x="40" y="370" class="d-sub">패킷·이벤트가 올 때마다 훅의 프로그램이 돌고, 맵을 찾아 판단한 뒤 결과 코드(통과·버림·전달)를 돌려준다.</text>
+        <path d="M230 107 L268 107" class="d-e-api" marker-end="url(#f11-a)"/>
+        <path d="M460 107 L498 107" class="d-e-api" marker-end="url(#f11-a)"/>
+        <path d="M595 150 L135 242" class="d-e-prov" marker-end="url(#f11-p)"/>
+        <path d="M230 287 L268 287" class="d-e-api" marker-end="url(#f11-a)"/>
+        <path d="M460 287 L498 287" class="d-e-api" marker-end="url(#f11-a)"/>
+        <path d="M690 287 L728 287" class="d-e-obs" marker-end="url(#f11-o)" marker-start="url(#f11-o)"/>
+        <path d="M825 150 L825 242" class="d-e-obs" marker-end="url(#f11-o)" marker-start="url(#f11-o)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-11.</b> eBPF 프로그램의 일생. 주황 화살표가 적재(로더가 <code>bpf(BPF_PROG_LOAD)</code> 로 커널에 넘김), 청록 양방향 화살표가 맵을 통한 공유다. 사용자 공간(에이전트)은 맵만 고쳐서 동작을 바꾸고, 프로그램을 다시 올릴 필요가 없는 경우가 많다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>훅 지점, 맵 종류, 헬퍼</h3>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 470" role="img" aria-labelledby="f12-t">
+        <title id="f12-t">리눅스 네트워크 스택의 eBPF 훅 지점과 Cilium 이 쓰는 곳</title>
+        <rect x="20" y="20" width="600" height="430" rx="12" class="d-pool"/>
+        <text x="40" y="46" class="d-lbl">패킷이 아래에서 위로 올라간다 (받기 기준)</text>
+        <rect x="40" y="380" width="560" height="54" rx="10" class="d-plain-box"/>
+        <text x="56" y="404" class="d-ttl-s">NIC 드라이버</text>
+        <text x="200" y="404" class="d-mono">XDP: sk_buff 만들기 전, 가장 이른 곳</text>
+        <text x="200" y="424" class="d-sub">Cilium: NodePort 가속 (선택, 우리 설정 아님)</text>
+        <rect x="40" y="310" width="560" height="54" rx="10" class="d-obs-box"/>
+        <text x="56" y="334" class="d-ttl-s">tc (tcx)</text>
+        <text x="200" y="334" class="d-mono">장치별 ingress / egress</text>
+        <text x="200" y="354" class="d-sub">Cilium 의 주 무대: lxc·cilium_host·vxlan</text>
+        <rect x="40" y="240" width="560" height="54" rx="10" class="d-warn-box"/>
+        <text x="56" y="264" class="d-ttl-s">netfilter · IP</text>
+        <text x="200" y="264" class="d-mono">iptables 훅, 라우팅</text>
+        <text x="200" y="284" class="d-sub">kube-proxy 규칙은 여기 (eBPF 아님)</text>
+        <rect x="40" y="170" width="560" height="54" rx="10" class="d-card"/>
+        <text x="56" y="194" class="d-ttl-s">소켓 · cgroup</text>
+        <text x="200" y="194" class="d-mono">cgroup/connect4, sock_ops, sk_msg</text>
+        <text x="200" y="214" class="d-sub">Cilium 소켓 LB: connect 때 VIP→백엔드 (KPR 때)</text>
+        <rect x="40" y="100" width="560" height="54" rx="10" class="d-card"/>
+        <text x="56" y="124" class="d-ttl-s">애플리케이션</text>
+        <text x="200" y="124" class="d-mono">send() / recv()</text>
+        <text x="200" y="144" class="d-sub">uprobe 로 사용자 함수에도 붙일 수 있다</text>
+        <rect x="640" y="20" width="300" height="430" rx="12" class="d-pool"/>
+        <text x="660" y="46" class="d-lbl">스택 밖의 훅 (관측·보안)</text>
+        <rect x="660" y="64" width="260" height="70" rx="10" class="d-card"/>
+        <text x="676" y="92" class="d-ttl-s">kprobe · fentry</text>
+        <text x="676" y="116" class="d-sub">아무 커널 함수 진입·종료</text>
+        <rect x="660" y="148" width="260" height="70" rx="10" class="d-card"/>
+        <text x="676" y="176" class="d-ttl-s">tracepoint</text>
+        <text x="676" y="200" class="d-sub">커널이 약속한 안정 지점</text>
+        <rect x="660" y="232" width="260" height="70" rx="10" class="d-card"/>
+        <text x="676" y="260" class="d-ttl-s">LSM</text>
+        <text x="676" y="284" class="d-sub">보안 결정 훅 (Tetragon 류)</text>
+        <rect x="660" y="316" width="260" height="70" rx="10" class="d-card"/>
+        <text x="676" y="344" class="d-ttl-s">perf event</text>
+        <text x="676" y="368" class="d-sub">프로파일링·샘플링</text>
+        <text x="660" y="420" class="d-sub">Cilium 네트워킹은 거의 안 쓴다</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-12.</b> eBPF 훅 지점. 아래로 갈수록 패킷을 일찍 만난다. XDP 는 드라이버가 패킷 구조체(sk_buff)를 만들기도 전에 돌아 가장 빠르지만 할 수 있는 일이 적다. Cilium 의 정책·서비스·터널 처리는 대부분 tc 계층(파드 veth, 호스트 장치, VXLAN 장치)에서 일어난다.</figcaption>
+  </figure>
+  <div class="table-wrap"><table>
+  <thead><tr><th>맵 종류</th><th>모양</th><th>Cilium 의 쓰임 (예)</th></tr></thead>
+  <tbody>
+  <tr><td>HASH / LRU_HASH</td><td>키 → 값, LRU 는 꽉 차면 오래된 것부터 버림</td><td>연결 추적(CT), NAT, 서비스·백엔드</td></tr>
+  <tr><td>ARRAY / PERCPU_*</td><td>정수 인덱스, CPU 별 사본(잠금 없이 더하기)</td><td>통계 카운터, 설정 값</td></tr>
+  <tr><td>LPM_TRIE</td><td>가장 긴 접두사 일치 (CIDR 찾기)</td><td>ipcache: IP/대역 → identity</td></tr>
+  <tr><td>PROG_ARRAY</td><td>프로그램 표 (tail call 로 점프)</td><td>정책 검사 같은 단계를 다른 프로그램으로 넘김</td></tr>
+  <tr><td>PERF_EVENT_ARRAY / RINGBUF</td><td>커널 → 사용자 공간 이벤트 흐름</td><td>drop·trace 이벤트 → Hubble</td></tr>
+  </tbody></table></div>
+  <p><b>헬퍼(helper)</b> 는 eBPF 프로그램이 부를 수 있는 커널 함수 목록이다 (<code>bpf_map_lookup_elem</code>, <code>bpf_skb_store_bytes</code>, <code>bpf_redirect</code>, <code>bpf_perf_event_output</code>, <code>bpf_ktime_get_ns</code> 등). 프로그램 종류마다 부를 수 있는 헬퍼가 정해져 있다. 최근에는 헬퍼 대신 <b>kfunc</b>(커널이 내보낸 함수)도 쓴다. tc 프로그램의 반환값은 <code>TC_ACT_OK</code>(계속), <code>TC_ACT_SHOT</code>(버림), <code>TC_ACT_REDIRECT</code>(다른 장치로) 같은 결과 코드다. Cilium 이 정책으로 패킷을 버리는 것은 결국 <code>TC_ACT_SHOT</code> 을 돌려주는 일이다.</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>검증기, JIT, CO-RE, tail call 세부</h3>
+  <pre class="mermaid">
+flowchart TD
+  A["bpf(BPF_PROG_LOAD) 요청"] --> B{"권한 있나<br/>CAP_BPF, CAP_NET_ADMIN 등"}
+  B -- "아니오" --> X["거절 EPERM"]
+  B -- "예" --> C["1단계: 제어 흐름 그래프 검사<br/>도달 못 하는 명령, 잘못된 점프"]
+  C --> D["2단계: 모든 경로를 따라가며<br/>레지스터 타입과 값 범위 추적"]
+  D --> E{"메모리 접근이 범위 안인가<br/>맵 값 포인터를 NULL 확인했나"}
+  E -- "아니오" --> X2["거절 + 검증기 로그"]
+  E -- "예" --> F{"루프가 유한한가<br/>처리 명령 수 한도 안인가"}
+  F -- "아니오" --> X2
+  F -- "예" --> G{"부른 헬퍼가 이 프로그램 종류에 허용?"}
+  G -- "아니오" --> X2
+  G -- "예" --> H["JIT 로 기계어 생성"]
+  H --> I["프로그램 fd 반환, 훅에 붙일 수 있음"]
+  </pre>
+  <ul>
+    <li><b>경로 시뮬레이션</b>: 검증기는 프로그램을 실제로 돌리지 않고, 가능한 모든 분기를 따라가며 레지스터마다 "무슨 종류의 값(컨텍스트 포인터, 맵 값 포인터 또는 NULL, 스칼라)이고 범위가 얼마인가" 를 추적한다. 패킷 데이터를 읽으려면 먼저 <code>data + 오프셋 &lt;= data_end</code> 비교를 해야 통과한다.</li>
+    <li><b>한도</b>: 스택 512바이트, 검증기가 처리하는 명령 수 상한(현재 100만), 루프는 커널 5.3 부터 상한이 증명되는 경우만 허용. 큰 로직은 <b>tail call</b>(다른 프로그램으로 점프, 사슬 최대 33번)과 bpf-to-bpf 함수 호출로 나눈다. Cilium 의 정책 검사가 별도 프로그램으로 tail call 되는 이유다.</li>
+    <li><b>JIT</b>: x86-64, arm64 등에서 바이트코드를 기계어로 바꾼다. 맥 Docker Desktop(Apple Silicon)의 리눅스 VM 은 arm64 다. JIT 가 꺼져 있으면 인터프리터로 돈다.</li>
+    <li><b>CO-RE(Compile Once, Run Everywhere)</b>: 커널 버전마다 구조체 배치가 달라도, 커널이 내보내는 타입 정보(BTF)를 보고 로더(libbpf)가 필드 오프셋을 적재 때 고쳐 준다. 관측 도구에서 중요하다. Cilium 의 데이터패스는 오랫동안 노드에서 직접 컴파일하는 방식이었고, 최근 버전은 미리 컴파일한 객체에 설정 값을 적재 때 넣는 쪽으로 옮겨 가고 있다 【확인 필요: v1.20 의 정확한 방식】.</li>
+    <li><b>고정(pinning)</b>: 맵을 <code>/sys/fs/bpf</code> 에 파일처럼 걸어 두면 에이전트가 재시작해도 맵(정책·연결 상태)이 살아 있다. 그래서 cilium-agent 를 재시작해도 이미 맺은 연결과 정책 집행이 끊기지 않는다.</li>
+  </ul>
+  <pre class="pseudo"><code><span class="c">// tc 훅에 붙는 아주 작은 정책 프로그램의 뼈대 (설명용)</span>
+<span class="k">프로그램</span> from_container(skb):
+  eth, ip = 헤더_파싱(skb)            <span class="c">// data+길이 &lt;= data_end 확인 없으면 검증기가 거절</span>
+  <span class="k">만약</span> 파싱 실패: <span class="k">반환</span> TC_ACT_SHOT
+  dst_id = map_lookup(ipcache, ip.dst)  <span class="c">// LPM_TRIE</span>
+  <span class="k">만약</span> dst_id == NULL: dst_id = WORLD  <span class="c">// NULL 확인 필수</span>
+  key = {identity: dst_id, dport: l4.dport, proto: ip.proto, dir: EGRESS}
+  verdict = map_lookup(policy_map_내것, key)
+  <span class="k">만약</span> verdict == NULL:
+      perf_event_output(이벤트맵, {DROP, 사유=POLICY_DENIED, src, dst})   <span class="c">// Hubble 로</span>
+      <span class="k">반환</span> TC_ACT_SHOT
+  <span class="k">반환</span> TC_ACT_OK</code></pre>
+  <div class="code-head"><span>확인 명령 (cilium-agent 컨테이너 안)</span><span>읽기만</span></div>
+  <pre><code>kubectl -n kube-system exec ds/cilium -c cilium-agent -- bpftool net show
+<span class="c"># 장치별로 붙은 tc/XDP 프로그램. lxc… 장치에 cil_from_container 같은 이름이 보인다</span>
+kubectl -n kube-system exec ds/cilium -c cilium-agent -- bpftool map show | head
+<span class="c"># 맵 목록. cilium_ipcache, cilium_policy_…, cilium_ct4_global 같은 이름 【확인 필요: 버전마다 이름이 조금 다르다】</span></code></pre>
+  <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+  <p>우리가 직접 eBPF 코드를 쓰지는 않는다. <code>cilium install --version 1.20.3</code> 한 줄이 에이전트 DaemonSet 을 깔고, 에이전트가 노드마다 eBPF 프로그램을 올리고 맵을 채운다. 우리가 쓰는 NetworkPolicy YAML 은 결국 "각 파드의 정책 맵에 어떤 키를 넣을지" 로 번역된다 (7절).</p></aside>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+  <p><b>증상</b>: cilium 파드가 CrashLoopBackOff, 로그에 "verifier" 나 "BPF program is too large", 또는 커널 기능 부족. <b>볼 곳</b>: <code>kubectl -n kube-system logs ds/cilium -c cilium-agent --previous</code>, <code>uname -r</code>(Docker Desktop VM 커널). <b>고치기</b>: Docker Desktop 업데이트(커널이 함께 올라감), Cilium 버전의 최소 커널 요구 확인. 06 단계 클라우드 컨테이너에서 kindnet 정책이 무시된 것도 같은 종류(커널이 기능을 못 받침)다.</p></aside>
+  <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
+  <p>iptables 는 수십 년 된 검증된 도구지만 규칙이 순서대로 평가되고, 규칙 하나를 바꿀 때 표를 다시 써야 하는 경우가 많다. eBPF 는 해시 맵 조회로 판단하고 맵 원소만 바꾼다. 대가는 디버깅이 어렵다는 것(iptables-save 처럼 한눈에 안 보임)인데, 그 빈칸을 Hubble 과 <code>cilium-dbg</code> 가 메운다. 본선에서 "eBPF 의 위험은?" 이 나오면: 커널 버전 의존, 검증기 한도, 관측 도구 없이는 블랙박스.</p></aside>
+  <aside class="callout fact"><p class="callout-title">공식 문서</p>
+  <p><a href="https://ebpf.io/what-is-ebpf/">ebpf.io: What is eBPF</a> · <a href="https://docs.kernel.org/bpf/verifier.html">Linux kernel: eBPF verifier</a> · <a href="https://docs.kernel.org/bpf/maps.html">Linux kernel: BPF maps</a> · <a href="https://docs.kernel.org/bpf/btf.html">BTF</a> · <a href="https://docs.cilium.io/en/stable/reference-guides/bpf/">Cilium: BPF and XDP Reference Guide</a></p></aside>
+</div>
+
+<h2 id="cilium">7. Cilium 구조와 데이터패스</h2>
+
+<div class="tier" data-tier="1">
+  <h3>Cilium 은 무엇으로 이루어졌나</h3>
+  <p>Cilium 은 eBPF 위에 만든 CNI 다. 파드에 IP 를 주고(3절), 서비스 주소를 바꾸고(4절), NetworkPolicy 를 집행하고(8절), 흐름을 기록한다(10절). 가장 중요한 생각은 하나다. <b>정책을 IP 가 아니라 "identity(보안 신원)" 로 판단한다.</b> 파드 IP 는 계속 바뀌지만, 같은 라벨을 가진 파드들은 같은 숫자 identity 를 공유한다. 정책 맵에는 IP 가 아니라 이 숫자가 들어간다.</p>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1180 500" role="img" aria-labelledby="f13-t">
+        <title id="f13-t">Cilium 구성 요소: agent, operator, CNI, envoy, hubble relay·UI, 쿠버네티스 API</title>
+        <defs>
+          <marker id="f13-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f13-o" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-obs"/></marker>
+        </defs>
+        <rect x="20" y="20" width="360" height="190" rx="12" class="d-cp-box"/>
+        <text x="40" y="50" class="d-ttl">쿠버네티스 API 서버</text>
+        <text x="40" y="80" class="d-sub">Pod, Namespace, Service, EndpointSlice,</text>
+        <text x="40" y="102" class="d-sub">NetworkPolicy 를 지켜봄 (watch)</text>
+        <text x="40" y="132" class="d-mono">CRD: CiliumNetworkPolicy,</text>
+        <text x="40" y="152" class="d-mono">CiliumIdentity, CiliumEndpoint,</text>
+        <text x="40" y="172" class="d-mono">CiliumNode</text>
+        <rect x="420" y="20" width="330" height="190" rx="12" class="d-card"/>
+        <text x="440" y="50" class="d-ttl">cilium-operator</text>
+        <text x="440" y="78" class="d-sub">클러스터에 하나 (kind: 복제 1)</text>
+        <text x="440" y="104" class="d-sub">안 쓰는 identity·엔드포인트 청소</text>
+        <text x="440" y="128" class="d-sub">IPAM cluster-pool 이면 노드 대역 배정</text>
+        <text x="440" y="152" class="d-sub">노드별 일이 아닌 전역 작업</text>
+        <rect x="790" y="20" width="370" height="190" rx="12" class="d-obs-box"/>
+        <text x="810" y="50" class="d-ttl">hubble-relay · hubble-ui</text>
+        <text x="810" y="78" class="d-sub">relay: 모든 노드 Hubble 을 모아 gRPC 4245</text>
+        <text x="810" y="104" class="d-sub">UI: 서비스 지도와 흐름 목록 (브라우저)</text>
+        <text x="810" y="130" class="d-mono">cilium hubble ui</text>
+        <text x="810" y="150" class="d-mono">cilium hubble port-forward</text>
+        <rect x="20" y="250" width="1140" height="230" rx="12" class="d-pool"/>
+        <text x="40" y="276" class="d-lbl">노드마다 (DaemonSet, 4대 모두)</text>
+        <rect x="40" y="292" width="420" height="170" rx="12" class="d-agent"/>
+        <text x="60" y="320" class="d-ttl">cilium-agent</text>
+        <text x="60" y="346" class="d-sub">엔드포인트 관리, identity 계산, 정책 계산</text>
+        <text x="60" y="370" class="d-sub">eBPF 적재, 맵 채우기, IPAM</text>
+        <text x="60" y="394" class="d-sub">Hubble observer (흐름 링 버퍼)</text>
+        <text x="60" y="420" class="d-mono">/var/run/cilium/cilium.sock</text>
+        <text x="60" y="440" class="d-mono">hubble: :4244 + hubble.sock</text>
+        <rect x="490" y="292" width="200" height="74" rx="12" class="d-prov-box"/>
+        <text x="508" y="320" class="d-ttl-s">cilium-cni</text>
+        <text x="508" y="344" class="d-sub">containerd 가 실행</text>
+        <rect x="490" y="388" width="200" height="74" rx="12" class="d-card"/>
+        <text x="508" y="416" class="d-ttl-s">cilium-envoy</text>
+        <text x="508" y="440" class="d-sub">L7 정책 프록시</text>
+        <rect x="720" y="292" width="420" height="170" rx="12" class="d-plain-box"/>
+        <text x="740" y="320" class="d-ttl">커널 (eBPF)</text>
+        <text x="740" y="346" class="d-sub">파드 veth 마다 bpf_lxc</text>
+        <text x="740" y="370" class="d-sub">cilium_host·eth0 에 bpf_host</text>
+        <text x="740" y="394" class="d-sub">cilium_vxlan 에 bpf_overlay</text>
+        <text x="740" y="420" class="d-sub">맵: ipcache, 정책, CT, 서비스, 이벤트</text>
+        <path d="M200 210 L200 290" class="d-e-api" marker-end="url(#f13-a)" marker-start="url(#f13-a)"/>
+        <path d="M585 210 L585 248" class="d-e-api"/>
+        <path d="M380 115 L418 115" class="d-e-api" marker-end="url(#f13-a)" marker-start="url(#f13-a)"/>
+        <path d="M460 330 L488 330" class="d-e-api" marker-end="url(#f13-a)" marker-start="url(#f13-a)"/>
+        <path d="M690 330 L718 330" class="d-e-api" marker-end="url(#f13-a)"/>
+        <path d="M975 210 L330 292" class="d-e-obs" marker-start="url(#f13-o)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-13.</b> Cilium 구성. 회색 실선은 API 호출(에이전트가 쿠버네티스 API 를 지켜봄, cilium-cni 가 에이전트 소켓을 부름), 청록 점선은 관측(relay 가 각 에이전트의 Hubble 서버 4244 에서 흐름을 끌어감)이다. 정책을 판단하는 코드는 노드마다 커널 안에 있고, API 서버가 잠깐 죽어도 이미 채운 맵으로 계속 집행된다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>엔드포인트, identity, ipcache, 정책 맵</h3>
+  <dl class="terms">
+    <dt>엔드포인트 (endpoint)</dt><dd>Cilium 이 관리하는 네트워크 단위. 보통 파드 하나 = 엔드포인트 하나. 노드 안에서 숫자 ID 를 갖고, 엔드포인트마다 자기 정책 맵을 갖는다. <code>CiliumEndpoint</code> CRD 로 다른 노드에도 알려진다.</dd>
+    <dt>identity</dt><dd>"보안에 의미 있는 라벨" 묶음에 붙는 클러스터 전역 숫자. 파드 라벨 + namespace 이름(<code>io.kubernetes.pod.namespace</code>) + namespace 라벨 + 서비스어카운트 등이 들어가고, <code>pod-template-hash</code> 처럼 매번 바뀌는 라벨은 빠진다. 같은 Deployment 의 파드 10개는 identity 하나를 공유한다.</dd>
+    <dt>예약 identity</dt><dd>1 <code>host</code>(이 노드), 2 <code>world</code>(클러스터 밖), 3 <code>unmanaged</code>, 4 <code>health</code>, 5 <code>init</code>(아직 모름), 6 <code>remote-node</code>, 7 <code>kube-apiserver</code>, 8 <code>ingress</code>. 0 은 unknown. 일반 identity 는 그보다 큰 번호.</dd>
+    <dt>ipcache</dt><dd>IP(또는 CIDR) → identity (+ 그 IP 가 있는 노드, 터널 끝점) 표. eBPF LPM 맵이다. 다른 노드 파드의 IP 를 보고 identity 를 알아내는 데 쓴다.</dd>
+    <dt>정책 맵</dt><dd>엔드포인트마다 하나. 키 = (상대 identity, 포트, 프로토콜, 방향), 값 = 허용 / 거부 / L7 프록시로 보냄. 정책 계산은 에이전트가 미리 해 두고, 데이터패스는 키 하나를 찾기만 한다.</dd>
+  </dl>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1180 420" role="img" aria-labelledby="f14-t">
+        <title id="f14-t">라벨에서 identity, ipcache, 정책 맵으로 이어지는 조회</title>
+        <defs>
+          <marker id="f14-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f14-g" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-git"/></marker>
+        </defs>
+        <rect x="20" y="20" width="350" height="170" rx="12" class="d-card"/>
+        <text x="38" y="48" class="d-ttl-s">kourier 파드의 보안 라벨</text>
+        <text x="38" y="76" class="d-mono">k8s:app=3scale-kourier-gateway</text>
+        <text x="38" y="98" class="d-mono">k8s:io.kubernetes.pod.namespace</text>
+        <text x="38" y="118" class="d-mono">  =kourier-system</text>
+        <text x="38" y="140" class="d-mono">k8s:io.cilium.k8s.namespace.labels</text>
+        <text x="38" y="160" class="d-mono">  .kubernetes.io/metadata.name=...</text>
+        <rect x="420" y="20" width="300" height="170" rx="12" class="d-agent"/>
+        <text x="438" y="48" class="d-ttl-s">identity 할당</text>
+        <text x="438" y="76" class="d-sub">같은 라벨 묶음 → 같은 숫자</text>
+        <text x="438" y="100" class="d-sub">CRD 모드: CiliumIdentity 객체</text>
+        <text x="438" y="124" class="d-mono">예: 21001 (숫자는 예시)</text>
+        <rect x="770" y="20" width="390" height="170" rx="12" class="d-obs-box"/>
+        <text x="788" y="48" class="d-ttl-s">ipcache (모든 노드에 같은 내용)</text>
+        <text x="788" y="76" class="d-mono">10.244.1.12/32 → 21001 (노드 worker)</text>
+        <text x="788" y="98" class="d-mono">10.244.3.21/32 → 30577 (노드 worker3)</text>
+        <text x="788" y="120" class="d-mono">10.244.1.40/32 → 41220 (tenant-b)</text>
+        <text x="788" y="142" class="d-mono">0.0.0.0/0      → 2 (world)</text>
+        <rect x="20" y="230" width="700" height="170" rx="12" class="d-cp-box"/>
+        <text x="38" y="258" class="d-ttl-s">tenant-a/hello 엔드포인트의 정책 맵 (ingress 쪽)</text>
+        <text x="38" y="288" class="d-mono">(30577 = tenant-a 자기 자신들, 모든 포트) → 허용   allow-same-namespace</text>
+        <text x="38" y="312" class="d-mono">(21001 = kourier,   모든 포트)           → 허용   allow-from-namespaces</text>
+        <text x="38" y="336" class="d-mono">(activator·autoscaler identity, 모든 포트) → 허용   allow-from-namespaces</text>
+        <text x="38" y="360" class="d-mono">(41220 = tenant-b, ...)                  → 항목 없음 = DROP</text>
+        <text x="38" y="384" class="d-sub">키에 없으면 거부. 그래서 "막는 규칙" 이 필요 없다.</text>
+        <rect x="770" y="230" width="390" height="170" rx="12" class="d-card"/>
+        <text x="788" y="258" class="d-ttl-s">들어온 패킷 판단</text>
+        <text x="788" y="286" class="d-sub">1. 출발 identity 알아내기</text>
+        <text x="788" y="308" class="d-sub">   터널이면 VXLAN VNI, 아니면 ipcache</text>
+        <text x="788" y="332" class="d-sub">2. 정책 맵[(identity, 포트, 프로토콜)]</text>
+        <text x="788" y="356" class="d-sub">3. 있으면 통과, 없으면 DROP + 이벤트</text>
+        <path d="M370 105 L418 105" class="d-e-api" marker-end="url(#f14-a)"/>
+        <path d="M720 105 L768 105" class="d-e-api" marker-end="url(#f14-a)"/>
+        <path d="M570 190 L570 228" class="d-e-git" marker-end="url(#f14-g)"/>
+        <path d="M965 190 L965 228" class="d-e-api" marker-end="url(#f14-a)"/>
+        <path d="M768 315 L722 315" class="d-e-api" marker-end="url(#f14-a)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-14.</b> identity 기반 정책 조회. 라벨 → identity 숫자 → ipcache 가 IP 와 숫자를 잇고, 각 파드의 정책 맵은 "어느 숫자에게 어느 포트를 허용" 만 담는다. 초록 화살표는 NetworkPolicy 선택자가 맞는 identity 를 정책 맵 키로 바꿔 넣는 과정이다. 숫자와 라벨 이름은 설명용 예시다 (Kourier 파드의 실제 라벨은 <code>kubectl -n kourier-system get pods --show-labels</code>).</figcaption>
+  </figure>
+  <pre class="mermaid">
+sequenceDiagram
+  participant API as 쿠버네티스 API
+  participant AG as 이 노드 cilium-agent
+  participant OT as 다른 노드 agent들
+  participant BPF as 커널 맵
+  API->>AG: 새 파드 tenant-a/hello (라벨, 노드=나)
+  AG->>AG: 보안 라벨 추리기
+  AG->>API: 이 라벨 묶음의 CiliumIdentity 있나, 없으면 생성
+  API-->>AG: identity 번호
+  AG->>API: CiliumEndpoint 갱신 (IP, identity)
+  API-->>OT: CiliumEndpoint 변경 알림
+  OT->>BPF: 각자 ipcache 에 IP → identity 넣기
+  AG->>AG: 이 엔드포인트에 걸리는 NetworkPolicy 계산
+  AG->>BPF: 정책 맵 채우기, bpf_lxc 붙이기
+  Note over AG,BPF: 다른 파드의 정책 맵도 새 identity 가 선택자에 맞으면 갱신
+  </pre>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>tenant-b 공격자 → tenant-a 함수: 패킷이 버려지는 순서</h3>
+  <p>06 단계 <code>s4-tenant-breach.sh</code> 의 N2(tenant-a 파드 IP 직접)를 따라간다. 공격자 파드는 toleration 이 없어서 system 노드(faas-worker)에, tenant-a 의 Knative 함수 파드는 exec 노드(faas-worker3)에 있다고 하자.</p>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1180 520" role="img" aria-labelledby="f15-t">
+        <title id="f15-t">tenant-b 파드에서 tenant-a 파드로 가는 SYN 이 두 번의 정책 검사에서 버려지는 길</title>
+        <defs>
+          <marker id="f15-u" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+          <marker id="f15-f" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+          <marker id="f15-o" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-obs"/></marker>
+        </defs>
+        <rect x="20" y="20" width="540" height="480" rx="12" class="d-pool"/>
+        <text x="40" y="46" class="d-lbl">faas-worker (system 노드)</text>
+        <rect x="40" y="62" width="500" height="70" rx="10" class="d-agent"/>
+        <text x="58" y="90" class="d-ttl-s">① tenant-b/attacker</text>
+        <text x="58" y="114" class="d-mono">curl http://10.244.3.21:8012/ → SYN</text>
+        <rect x="40" y="152" width="500" height="150" rx="10" class="d-obs-box"/>
+        <text x="58" y="180" class="d-ttl-s">② lxc 장치 tc: bpf_lxc (파드에서 나감)</text>
+        <text x="58" y="206" class="d-sub">서비스 IP 가 아니니 DNAT 없음</text>
+        <text x="58" y="230" class="d-sub">ipcache[10.244.3.21] → tenant-a identity, 노드 worker3</text>
+        <text x="58" y="254" class="d-sub">③ tenant-b 의 egress 정책 맵 조회</text>
+        <text x="58" y="278" class="d-subd">tenant-a identity 항목 없음 → DROP (Policy denied)</text>
+        <rect x="40" y="322" width="500" height="80" rx="10" class="d-fail-box"/>
+        <text x="58" y="350" class="d-ttl-s">기본 결과: 여기서 끝</text>
+        <text x="58" y="374" class="d-sub">SYN 은 노드 밖으로 나가지도 않는다. curl 은 3초 뒤 000</text>
+        <rect x="40" y="420" width="500" height="66" rx="10" class="d-card"/>
+        <text x="58" y="446" class="d-sub">이 노드 에이전트의 Hubble 에 기록:</text>
+        <text x="58" y="468" class="d-mono">tenant-b/attacker → tenant-a/… DROPPED</text>
+        <rect x="620" y="20" width="540" height="480" rx="12" class="d-pool"/>
+        <text x="640" y="46" class="d-lbl">faas-worker3 (exec 노드)</text>
+        <rect x="640" y="62" width="500" height="110" rx="10" class="d-plain-box"/>
+        <text x="658" y="90" class="d-ttl-s">④ tenant-b 정책을 지웠다면</text>
+        <text x="658" y="114" class="d-sub">③ 통과 → CT 기록 → VXLAN (VNI = tenant-b identity)</text>
+        <text x="658" y="138" class="d-sub">cilium_vxlan 에서 bpf_overlay 가 캡슐 벗김</text>
+        <text x="658" y="160" class="d-sub">목적지 엔드포인트 = tenant-a/hello</text>
+        <rect x="640" y="192" width="500" height="110" rx="10" class="d-obs-box"/>
+        <text x="658" y="220" class="d-ttl-s">⑤ tenant-a 의 ingress 정책 맵 조회</text>
+        <text x="658" y="244" class="d-sub">(tenant-b identity, 8012, TCP) 항목 없음</text>
+        <text x="658" y="268" class="d-subd">→ DROP (Policy denied). 방어가 양쪽에 있다</text>
+        <rect x="640" y="322" width="500" height="80" rx="10" class="d-agent"/>
+        <text x="658" y="350" class="d-ttl-s">tenant-a/hello 파드</text>
+        <text x="658" y="374" class="d-sub">queue-proxy 8012 까지 오지 못함</text>
+        <rect x="640" y="420" width="500" height="66" rx="10" class="d-card"/>
+        <text x="658" y="446" class="d-sub">이 경우 기록은 exec 노드 에이전트 Hubble 에:</text>
+        <text x="658" y="468" class="d-mono">ingress DROPPED, policy denied</text>
+        <path d="M290 132 L290 150" class="d-e-user" marker-end="url(#f15-u)"/>
+        <path d="M290 302 L290 320" class="d-e-fail" marker-end="url(#f15-f)"/>
+        <path d="M540 230 L638 118" class="d-e-user" marker-end="url(#f15-u)"/>
+        <path d="M890 172 L890 190" class="d-e-user" marker-end="url(#f15-u)"/>
+        <path d="M890 302 L890 320" class="d-e-fail" marker-end="url(#f15-f)"/>
+        <path d="M200 402 L200 418" class="d-e-obs" marker-end="url(#f15-o)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-15.</b> 두 겹 방어. 평소에는 ③ 출발지(tenant-b)의 egress 정책이 먼저 막아서 패킷이 노드를 떠나지도 않는다. tenant-b 정책이 사라지면 ④ 터널을 건너가지만 ⑤ 도착지(tenant-a)의 ingress 정책이 다시 막는다. 06 깨뜨리기에서 tenant-b 정책을 지워도 N1·N2 가 PASS 인 이유가 ⑤ 다 (12절). 파란 실선 = 사용자 트래픽, 빨간 점선 = 버려짐.</figcaption>
+  </figure>
+  <pre class="pseudo"><code><span class="c">// 에이전트가 미리 하는 일 (정책 계산)</span>
+<span class="k">각</span> 엔드포인트 E 에 대해:
+  적용정책 = { P ∈ NetworkPolicy | P.namespace == E.namespace 그리고 P.podSelector 가 E.라벨에 맞음 }
+  <span class="k">각</span> 방향 d ∈ {ingress, egress}:
+    <span class="k">만약</span> 적용정책 중 policyTypes 에 d 가 있는 것이 없음: E 는 d 방향 "격리 안 됨" → 전부 허용 표시
+    <span class="k">아니면</span>:
+      허용키 = ∅
+      <span class="k">각</span> 규칙 R ∈ 그 정책들의 d 목록:
+        상대 identity 들 = R 의 from/to 선택자에 맞는 모든 identity  <span class="c">// 라벨 대조</span>
+        허용키 ∪= { (id, 포트, 프로토콜) | id ∈ 상대 identity 들, 포트 ∈ R.ports 또는 전부 }
+      정책맵[E][d] = 허용키      <span class="c">// 합집합. 거부 규칙은 없다</span>
+<span class="c">// 데이터패스 (패킷마다)</span>
+id = (터널이면 VNI) 아니면 ipcache[상대 IP]
+<span class="k">만약</span> CT 에 이미 허용된 연결의 답장: 통과
+<span class="k">만약</span> 정책맵[E][d] 에 (id, 포트, 프로토콜) 또는 (id, 전부) 또는 (전부, 포트): 통과
+<span class="k">아니면</span>: DROP, 사유 POLICY_DENIED, 이벤트 → Hubble</code></pre>
+  <div class="code-head"><span>확인 명령 (읽기만)</span><span>cilium-dbg</span></div>
+  <pre><code>kubectl -n kube-system exec ds/cilium -c cilium-agent -- cilium-dbg endpoint list
+<span class="c"># ENDPOINT, POLICY (ingress/egress Enabled), IDENTITY, LABELS, IPv4, STATUS</span>
+kubectl -n kube-system exec ds/cilium -c cilium-agent -- cilium-dbg identity list
+<span class="c"># identity 숫자와 라벨 묶음. 1~8 예약 identity 도 보인다</span>
+kubectl -n kube-system exec ds/cilium -c cilium-agent -- cilium-dbg bpf ipcache list | head
+kubectl -n kube-system exec ds/cilium -c cilium-agent -- cilium-dbg bpf policy get &lt;엔드포인트ID&gt;
+<span class="c"># 그 파드의 정책 맵: 허용된 identity, 포트, 방향</span>
+kubectl -n kube-system exec ds/cilium -c cilium-agent -- cilium-dbg monitor --type drop
+<span class="c"># 실시간 drop 이벤트 (Hubble 이 없을 때도 볼 수 있는 원천)</span></code></pre>
+  <p>주의: <code>kubectl exec ds/cilium</code> 은 DaemonSet 파드 중 <b>하나</b> 에만 들어간다. 엔드포인트·정책 맵·Hubble 기록은 노드마다 다르므로, 보고 싶은 파드가 있는 노드의 cilium 파드를 골라야 한다 (<code>kubectl -n kube-system get pods -l k8s-app=cilium -o wide</code>). test-isolation.sh 가 모든 cilium 파드를 돌며 hubble observe 를 부르는 이유다.</p>
+  <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+  <p>테넌트 namespace 의 모든 파드는 차트가 붙인 정책 덕에 ingress·egress 둘 다 "정책 적용" 상태다 (<code>cilium-dbg endpoint list</code> 의 POLICY 열이 Enabled). fn-demo 처럼 정책이 없는 namespace 의 파드는 Disabled 다. 그래서 test-isolation 의 <code>fn-demo -&gt; b</code> 는 출발지에서는 통과하고 tenant-b ingress 에서 버려지고, <code>a -&gt; b</code> 는 tenant-a egress 에서 먼저 버려진다. 같은 BLOCKED 라도 버려지는 노드가 다르다.</p></aside>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+  <p><b>증상</b>: 정책을 바꿨는데 몇 초 동안 예전처럼 동작한다. <b>원인</b>: 에이전트가 새 정책을 계산해 맵에 넣기까지 시간이 걸린다. 공식 문서도 "새 정책이 언제 적용됐는지 API 로는 알 수 없다" 고 한다. <b>볼 곳</b>: <code>cilium-dbg endpoint list</code> 의 STATUS 가 <code>ready</code> 인지, <code>regenerating</code> 이면 기다린다. 측정 스크립트가 정책 변경 직후 바로 재지 않는 이유다.</p></aside>
+  <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
+  <p>IP 기반 방화벽(iptables 의 출발 IP 규칙)은 파드가 다시 뜰 때마다 규칙을 고쳐야 한다. Knative 처럼 파드가 0↔N 을 오가면 규칙이 계속 흔들린다. identity 기반은 같은 라벨의 파드가 몇 개든 키 하나로 끝나고, 새 파드는 ipcache 한 줄만 추가된다. 대가는 identity 가 라벨에서 나오므로 <b>라벨을 바꿀 수 있는 사람이 정책을 우회할 수 있다</b> 는 점이다. 그래서 테넌트 RBAC 에서 namespace 라벨 수정 권한을 주지 않는다 (3장 RBAC).</p></aside>
+  <aside class="callout fact"><p class="callout-title">공식 문서</p>
+  <p><a href="https://docs.cilium.io/en/stable/overview/component-overview/">Cilium: Component Overview</a> · <a href="https://docs.cilium.io/en/stable/gettingstarted/terminology/">Terminology (Endpoint, Identity, 예약 라벨)</a> · <a href="https://docs.cilium.io/en/stable/security/network/identity/">Identity-Based security</a> · <a href="https://docs.cilium.io/en/stable/network/ebpf/maps/">eBPF Maps</a> · <a href="https://docs.cilium.io/en/stable/network/ebpf/lifeofapacket/">Life of a Packet</a> · <a href="https://docs.cilium.io/en/stable/cmdref/cilium-dbg/">cilium-dbg 명령 참조</a></p></aside>
+</div>
+
+<h2 id="netpol">8. NetworkPolicy 의미론과 우리 정책 4장</h2>
+
+<div class="tier" data-tier="1">
+  <h3>NetworkPolicy 는 "허용 목록" 이고, 막는 건 CNI 다</h3>
+  <p>NetworkPolicy 는 쿠버네티스 API 에 저장되는 <b>규칙 문서</b> 다. API 서버는 저장만 하고, 집행은 CNI 가 한다. 공식 문서도 "이를 구현하는 컨트롤러 없이 NetworkPolicy 를 만들면 아무 효과가 없다" 고 쓴다. 에러도 안 나서 더 위험하다. 06 단계에서 kindnet 이 커널 문제로 정책을 무시했는데 YAML 은 멀쩡히 들어가 있었던 것이 정확히 그 경우다.</p>
+  <p>읽는 법은 네 줄이면 된다.</p>
+  <ol>
+    <li>파드는 기본으로 <b>열려 있다</b> (격리 안 됨).</li>
+    <li>어떤 정책이 그 파드를 <code>podSelector</code> 로 고르고 <code>policyTypes</code> 에 방향(Ingress/Egress)을 적으면, 그 방향은 <b>격리</b> 된다. 이제 허용 목록에 있는 것만 통과한다.</li>
+    <li>여러 정책이 같은 파드를 고르면 허용 목록은 <b>합집합</b> 이다. "막는" 규칙은 없고, 정책끼리 충돌하지 않으며, 순서도 상관없다.</li>
+    <li>연결 하나가 되려면 <b>보내는 파드의 egress 와 받는 파드의 ingress 가 둘 다</b> 허용해야 한다. 허용된 연결의 답장은 자동으로 허용된다.</li>
+  </ol>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 400" role="img" aria-labelledby="f16-t">
+        <title id="f16-t">from 목록 항목 하나 안의 두 선택자(AND)와 항목 두 개(OR)의 차이</title>
+        <rect x="20" y="20" width="450" height="360" rx="12" class="d-card"/>
+        <text x="40" y="50" class="d-ttl">항목 하나 = AND</text>
+        <rect x="40" y="66" width="410" height="110" rx="8" class="d-plain-box"/>
+        <text x="56" y="92" class="d-mono">- to:</text>
+        <text x="56" y="112" class="d-mono">    - namespaceSelector: {name: kube-system}</text>
+        <text x="56" y="132" class="d-mono">      podSelector: {k8s-app: kube-dns}</text>
+        <text x="56" y="160" class="d-sub">두 선택자가 같은 "-" 아래에 있다</text>
+        <rect x="80" y="200" width="330" height="160" rx="12" class="d-pool"/>
+        <text x="96" y="224" class="d-lbl">kube-system</text>
+        <rect x="100" y="240" width="130" height="50" rx="8" class="d-cp-box"/>
+        <text x="114" y="270" class="d-subd">CoreDNS ✓</text>
+        <rect x="250" y="240" width="140" height="50" rx="8" class="d-plain-box"/>
+        <text x="264" y="270" class="d-sub">다른 파드 ✗</text>
+        <text x="96" y="330" class="d-sub">다른 ns 의 kube-dns 라벨 파드 ✗</text>
+        <rect x="490" y="20" width="450" height="360" rx="12" class="d-card"/>
+        <text x="510" y="50" class="d-ttl">항목 둘 = OR</text>
+        <rect x="510" y="66" width="410" height="110" rx="8" class="d-fail-box"/>
+        <text x="526" y="92" class="d-mono">- to:</text>
+        <text x="526" y="112" class="d-mono">    - namespaceSelector: {name: kube-system}</text>
+        <text x="526" y="132" class="d-mono">    - podSelector: {k8s-app: kube-dns}</text>
+        <text x="526" y="160" class="d-sub">"-" 가 하나 더 붙었다</text>
+        <rect x="550" y="200" width="330" height="160" rx="12" class="d-pool"/>
+        <text x="566" y="224" class="d-lbl">kube-system</text>
+        <rect x="570" y="240" width="130" height="50" rx="8" class="d-cp-box"/>
+        <text x="584" y="270" class="d-subd">CoreDNS ✓</text>
+        <rect x="720" y="240" width="140" height="50" rx="8" class="d-warn-box"/>
+        <text x="734" y="270" class="d-subd">다른 파드 ✓</text>
+        <text x="566" y="318" class="d-sub">+ 내 ns 의 kube-dns 라벨 파드 ✓</text>
+        <text x="566" y="340" class="d-sub">(podSelector 만 있으면 내 ns 기준)</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-16.</b> YAML 들여쓰기 한 칸이 보안 경계를 바꾼다. 왼쪽(우리 allow-dns)은 "kube-system 에 있으면서 kube-dns 인 파드" 만, 오른쪽은 "kube-system 의 모든 파드 또는 내 namespace 의 kube-dns 라벨 파드" 를 연다. 포트 53 제한이 같이 있어도 kube-system 의 아무 파드나 53번을 열면 닿는다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>판정 알고리즘과 선택자 모양</h3>
+  <pre class="mermaid">
+flowchart TD
+  A["연결 시도 src 파드 S → dst 파드 D:포트"] --> B{"S 를 고르고 Egress 가 있는<br/>정책이 하나라도 있나"}
+  B -- "없음" --> C["S 쪽 통과 (격리 안 됨)"]
+  B -- "있음" --> E{"그 정책들의 egress 목록 합집합에<br/>D 와 포트가 맞는 규칙?"}
+  E -- "없음" --> X["DROP (출발 노드에서)"]
+  E -- "있음" --> C
+  C --> F{"D 를 고르고 Ingress 가 있는<br/>정책이 하나라도 있나"}
+  F -- "없음" --> OK["허용"]
+  F -- "있음" --> G{"S 가 D 의 노드인가"}
+  G -- "예" --> OK
+  G -- "아니오" --> H{"ingress 목록 합집합에<br/>S 와 포트가 맞는 규칙?"}
+  H -- "있음" --> OK
+  H -- "없음" --> Y["DROP (도착 노드에서)"]
+  OK --> Z["conntrack 에 기록, 답장은 자동 허용"]
+  </pre>
+  <div class="table-wrap"><table>
+  <thead><tr><th>쓴 모양</th><th>뜻</th></tr></thead>
+  <tbody>
+  <tr><td><code>spec.podSelector: {}</code></td><td>이 namespace 의 모든 파드에 정책 적용</td></tr>
+  <tr><td><code>policyTypes</code> 생략</td><td>Ingress 는 항상 들어가고, egress 규칙이 있으면 Egress 도 들어간다. 헷갈리니 항상 적는다</td></tr>
+  <tr><td><code>ingress:</code> 생략 또는 <code>[]</code> + policyTypes 에 Ingress</td><td>들어오는 것 전부 거부 (기본 거부)</td></tr>
+  <tr><td><code>ingress: [{}]</code></td><td>들어오는 것 전부 허용 (규칙 하나, 조건 없음)</td></tr>
+  <tr><td><code>from: [{podSelector: {}}]</code></td><td>같은 namespace 의 모든 파드</td></tr>
+  <tr><td><code>from: [{namespaceSelector: {}}]</code></td><td>모든 namespace 의 모든 파드 (클러스터 밖은 아님)</td></tr>
+  <tr><td><code>namespaceSelector</code> + <code>podSelector</code> 한 항목</td><td>그 namespace 들 안의 그 라벨 파드 (AND)</td></tr>
+  <tr><td><code>ipBlock: {cidr, except}</code></td><td>IP 대역. 클러스터 밖 주소용. 파드 IP 는 바뀌므로 쓰지 말 것. 서비스 NAT 전후 어느 주소에 적용되는지는 구현마다 다르다고 공식 문서가 경고</td></tr>
+  <tr><td><code>ports: [{port: http}]</code></td><td>이름 붙은 포트(named port). 파드마다 실제 번호가 달라도 이름으로 맞춘다</td></tr>
+  <tr><td><code>ports: [{port: 32000, endPort: 32768}]</code></td><td>포트 범위</td></tr>
+  </tbody></table></div>
+  <p>공식 문서의 세부 몇 가지. ① 파드는 자기 자신으로 가는 연결을 막을 수 없다. ② "파드가 도는 노드와의 트래픽은 IP 와 무관하게 항상 허용" 된다. kubelet 의 생존·준비 프로브가 default-deny 에서도 동작하는 근거다. ③ 정책이 처리되기 전에 만든 파드는 잠깐 보호받지 못한 채 시작할 수 있고, 반대로 격리는 됐는데 허용이 아직 안 들어간 순간이 있을 수 있다. ④ NetworkPolicy 로 못 하는 것: 공통 게이트웨이 강제, TLS 관련, 노드 이름으로 고르기, <b>Service 이름으로 고르기</b>(라벨로 대신), 정책 위임.</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>우리 정책 4장을 한 줄씩</h3>
+  <div class="code-head"><span>poc/03-tenant-isolation/charts/tenant/templates/networkpolicy.yaml</span><span>발췌 (1, 2, 4)</span></div>
+  <pre><code><span class="c"># 1) 이 namespace 의 모든 파드: 들어오는 것·나가는 것 전부 차단</span>
+<span class="k">apiVersion</span>: networking.k8s.io/v1
+<span class="k">kind</span>: NetworkPolicy
+<span class="k">metadata</span>:
+  <span class="k">name</span>: default-deny-all
+  <span class="k">namespace</span>: {{ .Values.name }}
+<span class="k">spec</span>:
+  <span class="k">podSelector</span>: {}
+  <span class="k">policyTypes</span>:
+    - Ingress
+    - Egress
+---
+<span class="c"># 2) 같은 namespace 파드끼리는 주고받기 허용</span>
+<span class="c">#    (apiVersion·kind·metadata.namespace 줄은 1) 과 같아서 생략)</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: allow-same-namespace
+<span class="k">spec</span>:
+  <span class="k">podSelector</span>: {}
+  <span class="k">policyTypes</span>:
+    - Ingress
+    - Egress
+  <span class="k">ingress</span>:
+    - <span class="k">from</span>:
+        - <span class="k">podSelector</span>: {}
+  <span class="k">egress</span>:
+    - <span class="k">to</span>:
+        - <span class="k">podSelector</span>: {}
+{{- if .Values.network.allowFromNamespaces }}
+---
+<span class="c"># 4) 지정한 namespace(예: 공용 게이트웨이)에서 들어오는 것만 허용</span>
+<span class="k">metadata</span>:
+  <span class="k">name</span>: allow-from-namespaces
+<span class="k">spec</span>:
+  <span class="k">podSelector</span>: {}
+  <span class="k">policyTypes</span>:
+    - Ingress
+  <span class="k">ingress</span>:
+    - <span class="k">from</span>:
+      {{- range .Values.network.allowFromNamespaces }}
+        - <span class="k">namespaceSelector</span>:
+            <span class="k">matchLabels</span>:
+              <span class="k">kubernetes.io/metadata.name</span>: {{ . }}
+      {{- end }}
+{{- end }}</code></pre>
+  <div class="table-wrap"><table>
+  <thead><tr><th>정책</th><th>고르는 파드</th><th>방향</th><th>허용</th><th>한 줄 해설</th></tr></thead>
+  <tbody>
+  <tr><td><code>default-deny-all</code></td><td>전부</td><td>In, Out</td><td>없음</td><td>두 방향을 격리 상태로 만든다. 허용 목록이 비었으니 이 정책 혼자서는 "전부 막기"</td></tr>
+  <tr><td><code>allow-same-namespace</code></td><td>전부</td><td>In, Out</td><td>같은 ns 파드</td><td><code>from/to: podSelector: {}</code> 에 namespaceSelector 가 없으니 "정책이 있는 namespace 안의 모든 파드"</td></tr>
+  <tr><td><code>allow-dns</code></td><td>전부</td><td>Out</td><td>kube-system 의 kube-dns 파드, 53 UDP/TCP</td><td>5절. AND 선택자</td></tr>
+  <tr><td><code>allow-from-namespaces</code></td><td>전부</td><td>In</td><td>values 에 적은 namespace 의 모든 파드, 모든 포트</td><td>목록이 비면 <code>{{- if }}</code> 때문에 아예 렌더링되지 않는다. 목록 항목마다 <code>- namespaceSelector</code> 를 따로 만드니 namespace 끼리는 OR</td></tr>
+  </tbody></table></div>
+  <p>합치면 tenant-a 파드의 최종 허용은 이렇다. <b>들어오기</b> = 같은 ns ∪ knative-serving ∪ kourier-system (+ 노드 자신). <b>나가기</b> = 같은 ns ∪ CoreDNS:53. 인터넷, API 서버, 다른 테넌트, 169.254.169.254 는 나가기에 없으니 막힌다 (06 s4 의 N3·N4).</p>
+  <p>재미있는 점 하나. <code>allow-same-namespace</code> 가 이미 같은 파드들을 고르고 두 방향 다 policyTypes 에 적었으므로, 이것만 있어도 두 방향이 격리된다. 즉 <code>default-deny-all</code> 은 의미상 <b>중복</b> 이다. 그래도 두는 이유는 의도를 드러내고, 누군가 allow 정책을 지우거나 고쳐도 "기본 거부" 가 남게 하는 안전띠다. 거꾸로, 공격자 쪽 정책을 "지워서" 실험할 때는 <code>default-deny-all</code> 하나만 지우면 아무것도 바뀌지 않는다는 뜻이기도 하다 (12절).</p>
+
+  <h4>10/20 이음새: Knative 트래픽이 테넌트 함수에 닿게</h4>
+  <div class="code-head"><span>poc/03-tenant-isolation/tenants/tenant-a.yaml</span><span>전체</span></div>
+  <pre><code><span class="c"># 테넌트 a. 이 파일 한 장이 (1) ApplicationSet 이 Application 을 찍어 내는 입력이고 (2) tenant 차트의 values 다.</span>
+<span class="k">name</span>: tenant-a
+<span class="k">quota</span>:
+  <span class="k">requestsCpu</span>: "1"
+  <span class="k">requestsMemory</span>: 1Gi
+  <span class="k">limitsCpu</span>: "2"
+  <span class="k">limitsMemory</span>: 2Gi
+  <span class="k">pods</span>: "10"
+  <span class="k">services</span>: "5"
+<span class="c"># 5단계 Knative 함수(tenant-a/hello)가 이 namespace 에 뜬다. 요청은 kourier-system(입구)이나</span>
+<span class="c"># knative-serving(activator: 파드가 0개일 때 요청을 잡아 두는 곳)을 거쳐 들어오고, autoscaler(knative-serving)가</span>
+<span class="c"># queue-proxy 지표를 긁으러 들어온다. 이 둘을 안 열면 default-deny 에 막혀 ksvc 가 READY 여도 curl 이 응답을 못 받는다.</span>
+<span class="k">network</span>:
+  <span class="k">allowFromNamespaces</span>: [knative-serving, kourier-system]</code></pre>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1180 470" role="img" aria-labelledby="f17-t">
+        <title id="f17-t">tenant-a 함수 파드로 들어오고 나가는 흐름: 허용과 차단</title>
+        <defs>
+          <marker id="f17-u" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+          <marker id="f17-o" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-obs"/></marker>
+          <marker id="f17-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f17-f" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+        </defs>
+        <rect x="20" y="20" width="300" height="100" rx="12" class="d-cp-box"/>
+        <text x="38" y="50" class="d-ttl-s">kourier-system</text>
+        <text x="38" y="74" class="d-sub">Kourier Envoy (입구)</text>
+        <text x="38" y="96" class="d-mono">→ 파드 8012 (요청)</text>
+        <rect x="20" y="140" width="300" height="130" rx="12" class="d-cp-box"/>
+        <text x="38" y="170" class="d-ttl-s">knative-serving</text>
+        <text x="38" y="194" class="d-sub">activator: 0개일 때 잡아 둠</text>
+        <text x="38" y="216" class="d-mono">→ 파드 8012 (요청, 프로브)</text>
+        <text x="38" y="238" class="d-sub">autoscaler: 지표 긁기</text>
+        <text x="38" y="258" class="d-mono">→ 파드 9090 【확인 필요】</text>
+        <rect x="20" y="290" width="300" height="70" rx="12" class="d-agent"/>
+        <text x="38" y="320" class="d-ttl-s">tenant-a 다른 파드</text>
+        <text x="38" y="344" class="d-sub">allow-same-namespace</text>
+        <rect x="20" y="380" width="300" height="70" rx="12" class="d-fail-box"/>
+        <text x="38" y="410" class="d-ttl-s">tenant-b · fn-demo</text>
+        <text x="38" y="434" class="d-sub">허용 목록에 없음</text>
+        <rect x="430" y="110" width="320" height="250" rx="12" class="d-pool"/>
+        <text x="450" y="136" class="d-lbl">namespace tenant-a · exec 노드</text>
+        <rect x="450" y="150" width="280" height="190" rx="12" class="d-agent"/>
+        <text x="468" y="178" class="d-ttl-s">hello 함수 파드</text>
+        <text x="468" y="206" class="d-mono">queue-proxy :8012</text>
+        <text x="468" y="228" class="d-mono">  지표 :9090</text>
+        <text x="468" y="256" class="d-mono">user-container :8080</text>
+        <text x="468" y="278" class="d-sub">(파드 안 localhost)</text>
+        <text x="468" y="314" class="d-sub">ingress 정책 4장 중 3장 적용</text>
+        <rect x="860" y="20" width="300" height="100" rx="12" class="d-cp-box"/>
+        <text x="878" y="50" class="d-ttl-s">kube-system CoreDNS</text>
+        <text x="878" y="74" class="d-sub">allow-dns</text>
+        <text x="878" y="96" class="d-mono">UDP/TCP 53</text>
+        <rect x="860" y="150" width="300" height="70" rx="12" class="d-fail-box"/>
+        <text x="878" y="180" class="d-ttl-s">API 서버</text>
+        <text x="878" y="204" class="d-sub">egress 에 없음 (s4 N3)</text>
+        <rect x="860" y="240" width="300" height="70" rx="12" class="d-fail-box"/>
+        <text x="878" y="270" class="d-ttl-s">인터넷 · 169.254.169.254</text>
+        <text x="878" y="294" class="d-sub">egress 에 없음 (s4 N4)</text>
+        <rect x="860" y="330" width="300" height="70" rx="12" class="d-fail-box"/>
+        <text x="878" y="360" class="d-ttl-s">tenant-b 파드</text>
+        <text x="878" y="384" class="d-sub">egress 에 없음</text>
+        <path d="M320 70 L448 180" class="d-e-user" marker-end="url(#f17-u)"/>
+        <path d="M320 205 L448 210" class="d-e-user" marker-end="url(#f17-u)"/>
+        <path d="M320 250 L448 235" class="d-e-obs" marker-end="url(#f17-o)"/>
+        <path d="M320 325 L448 300" class="d-e-api" marker-end="url(#f17-a)"/>
+        <path d="M320 415 L448 330" class="d-e-fail" marker-end="url(#f17-f)"/>
+        <path d="M730 170 L858 80" class="d-e-api" marker-end="url(#f17-a)"/>
+        <path d="M730 200 L858 185" class="d-e-fail" marker-end="url(#f17-f)"/>
+        <path d="M730 250 L858 275" class="d-e-fail" marker-end="url(#f17-f)"/>
+        <path d="M730 300 L858 360" class="d-e-fail" marker-end="url(#f17-f)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-17.</b> tenant-a 함수 파드의 최종 허용 지도. 왼쪽은 들어오는 쪽(ingress), 오른쪽은 나가는 쪽(egress). 파란 실선 = 사용자 요청, 청록 점선 = 지표 긁기, 회색 = 허용된 내부 호출, 빨간 점선 = 정책이 버리는 흐름. 10/20 전에는 왼쪽 위 세 화살표(Kourier·activator·autoscaler)도 빨간색이었다. queue-proxy 지표 포트 번호는 Knative 기본값 기준 【확인 필요: <code>kubectl -n tenant-a get pod -l serving.knative.dev/service=hello -o yaml | grep -A2 containerPort</code>】.</figcaption>
+  </figure>
+  <pre class="mermaid">
+sequenceDiagram
+  participant M as 맥 curl
+  participant K as Kourier (kourier-system)
+  participant AC as activator (knative-serving)
+  participant AS as autoscaler (knative-serving)
+  participant P as tenant-a/hello 파드
+  M->>K: Host hello.tenant-a.faas.local
+  K->>AC: 파드 0개라 activator 로 (Knative 가 경로 지정)
+  AC->>AS: 수요 있음 신호
+  AS->>AS: Deployment replicas 0 → 1
+  Note over P: exec 노드에 파드 생성, CNI ADD, 정책 맵 채움
+  AC->>P: 준비 확인 후 요청 전달 :8012
+  Note over AC,P: tenant-a ingress 검사 - knative-serving 허용이라 통과
+  P-->>AC: 응답
+  AC-->>K: 응답
+  K-->>M: 200
+  AS->>P: 지표 긁기 :9090 (주기적)
+  Note over AS,P: 이것도 knative-serving 출발이라 같은 규칙으로 통과
+  </pre>
+  <p>왜 READY 인데 안 닿았을까. Knative 의 Ready 조건은 "Revision 이 만들어지고 파드가 준비 프로브를 통과했다" 이다. 준비 프로브는 kubelet 이 <b>노드에서</b> 보내므로 정책의 "노드 예외" 로 통과한다. 그러니 ksvc 는 READY 가 된다. 그런데 실제 요청은 다른 namespace(kourier-system, knative-serving)의 파드가 보내므로 tenant-a 의 default-deny ingress 에 걸려 버려진다. 컨트롤 플레인이 보는 상태와 데이터 플레인의 실제 도달이 다른, 전형적인 "겉보기 정상" 장애다 (ANALYSIS.md B4).</p>
+  <pre class="pseudo"><code><span class="c">// helm template 이 tenant-a values 로 4) 를 렌더링하는 과정</span>
+<span class="k">만약</span> network.allowFromNamespaces 비어 있음: 4) 를 출력하지 않음        <span class="c">// tenant-b 가 이 경우</span>
+<span class="k">아니면</span>:
+  ingress.from = []
+  <span class="k">각</span> ns ∈ [knative-serving, kourier-system]:
+      from 에 항목 추가 { namespaceSelector: { kubernetes.io/metadata.name: ns } }
+  <span class="c">// 항목이 둘 → OR. 포트 제한 없음 → 그 namespace 의 아무 파드나 아무 포트로</span></code></pre>
+  <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+  <p>tenant-a 는 정책 4장, tenant-b 는 3장이다 (<code>tenants/tenant-b.yaml</code> 에 <code>network</code> 가 없어 기본값 <code>[]</code>). tenant-b 의 hello 는 Knative 가 아니라 01 단계 hello-fn(Deployment)이라 지금은 문제가 없지만, 05 컨트롤 플레인으로 tenant-b 에 함수를 배포하면 10/20 이전의 tenant-a 와 똑같이 "READY 인데 타임아웃" 이 된다. 차트 기본값으로 두지 않고 테넌트 파일에 둔 것은 "Knative 를 쓰는 테넌트만 연다" 는 선택이다.</p></aside>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: allow-from-namespaces 가 빠지면</p>
+  <p><b>증상</b>: <code>kubectl -n tenant-a get ksvc hello</code> 는 READY True, <code>curl -H "Host: hello.tenant-a.faas.local" localhost:8081</code> 은 한참 걸리다 실패(게이트웨이 타임아웃 또는 503). <b>볼 곳</b>: <code>kubectl -n tenant-a get networkpolicy</code>(allow-from-namespaces 가 있나), <code>hubble observe --namespace tenant-a --verdict DROPPED</code> 에 출발지 <code>kourier-system/…</code> 또는 <code>knative-serving/activator-…</code>. <b>고치기</b>: <code>tenants/tenant-a.yaml</code> 의 <code>network:</code> 복구 → push → Argo CD sync (ApplicationSet 새로고침이 급하면 RUN-ALL 4절 4번).</p></aside>
+  <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
+  <p>(가) namespace 단위로 연다(현재): 짧고, Knative 내부 파드 이름이 바뀌어도 안 깨진다. 대가는 knative-serving 의 <b>모든</b> 파드(controller, webhook 포함)가 테넌트 파드의 <b>모든</b> 포트에 닿는다는 것. (나) <code>namespaceSelector</code> + <code>podSelector</code>(activator, autoscaler, 3scale-kourier-gateway) + 포트 8012·9090 으로 좁히기: 더 안전하지만 Knative 버전마다 라벨·포트를 확인해야 한다. PoC 에서는 (가)를 두고, 본선 설계 문서에는 (나)를 "다음 단계" 로 적는다.</p></aside>
+  <aside class="callout warn"><p class="callout-title">주의: 레포 안의 엇갈린 설명</p>
+  <p>① 03 README 4.6 절의 기대 출력은 "NetworkPolicy 3장, 8종 10장" 인데, 10/20 이후 tenant-a 는 4장(11장)이 렌더링된다. ANALYSIS.md 의 검증 명령은 4개로 맞게 적혀 있다. ② 05 README 3절 표는 Knative → 테넌트 트래픽 칸을 아직 【미확인】으로 둔다 (이미 고쳤음). ③ 06 README 2절은 "tenant 네임스페이스 <b>egress</b> 정책에 kourier-system 이 열려 있어야" 라고 쓰는데, 실제로 필요한 것은 테넌트 <b>ingress</b> 에서 kourier-system 을 여는 것이다 (kourier-system 에는 정책이 없어 egress 는 이미 자유).</p></aside>
+  <aside class="callout fact"><p class="callout-title">공식 문서</p>
+  <p><a href="https://kubernetes.io/docs/concepts/services-networking/network-policies/">Kubernetes: Network Policies</a> · <a href="https://kubernetes.io/docs/reference/kubernetes-api/policy-resources/network-policy-v1/">NetworkPolicy API 참조</a> · <a href="https://github.com/ahmetb/kubernetes-network-policy-recipes">Network Policy Recipes (03 README 가 가리키는 예제 모음)</a> · <a href="https://docs.cilium.io/en/stable/security/policy/kubernetes/">Cilium: Kubernetes NetworkPolicy 지원</a> · <a href="https://knative.dev/docs/serving/architecture/">Knative Serving 아키텍처 (activator, autoscaler, queue-proxy)</a></p></aside>
+</div>
+
+<h2 id="cnp">9. CiliumNetworkPolicy: L7 HTTP 정책과 FQDN 정책</h2>
+
+<div class="tier" data-tier="1">
+  <h3>표준 정책이 못 하는 것을 Cilium 전용 정책으로</h3>
+  <p>표준 NetworkPolicy 는 L3/L4(IP, 포트)까지만 본다. "tenant-b 의 함수를 GET 으로만 부르게" 나 "api.github.com 으로만 나가게" 는 쓸 수 없다. Cilium 은 자기 CRD <b>CiliumNetworkPolicy(CNP)</b> 와 클러스터 전체용 <b>CiliumClusterwideNetworkPolicy(CCNP)</b> 로 이걸 더한다.</p>
+  <div class="grid">
+    <div class="item"><h4>L7 규칙</h4><p><code>toPorts.rules.http</code> 에 메서드·경로·헤더를 적는다. 해당 포트의 트래픽은 Envoy 프록시로 넘어가 HTTP 를 해석한 뒤 판단한다. 안 맞으면 HTTP 403.</p></div>
+    <div class="item"><h4>FQDN 규칙</h4><p><code>toFQDNs</code> 에 도메인 이름을 적는다. Cilium 의 DNS 프록시가 질의 응답을 엿보고 그 이름의 IP 만 열어 준다.</p></div>
+    <div class="item"><h4>엔티티와 거부 규칙</h4><p><code>fromEntities: [world, cluster, host, kube-apiserver]</code> 같은 예약 identity 로 고르기, <code>ingressDeny</code>·<code>egressDeny</code> 로 명시적 거부(거부가 허용보다 우선).</p></div>
+  </div>
+  <p>표준 정책과 CNP 는 같은 파드에 함께 걸 수 있고, 허용은 합집합, 거부 규칙은 허용보다 우선한다. 우리 PoC 의 기본은 표준 NetworkPolicy 이고, CNP 는 03 README 9절의 셀프 연습(L7)으로만 다룬다. 레포에는 CNP 파일이 없다.</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>L7 판단은 어디서 일어나나: Envoy 로 돌려보내기</h3>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1180 400" role="img" aria-labelledby="f18-t">
+        <title id="f18-t">L7 정책이 걸린 포트의 트래픽이 Envoy 로 돌려보내져 HTTP 규칙으로 판단되는 길</title>
+        <defs>
+          <marker id="f18-u" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+          <marker id="f18-f" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+          <marker id="f18-a" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <rect x="20" y="60" width="220" height="110" rx="12" class="d-agent"/>
+        <text x="38" y="90" class="d-ttl-s">tenant-a/iso-client</text>
+        <text x="38" y="116" class="d-mono">GET / , POST /</text>
+        <text x="38" y="140" class="d-sub">→ iso-echo.tenant-b</text>
+        <rect x="290" y="60" width="260" height="110" rx="12" class="d-obs-box"/>
+        <text x="308" y="90" class="d-ttl-s">bpf_lxc (eBPF)</text>
+        <text x="308" y="116" class="d-sub">정책 맵 값 = 프록시 포트</text>
+        <text x="308" y="140" class="d-sub">→ Envoy 로 돌려보냄</text>
+        <rect x="600" y="60" width="300" height="200" rx="12" class="d-card"/>
+        <text x="618" y="90" class="d-ttl-s">cilium-envoy (노드마다)</text>
+        <text x="618" y="116" class="d-sub">HTTP 를 끝까지 해석</text>
+        <text x="618" y="140" class="d-mono">rules.http:</text>
+        <text x="618" y="160" class="d-mono">  method GET, path /</text>
+        <text x="618" y="186" class="d-sub">맞으면 원래 목적지로 새 연결</text>
+        <text x="618" y="208" class="d-sub">안 맞으면 403 을 직접 응답</text>
+        <text x="618" y="232" class="d-sub">Hubble 에 L7 흐름 기록</text>
+        <rect x="950" y="60" width="210" height="110" rx="12" class="d-agent"/>
+        <text x="968" y="90" class="d-ttl-s">tenant-b/iso-echo</text>
+        <text x="968" y="116" class="d-mono">:5678</text>
+        <text x="968" y="140" class="d-sub">GET 만 도착</text>
+        <rect x="600" y="290" width="300" height="80" rx="12" class="d-fail-box"/>
+        <text x="618" y="320" class="d-ttl-s">POST /</text>
+        <text x="618" y="344" class="d-mono">403 Access denied</text>
+        <path d="M240 115 L288 115" class="d-e-user" marker-end="url(#f18-u)"/>
+        <path d="M550 115 L598 115" class="d-e-user" marker-end="url(#f18-u)"/>
+        <path d="M900 115 L948 115" class="d-e-user" marker-end="url(#f18-u)"/>
+        <path d="M750 260 L750 288" class="d-e-fail" marker-end="url(#f18-f)"/>
+        <path d="M600 330 L130 172" class="d-e-api" marker-end="url(#f18-a)"/>
+        <text x="300" y="250" class="d-lbl">403 응답이 클라이언트로</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-18.</b> L7 정책. L3/L4 판단은 커널에서 끝나지만, HTTP 규칙이 걸린 포트는 정책 맵 값에 "프록시 포트" 가 들어 있어 eBPF 가 패킷을 노드의 Envoy 로 돌린다. Envoy 는 요청을 끝까지 읽고 규칙에 맞으면 원래 목적지로, 아니면 403 을 돌려준다. L3/L4 에서 막힌 것은 타임아웃, L7 에서 막힌 것은 403 이라는 차이가 생긴다.</figcaption>
+  </figure>
+  <pre class="mermaid">
+sequenceDiagram
+  participant C as iso-client (tenant-a)
+  participant B as bpf_lxc
+  participant E as cilium-envoy
+  participant S as iso-echo (tenant-b)
+  C->>B: TCP SYN :5678
+  B->>E: 프록시 포트로 돌려보냄 (L7 규칙 있음)
+  C->>E: GET / HTTP/1.1
+  E->>E: rules.http 와 대조 - 일치
+  E->>S: GET / (새 연결)
+  S-->>E: 200 iso-echo
+  E-->>C: 200
+  C->>E: POST /
+  E->>E: 대조 - 불일치
+  E-->>C: 403 Access denied
+  </pre>
+  <h4>FQDN 정책의 동작</h4>
+  <p><code>toFQDNs</code> 는 IP 가 계속 바뀌는 바깥 서비스용이다. 동작 순서: ① 같은 정책에 DNS 규칙(<code>toPorts: 53, rules.dns: matchPattern</code>)을 함께 적어 파드의 DNS 질의가 Cilium DNS 프록시를 거치게 한다. ② 프록시가 응답을 보고 "api.github.com = 이 IP 들" 을 배운다. ③ 그 IP 들에 FQDN 선택자용 identity 를 붙여 ipcache 에 넣고, 정책 맵에 허용으로 넣는다. ④ DNS TTL 이 지나면 지운다. 그래서 파드가 DNS 를 거치지 않고 IP 를 직접 쓰면 열리지 않는다.</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>셀프 연습(03 README 9절) 을 YAML 로</h3>
+  <div class="code-head"><span>예시 (레포에 없음, 03 README 9절의 설명을 옮긴 것)</span><span>tenant-b 에 거는 CNP</span></div>
+  <pre><code><span class="k">apiVersion</span>: cilium.io/v2
+<span class="k">kind</span>: CiliumNetworkPolicy
+<span class="k">metadata</span>:
+  <span class="k">name</span>: allow-a-get-only
+  <span class="k">namespace</span>: tenant-b
+<span class="k">spec</span>:
+  <span class="k">endpointSelector</span>:
+    <span class="k">matchLabels</span>:
+      <span class="k">app</span>: iso-echo
+  <span class="k">ingress</span>:
+    - <span class="k">fromEndpoints</span>:
+        - <span class="k">matchLabels</span>:
+            <span class="k">k8s:io.kubernetes.pod.namespace</span>: tenant-a
+      <span class="k">toPorts</span>:
+        - <span class="k">ports</span>:
+            - <span class="k">port</span>: <span class="s">"5678"</span>
+              <span class="k">protocol</span>: TCP
+          <span class="k">rules</span>:
+            <span class="k">http</span>:
+              - <span class="k">method</span>: GET
+                <span class="k">path</span>: <span class="s">"/"</span></code></pre>
+  <ul>
+    <li><code>endpointSelector</code>: 표준의 <code>spec.podSelector</code> 에 해당. 정책이 걸리는 tenant-b 파드.</li>
+    <li><code>fromEndpoints</code> + <code>k8s:io.kubernetes.pod.namespace</code>: CNP 에서는 namespace 도 라벨처럼 고른다 (identity 에 들어 있는 라벨이기 때문). 정책이 있는 namespace 밖을 고르려면 이 라벨을 적어야 한다.</li>
+    <li><code>port: "5678"</code>: Service 포트 80 이 아니라 DNAT 뒤 컨테이너 포트 (4절).</li>
+    <li><code>rules.http</code>: 이 줄이 있으면 L7 프록시로 돌려보낸다. <code>path</code> 는 정규식이다.</li>
+    <li>이것만으로는 안 된다. tenant-a 의 표준 default-deny egress 가 tenant-b 로 나가는 것을 막고 있다. tenant-a 쪽에도 "tenant-b 의 iso-echo:5678 로 나가기" 를 허용하는 정책이 한 장 필요하다 (03 README 9절 주의). 그리고 tenant-b 의 ingress 는 표준 정책과 이 CNP 의 합집합이 된다.</li>
+  </ul>
+  <div class="code-head"><span>예시: FQDN 으로 나가기 허용 (레포에 없음)</span><span>모양</span></div>
+  <pre><code><span class="k">spec</span>:
+  <span class="k">endpointSelector</span>: {}
+  <span class="k">egress</span>:
+    - <span class="k">toEndpoints</span>:
+        - <span class="k">matchLabels</span>:
+            <span class="k">k8s:io.kubernetes.pod.namespace</span>: kube-system
+            <span class="k">k8s:k8s-app</span>: kube-dns
+      <span class="k">toPorts</span>:
+        - <span class="k">ports</span>: [{<span class="k">port</span>: <span class="s">"53"</span>, <span class="k">protocol</span>: ANY}]
+          <span class="k">rules</span>:
+            <span class="k">dns</span>: [{<span class="k">matchPattern</span>: <span class="s">"*"</span>}]
+    - <span class="k">toFQDNs</span>:
+        - <span class="k">matchName</span>: api.github.com
+      <span class="k">toPorts</span>:
+        - <span class="k">ports</span>: [{<span class="k">port</span>: <span class="s">"443"</span>, <span class="k">protocol</span>: TCP}]</code></pre>
+  <pre class="pseudo"><code><span class="c">// Envoy 의 L7 판단 (HTTP)</span>
+요청 = HTTP 파싱(연결)
+규칙들 = 이 (출발 identity, 목적지 엔드포인트, 포트) 의 http 규칙 목록
+<span class="k">만약</span> 규칙 중 하나라도 (method 일치 그리고 path 정규식 일치 그리고 headers 일치):
+    원래 목적지로 전달, Hubble 에 L7 FORWARDED (method, url, status)
+<span class="k">아니면</span>:
+    403 "Access denied" 응답, Hubble 에 L7 DROPPED
+<span class="c">// 연결 단위가 아니라 요청 단위 판단: 같은 keep-alive 연결 안에서도 GET 은 통과, POST 는 403</span></code></pre>
+  <div class="code-head"><span>poc/03-tenant-isolation/README.md 9절</span><span>통과 기준</span></div>
+  <pre><code>KEEP=1 poc/03-tenant-isolation/scripts/test-isolation.sh net &gt;/dev/null
+kubectl -n tenant-a exec iso-client -- curl -s -o /dev/null -w "%{http_code}\n" http://iso-echo.tenant-b       <span class="c"># 200</span>
+kubectl -n tenant-a exec iso-client -- curl -s -o /dev/null -w "%{http_code}\n" -X POST http://iso-echo.tenant-b   <span class="c"># 403</span></code></pre>
+  <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+  <p>L7·FQDN 정책은 셀프 연습 범위다. 정책은 울타리 오브젝트라 테넌트 AppProject 로는 못 넣고 관리자가 넣는 게 맞다 (03 README 9절). 차트에 넣는다면 <code>network.allowFromTenants: [{name: tenant-a, methods: [GET]}]</code> 같은 values 를 두고 템플릿에서 CNP 를 만드는 모양이 된다 (README 덤 질문).</p></aside>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+  <p><b>증상 1</b>: GET 도 POST 도 타임아웃. <b>원인</b>: tenant-a 쪽 egress 허용을 안 넣어 L3 에서 먼저 막힘. <b>볼 곳</b>: <code>hubble observe --from-namespace tenant-a --verdict DROPPED</code>. <b>증상 2</b>: 둘 다 200. <b>원인</b>: 표준 정책이나 다른 CNP 가 같은 포트를 L3/L4 로 통째 허용해 합집합으로 L7 제한이 무력화되었거나 【확인 필요: Cilium 의 L3/L4 허용과 L7 규칙 합집합 규칙】, 포트를 80 으로 적었다. <b>증상 3</b>: 403 이 아니라 연결 리셋. Envoy DaemonSet(<code>cilium-envoy</code>)이 안 떠 있다.</p></aside>
+  <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
+  <p>기본을 표준 NetworkPolicy 로 둔 이유는 이식성이다. 표준은 EKS(VPC CNI 의 NetworkPolicy), Calico, kindnet 어디로 가도 같은 뜻이다. CNP 만으로 쓰면 Cilium 을 빼는 순간 규칙이 사라진다 (03 결정 2). L7 은 서비스 메시(Istio 등)로도 할 수 있지만 사이드카·mTLS 까지 들고 와야 해서, "CNI 하나로 L3~L7" 이 PoC 설명에 더 짧다.</p></aside>
+  <aside class="callout fact"><p class="callout-title">공식 문서</p>
+  <p><a href="https://docs.cilium.io/en/stable/security/policy/language/">Cilium: Policy Language (L3·L4·L7, Entities, DNS)</a> · <a href="https://docs.cilium.io/en/stable/security/policy/language/#layer-7-examples">Layer 7 Examples</a> · <a href="https://docs.cilium.io/en/stable/security/dns/">Locking Down External Access with DNS-Based Policies</a> · <a href="https://docs.cilium.io/en/stable/security/network/proxy/envoy/">Envoy 프록시 통합</a> · <a href="https://docs.cilium.io/en/stable/network/kubernetes/ciliumendpoint/">CiliumEndpoint</a></p></aside>
+</div>
+
+<h2 id="hubble">10. Hubble: 버려진 패킷을 증거로 보기</h2>
+
+<div class="tier" data-tier="1">
+  <h3>Hubble 은 무엇을 보여 주나</h3>
+  <p>NetworkPolicy 가 막은 연결은 보내는 쪽에서 "타임아웃" 으로만 보인다. 왜 막혔는지, 어디서 막혔는지는 알 수 없다. <b>Hubble</b> 은 Cilium 데이터패스가 이미 내는 이벤트(전달, 버림, 정책 판정, L7)를 모아 "흐름(flow)" 기록으로 보여 준다. 한 줄 모양은 이렇다 (03 README 1.6).</p>
+  <pre><code>tenant-a/iso-client → tenant-b/iso-echo-xxx:5678 ... Policy denied DROPPED (TCP Flags: SYN)</code></pre>
+  <p>데모에서 "막혔다" 를 타임아웃이 아니라 <b>누가, 누구에게, 무슨 포트로, 무슨 이유로 DROPPED</b> 인지 보여 줄 수 있다. 이것이 kindnet 대신 Cilium 을 고른 첫째 이유다.</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>observer, relay, UI 의 구조</h3>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1180 430" role="img" aria-labelledby="f19-t">
+        <title id="f19-t">Hubble 구조: 노드마다 observer, relay 가 모아 CLI 와 UI 에 제공</title>
+        <defs>
+          <marker id="f19-o" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-obs"/></marker>
+          <marker id="f19-u" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+        </defs>
+        <rect x="20" y="20" width="560" height="390" rx="12" class="d-pool"/>
+        <text x="40" y="46" class="d-lbl">노드 하나 (4대 모두 같은 구조)</text>
+        <rect x="40" y="64" width="520" height="70" rx="10" class="d-obs-box"/>
+        <text x="58" y="92" class="d-ttl-s">eBPF 데이터패스</text>
+        <text x="58" y="116" class="d-sub">drop · trace · policy-verdict 이벤트 → perf 링 버퍼</text>
+        <rect x="40" y="160" width="520" height="130" rx="10" class="d-agent"/>
+        <text x="58" y="188" class="d-ttl-s">cilium-agent 안의 Hubble observer</text>
+        <text x="58" y="214" class="d-sub">이벤트를 Flow 로 해석 (identity → 파드·ns·라벨 붙임)</text>
+        <text x="58" y="238" class="d-sub">최근 흐름을 링 버퍼에 (기본 4095개, 넘치면 오래된 것부터)</text>
+        <text x="58" y="262" class="d-sub">DNS 이름, L7 HTTP 정보도 붙임</text>
+        <rect x="40" y="310" width="250" height="80" rx="10" class="d-card"/>
+        <text x="58" y="338" class="d-mono">hubble.sock (유닉스)</text>
+        <text x="58" y="362" class="d-sub">에이전트 안 hubble CLI</text>
+        <rect x="310" y="310" width="250" height="80" rx="10" class="d-card"/>
+        <text x="328" y="338" class="d-mono">:4244 (gRPC, TLS)</text>
+        <text x="328" y="362" class="d-sub">relay 가 붙는 곳</text>
+        <rect x="660" y="160" width="250" height="130" rx="12" class="d-obs-box"/>
+        <text x="678" y="188" class="d-ttl-s">hubble-relay</text>
+        <text x="678" y="214" class="d-sub">Peer 서비스로 노드 목록</text>
+        <text x="678" y="238" class="d-sub">모든 노드 흐름을 시간순 병합</text>
+        <text x="678" y="264" class="d-mono">:4245</text>
+        <rect x="960" y="60" width="200" height="110" rx="12" class="d-card"/>
+        <text x="978" y="90" class="d-ttl-s">hubble-ui</text>
+        <text x="978" y="116" class="d-sub">서비스 지도</text>
+        <text x="978" y="140" class="d-mono">cilium hubble ui</text>
+        <rect x="960" y="280" width="200" height="130" rx="12" class="d-card"/>
+        <text x="978" y="310" class="d-ttl-s">맥 hubble CLI</text>
+        <text x="978" y="336" class="d-mono">cilium hubble</text>
+        <text x="978" y="356" class="d-mono">  port-forward</text>
+        <text x="978" y="380" class="d-mono">→ localhost:4245</text>
+        <path d="M300 134 L300 158" class="d-e-obs" marker-end="url(#f19-o)"/>
+        <path d="M165 290 L165 308" class="d-e-obs" marker-end="url(#f19-o)"/>
+        <path d="M435 290 L435 308" class="d-e-obs" marker-end="url(#f19-o)"/>
+        <path d="M560 350 L658 250" class="d-e-obs" marker-end="url(#f19-o)"/>
+        <path d="M910 200 L958 130" class="d-e-obs" marker-end="url(#f19-o)"/>
+        <path d="M910 250 L958 330" class="d-e-obs" marker-end="url(#f19-o)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-19.</b> Hubble 구조. 기록은 노드마다 에이전트 메모리에 따로 있다. <code>kubectl exec ds/cilium -- hubble observe</code> 는 한 노드 것만 보고, relay 를 거치면(<code>cilium hubble port-forward</code> 후 맥의 <code>hubble observe</code>) 클러스터 전체를 본다. 링 버퍼는 최근 것만 담으므로 오래된 흐름은 사라진다.</figcaption>
+  </figure>
+  <div class="table-wrap"><table>
+  <thead><tr><th>판정 (verdict)</th><th>뜻</th></tr></thead>
+  <tbody>
+  <tr><td><code>FORWARDED</code></td><td>정책 통과, 다음 단계로 넘김</td></tr>
+  <tr><td><code>DROPPED</code></td><td>버림. <code>drop_reason_desc</code> 에 이유 (<code>POLICY_DENIED</code>, 잘못된 패킷, 서비스 백엔드 없음 등)</td></tr>
+  <tr><td><code>AUDIT</code></td><td>정책 감사 모드에서 "막혔을 것" 이지만 통과시킴</td></tr>
+  <tr><td><code>REDIRECTED</code></td><td>L7 프록시로 돌려보냄</td></tr>
+  <tr><td><code>TRANSLATED</code> / <code>TRACED</code> / <code>ERROR</code></td><td>주소 변환 이벤트 / 추적 지점 통과 / 처리 중 오류</td></tr>
+  </tbody></table></div>
+  <p>흐름 하나의 주요 필드: <code>time</code>, <code>verdict</code>, <code>drop_reason_desc</code>, <code>IP.source/destination</code>, <code>l4</code>(TCP 포트·플래그), <code>source/destination</code>(identity, namespace, pod_name, labels), <code>traffic_direction</code>(INGRESS/EGRESS), <code>is_reply</code>, <code>Type</code>(L3_L4 / L7), <code>l7</code>(HTTP method·url·code, DNS 질의), <code>trace_observation_point</code>(to-endpoint, to-stack, to-overlay 등), <code>node_name</code>.</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3><code>hubble observe</code> 필터와 우리 스크립트</h3>
+  <div class="table-wrap"><table>
+  <thead><tr><th>필터</th><th>뜻</th><th>예</th></tr></thead>
+  <tbody>
+  <tr><td><code>--namespace</code></td><td>출발 또는 도착이 이 ns</td><td><code>--namespace tenant-a</code></td></tr>
+  <tr><td><code>--from-namespace</code> / <code>--to-namespace</code></td><td>방향을 정해서</td><td><code>--from-namespace tenant-b</code> (s4)</td></tr>
+  <tr><td><code>--pod</code>, <code>--from-pod</code>, <code>--to-pod</code></td><td>파드 (<code>ns/이름</code> 접두사 가능)</td><td><code>--to-pod tenant-a/hello</code></td></tr>
+  <tr><td><code>--verdict</code></td><td>판정</td><td><code>--verdict DROPPED</code></td></tr>
+  <tr><td><code>--port</code>, <code>--protocol</code></td><td>L4</td><td><code>--port 53 --protocol udp</code></td></tr>
+  <tr><td><code>--label</code>, <code>--from-label</code></td><td>라벨</td><td><code>--from-label app=activator</code></td></tr>
+  <tr><td><code>--type</code></td><td>이벤트 종류</td><td><code>--type drop</code>, <code>--type l7</code>, <code>--type policy-verdict</code></td></tr>
+  <tr><td><code>--last N</code> / <code>-f</code></td><td>최근 N개 / 계속 따라가기</td><td><code>--last 20</code></td></tr>
+  <tr><td><code>-o json</code></td><td>필드 전체</td><td><code>-o json | jq .flow.drop_reason_desc</code></td></tr>
+  </tbody></table></div>
+  <div class="code-head"><span>poc/03-tenant-isolation/scripts/test-isolation.sh</span><span>발췌 (test_net 끝)</span></div>
+  <pre><code>  <span class="c"># Hubble 로 "실제로 버려진 패킷" 을 본다. 각 노드의 Cilium 에이전트가 자기 노드 흐름만 알아서, 에이전트마다 물어본다</span>
+  echo "  -- Hubble: tenant-b 로 가다 버려진 흐름 (최근 5개씩) --"
+  <span class="k">for</span> p <span class="k">in</span> $(kubectl -n kube-system get pods -l k8s-app=cilium -o name); <span class="k">do</span>
+    kubectl -n kube-system exec "$p" -c cilium-agent -- \
+      hubble observe --namespace $B --verdict DROPPED --last 5 2&gt;/dev/null | sed 's/^/  /'
+  <span class="k">done</span></code></pre>
+  <ul>
+    <li><code>-l k8s-app=cilium</code>: 에이전트 DaemonSet 파드 4개 (노드마다 하나).</li>
+    <li><code>exec … -c cilium-agent -- hubble observe</code>: 에이전트 컨테이너 안의 hubble CLI 가 그 노드의 hubble.sock 에 묻는다. relay 없이도 동작한다.</li>
+    <li><code>--namespace $B --verdict DROPPED</code>: tenant-b 와 관련된 버림만. a→b 는 tenant-a 쪽 노드에서, fn-demo→b 는 tenant-b 쪽 노드에서 기록되므로 모든 노드를 돈다 (7절).</li>
+  </ul>
+  <div class="code-head"><span>poc/06-fault-injection/scripts/s4-tenant-breach.sh</span><span>발췌 (감지 신호)</span></div>
+  <pre><code><span class="k">if</span> command -v hubble &gt;/dev/null 2&gt;&amp;1; <span class="k">then</span>
+  log "  Cilium Hubble: tenant-b 에서 나간 DROPPED 흐름 (최근 20개)"
+  hubble observe --verdict DROPPED --from-namespace "$TENANT_B" --last 20 || true
+<span class="k">else</span>
+  log "  hubble CLI 없음 (Cilium 이 아니거나 미설치) → 네트워크 차단은 위 표의 000(타임아웃)으로만 확인"
+<span class="k">fi</span></code></pre>
+  <p>이쪽은 맥의 hubble CLI 로 relay 에 묻는다. 그래서 먼저 <code>cilium hubble port-forward &amp;</code> 로 localhost:4245 를 열어 둬야 한다 (06 README 2절). <code>|| true</code> 는 relay 가 없을 때 스크립트가 죽지 않게.</p>
+  <pre class="mermaid">
+flowchart TD
+  A["curl 이 타임아웃"] --> B["hubble observe --to-pod 대상 --last 50"]
+  B --> C{"흐름이 보이나"}
+  C -- "아무것도 없음" --> D["다른 노드일 수 있음<br/>relay 로 보거나 모든 cilium 파드에 질의"]
+  C -- "DROPPED Policy denied" --> E{"traffic_direction"}
+  E -- "EGRESS" --> F["출발 ns 의 egress 정책 확인"]
+  E -- "INGRESS" --> G["도착 ns 의 ingress 정책 확인"]
+  C -- "포트 53 DROPPED" --> H["allow-dns 확인"]
+  C -- "FORWARDED 인데 응답 없음" --> I["정책 문제 아님<br/>앱·프로브·Knative 확인"]
+  C -- "DROPPED 다른 이유" --> J["drop_reason_desc 로 검색<br/>서비스 백엔드 없음 등"]
+  </pre>
+  <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+  <p>Hubble 은 <code>cilium hubble enable --ui</code> 로 relay·UI 까지 켜져 있다. 03 README 5.3 은 <code>KEEP=1</code> 로 실험 파드를 남겨 Hubble UI 에서 빨간 선(드롭)을 보게 한다. 지표(Prometheus)로 Hubble 흐름 수를 모으는 Hubble metrics 는 켜지 않았다 【확인 필요: <code>cilium config view | grep hubble-metrics</code>】. 06 의 알림은 API 서버 403·PSA 거부 지표로 만들었고 네트워크 드롭 알림은 없다.</p></aside>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+  <p><b>증상</b>: 맥에서 <code>hubble observe</code> 가 "connection refused". <b>원인</b>: port-forward 안 함, 또는 relay 파드가 안 뜸. <b>볼 곳</b>: <code>cilium status</code> 의 "Hubble Relay: OK". <b>증상 2</b>: 막힌 게 분명한데 흐름이 없다. <b>원인</b>: 에이전트 하나에만 물었고 그 노드가 아니었다, 또는 링 버퍼가 이미 넘어갔다. <b>고치기</b>: relay 로 묻거나 <code>-f</code> 로 켜 둔 채 다시 재현.</p></aside>
+  <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
+  <p>대안은 tcpdump(노드에서 패킷을 직접 잡기)와 CNI 별 로그(Calico 의 flow logs 는 상용판 기능이 많다). tcpdump 는 "보낸 SYN 이 안 돌아온다" 까지만 알려 주고 "정책 때문" 은 못 알려 준다. Hubble 은 정책 판정을 내린 바로 그 eBPF 코드가 이벤트를 내니 이유가 정확하다.</p></aside>
+  <aside class="callout fact"><p class="callout-title">공식 문서</p>
+  <p><a href="https://docs.cilium.io/en/stable/observability/hubble/">Cilium: Network Observability with Hubble</a> · <a href="https://docs.cilium.io/en/stable/observability/hubble/setup/">Hubble 설정</a> · <a href="https://docs.cilium.io/en/stable/observability/hubble/hubble-cli/">Inspecting Network Flows with the CLI</a> · <a href="https://docs.cilium.io/en/stable/internals/hubble/">Hubble internals</a></p></aside>
+</div>
+
+<h2 id="ingress-path">11. 맥 curl 에서 tenant-a 함수까지: 요청 길 전체</h2>
+
+<div class="tier" data-tier="1">
+  <h3>한 줄 요약</h3>
+  <p><code>curl -H "Host: hello.tenant-a.faas.local" localhost:8081</code> 은 ① Docker Desktop 의 포트 공개로 control-plane 노드 컨테이너 31080 에 들어가고, ② 그 노드의 kube-proxy iptables 가 Kourier 파드 IP:8080 으로 DNAT(+ SNAT) 하고, ③ Cilium 이 VXLAN 으로 system 노드의 Kourier 파드에 전달하고, ④ Kourier(Envoy)가 Host 헤더로 경로를 골라 activator 나 함수 파드 8012 로 보내고, ⑤ tenant-a 의 ingress 정책(allow-from-namespaces)이 통과시켜 queue-proxy → 사용자 컨테이너 8080 에 닿는다. 응답은 conntrack 이 기억한 길을 거꾸로 돈다.</p>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>홉별 그림</h3>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1180 560" role="img" aria-labelledby="f20-t">
+        <title id="f20-t">맥 curl 에서 Kourier 와 activator 를 거쳐 tenant-a 함수 파드까지의 길</title>
+        <defs>
+          <marker id="f20-u" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+        </defs>
+        <rect x="20" y="40" width="200" height="110" rx="12" class="d-card"/>
+        <text x="38" y="70" class="d-ttl-s">① 맥 curl</text>
+        <text x="38" y="96" class="d-mono">localhost:8081</text>
+        <text x="38" y="118" class="d-mono">Host: hello.tenant-a</text>
+        <text x="38" y="136" class="d-mono">  .faas.local</text>
+        <rect x="270" y="20" width="420" height="200" rx="12" class="d-pool"/>
+        <text x="290" y="46" class="d-lbl">faas-control-plane 노드</text>
+        <rect x="290" y="60" width="380" height="70" rx="10" class="d-plain-box"/>
+        <text x="306" y="88" class="d-ttl-s">② 컨테이너 포트 31080</text>
+        <text x="306" y="112" class="d-sub">Docker 포트 공개 (extraPortMappings)</text>
+        <rect x="290" y="140" width="380" height="66" rx="10" class="d-warn-box"/>
+        <text x="306" y="166" class="d-ttl-s">③ kube-proxy iptables</text>
+        <text x="306" y="190" class="d-mono">KUBE-NODEPORTS → DNAT, MASQ</text>
+        <rect x="740" y="20" width="420" height="200" rx="12" class="d-pool"/>
+        <text x="760" y="46" class="d-lbl">faas-worker (system 노드)</text>
+        <rect x="760" y="60" width="380" height="66" rx="10" class="d-obs-box"/>
+        <text x="776" y="86" class="d-ttl-s">④ cilium_vxlan → bpf_overlay</text>
+        <text x="776" y="110" class="d-sub">캡슐 벗기고 Kourier 엔드포인트로</text>
+        <rect x="760" y="140" width="380" height="66" rx="10" class="d-cp-box"/>
+        <text x="776" y="166" class="d-ttl-s">⑤ Kourier Envoy :8080</text>
+        <text x="776" y="190" class="d-sub">Host 헤더로 라우트 선택</text>
+        <rect x="740" y="270" width="420" height="120" rx="12" class="d-cp-box"/>
+        <text x="760" y="300" class="d-ttl-s">⑥ activator (knative-serving)</text>
+        <text x="760" y="326" class="d-sub">파드 0개: 요청 붙잡고 스케일 요청</text>
+        <text x="760" y="350" class="d-sub">파드 있음: 그대로 넘기거나 Kourier 가 직접</text>
+        <text x="760" y="372" class="d-mono">→ 파드IP:8012</text>
+        <rect x="270" y="270" width="420" height="270" rx="12" class="d-pool"/>
+        <text x="290" y="296" class="d-lbl">faas-worker3 (exec 노드)</text>
+        <rect x="290" y="310" width="380" height="70" rx="10" class="d-obs-box"/>
+        <text x="306" y="338" class="d-ttl-s">⑦ tenant-a ingress 정책 검사</text>
+        <text x="306" y="362" class="d-sub">출발 identity = knative-serving 또는 kourier → 허용</text>
+        <rect x="290" y="396" width="380" height="62" rx="10" class="d-agent"/>
+        <text x="306" y="422" class="d-ttl-s">⑧ queue-proxy :8012</text>
+        <text x="306" y="444" class="d-sub">동시 요청 세기, 지표 9090</text>
+        <rect x="290" y="468" width="380" height="58" rx="10" class="d-agent"/>
+        <text x="306" y="494" class="d-ttl-s">⑨ user-container :8080</text>
+        <text x="306" y="514" class="d-sub">localhost 로 (같은 netns)</text>
+        <path d="M220 95 L288 95" class="d-e-user" marker-end="url(#f20-u)"/>
+        <path d="M480 130 L480 138" class="d-e-user" marker-end="url(#f20-u)"/>
+        <path d="M670 173 L758 93" class="d-e-user" marker-end="url(#f20-u)"/>
+        <path d="M950 126 L950 138" class="d-e-user" marker-end="url(#f20-u)"/>
+        <path d="M950 206 L950 268" class="d-e-user" marker-end="url(#f20-u)"/>
+        <path d="M740 340 L672 340" class="d-e-user" marker-end="url(#f20-u)"/>
+        <path d="M480 380 L480 394" class="d-e-user" marker-end="url(#f20-u)"/>
+        <path d="M480 458 L480 466" class="d-e-user" marker-end="url(#f20-u)"/>
+        <text x="20" y="200" class="d-sub">VXLAN 으로 노드 사이 이동은</text>
+        <text x="20" y="220" class="d-sub">③→④, ⑥→⑦ 두 번</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-20.</b> 요청 길 전체. 노드 이름은 파드가 실제로 뜬 곳에 따라 다를 수 있다 (Kourier·activator 는 taint 가 없는 system 노드, 함수는 exec 노드). 정책 검사는 ⑦ 한 곳에서만 거부될 수 있다. kourier-system·knative-serving 에는 NetworkPolicy 가 없어서 ④⑤⑥ 은 격리 대상이 아니다.</figcaption>
+  </figure>
+  <pre class="mermaid">
+sequenceDiagram
+  participant M as 맥 curl
+  participant D as Docker Desktop
+  participant CP as control-plane 노드
+  participant KO as Kourier 파드
+  participant AC as activator
+  participant QP as tenant-a 파드 queue-proxy
+  M->>D: TCP localhost:8081
+  D->>CP: 컨테이너 포트 31080 으로 전달
+  CP->>CP: kube-proxy DNAT 노드:31080 → Kourier파드:8080, SNAT 노드IP
+  CP->>KO: Cilium VXLAN 으로 system 노드에
+  KO->>KO: Host hello.tenant-a.faas.local 로 라우트
+  KO->>AC: 파드가 0개면 activator 로
+  AC->>QP: 파드 준비 후 :8012
+  QP->>QP: tenant-a ingress 정책 통과 후 수신
+  QP-->>AC: 응답
+  AC-->>KO: 응답
+  KO-->>CP: 응답 (conntrack 역변환)
+  CP-->>M: HTTP 200
+  </pre>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>홉별 주소 변환과 고장 지점 표</h3>
+  <div class="table-wrap"><table>
+  <thead><tr><th>홉</th><th>패킷 주소 (출발 → 도착)</th><th>누가 바꾸나</th><th>정책 검사</th><th>끊기면 볼 곳</th></tr></thead>
+  <tbody>
+  <tr><td>① → ②</td><td>맥 → 127.0.0.1:8081 → 노드:31080</td><td>Docker Desktop 포트 공개</td><td>없음</td><td><code>docker port faas-control-plane</code>, <code>lsof -i :8081</code></td></tr>
+  <tr><td>③</td><td>노드IP:31080 → Kourier파드IP:8080, 출발은 노드IP 로 SNAT</td><td>kube-proxy (KPR 꺼짐 가정)</td><td>없음</td><td><code>iptables-save -t nat | grep 31080</code></td></tr>
+  <tr><td>③ → ⑤</td><td>노드IP → Kourier파드IP:8080 (VXLAN)</td><td>Cilium 터널</td><td>Kourier 의 ingress (정책 없음 → 통과). 출발 identity 는 <code>remote-node</code></td><td><code>hubble observe --to-namespace kourier-system</code></td></tr>
+  <tr><td>⑤ → ⑥</td><td>Kourier파드 → activator 파드:8012</td><td>Envoy 가 새 연결 (Knative 가 정한 끝점)</td><td>knative-serving 엔 정책 없음</td><td><code>kubectl -n knative-serving get pods</code></td></tr>
+  <tr><td>⑥ → ⑦</td><td>activator파드 → 함수파드IP:8012</td><td>activator 가 새 연결</td><td><b>tenant-a ingress</b>: allow-from-namespaces</td><td><code>hubble observe --namespace tenant-a --verdict DROPPED</code></td></tr>
+  <tr><td>⑧ → ⑨</td><td>127.0.0.1:8012 → 127.0.0.1:8080</td><td>없음 (파드 안 루프백)</td><td>없음 (자기 자신은 못 막는다)</td><td><code>kubectl -n tenant-a logs … -c user-container</code></td></tr>
+  </tbody></table></div>
+  <div class="code-head"><span>poc/04-faas-runtime/scripts/lib.sh</span><span>발췌</span></div>
+  <pre><code>DOMAIN="${DOMAIN:-faas.local}"         <span class="c"># setup.sh 가 Knative config-domain 에 넣은 값</span>
+GATEWAY="${GATEWAY:-http://localhost:8081}"   <span class="c"># 맥 8081 → Kourier NodePort 31080 (kind-config extraPortMappings)</span>
+<span class="c"># Knative 는 Host 헤더로 어느 함수인지 고른다: &lt;함수&gt;.&lt;namespace&gt;.&lt;도메인&gt;</span>
+fn_host() { echo "$1.$NS.$DOMAIN"; }</code></pre>
+  <ul>
+    <li><code>GATEWAY</code>: 모든 측정 스크립트(coldstart.sh, latency.sh)가 이 주소 하나로 들어온다. DNS 이름이 없으니 IP·포트로 가고, 함수 고르기는 Host 헤더가 한다.</li>
+    <li><code>fn_host</code>: <code>hello-runc.fn-runtime.faas.local</code> 같은 이름을 만든다. Knative 의 config-domain 이 <code>faas.local</code> 이라서 이 모양이다.</li>
+  </ul>
+  <pre class="pseudo"><code><span class="k">함수</span> 요청_한_번(호스트이름):
+  conn = TCP(127.0.0.1:8081)                         <span class="c">// ① Docker Desktop 이 노드 31080 으로</span>
+  <span class="c">// ③ 노드에서: 첫 패킷만 nat 규칙 평가 → conntrack 에 (맥쪽 주소 ↔ Kourier파드:8080) 기록</span>
+  보냄 "GET / Host: " + 호스트이름
+  <span class="c">// ⑤ Envoy: 가상 호스트 표에서 호스트이름 일치 → 클러스터(=Revision 끝점) 선택</span>
+  <span class="c">//    끝점이 activator 면 ⑥, 파드면 바로 ⑦</span>
+  <span class="c">// ⑦ 목적지 노드 bpf_lxc: (출발 identity, 8012, TCP) 가 tenant-a ingress 맵에 있나</span>
+  <span class="c">//    있음 → ⑧ queue-proxy → ⑨ localhost:8080</span>
+  <span class="c">//    없음 → DROP, activator 는 재시도하다 시간 초과 → 맥은 503/504 또는 타임아웃</span>
+  <span class="k">반환</span> 응답 (모든 역변환은 conntrack 이 한다)</code></pre>
+  <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+  <p>Kourier 가 보는 클라이언트 IP 는 맥이 아니라 control-plane 노드 IP 다 (externalTrafficPolicy Cluster 의 SNAT). 그래서 나중에 kourier-system 에도 default-deny 를 건다면 "맥에서 오는 요청" 을 허용하려고 ipBlock 에 맥 IP 를 쓰는 건 소용없고, Cilium 에서는 <code>remote-node</code>/<code>host</code> 엔티티를 허용해야 한다 (표준 정책으로는 노드 IP 대역 ipBlock). 지금 PoC 는 입구 namespace 에 정책을 걸지 않았다.</p></aside>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
+  <p>증상으로 홉을 좁힌다. <b>즉시 Connection refused</b> → ①② (포트 매핑, Kourier Service). <b>404 Not Found (Envoy)</b> → ⑤ Host 헤더 오타, ksvc 이름·namespace 불일치. <b>503 / 수십 초 뒤 실패</b> → ⑥⑦ (activator 는 떴는데 함수 파드에 못 닿음: 정책, 또는 파드가 exec 노드에 못 뜸 Pending). <b>200 이지만 느림</b> → 콜드 스타트 (5장).</p></aside>
+  <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p>
+  <p>(가) <code>kubectl port-forward svc/kourier</code>: 설정은 없지만 API 서버를 거치는 터널이라 측정 숫자가 오염되고 끊기기 쉽다 (05 README 가 안 열릴 때의 대안으로 적어 둠). (나) MetalLB·cloud-provider-kind 로 LoadBalancer 흉내: 더 실제와 닮았지만 부품이 하나 는다. (다) extraPortMappings + NodePort(현재): kind 공식 방법이고 클러스터를 만들 때 한 번 정하면 끝. 8080 은 Argo CD UI 가 써서 8081 을 골랐다.</p></aside>
+  <aside class="callout fact"><p class="callout-title">공식 문서</p>
+  <p><a href="https://kind.sigs.k8s.io/docs/user/configuration/#extra-port-mappings">kind: Extra Port Mappings</a> · <a href="https://kubernetes.io/docs/concepts/services-networking/service/#type-nodeport">Kubernetes: NodePort</a> · <a href="https://kubernetes.io/docs/tutorials/services/source-ip/">Using Source IP (SNAT 동작)</a> · <a href="https://knative.dev/docs/serving/request-flow/">Knative: HTTP Request Flow</a> · <a href="https://github.com/knative-extensions/net-kourier">net-kourier</a></p></aside>
+</div>
+
+<h2 id="break">12. 깨지면: 세 가지 장애와 06 침범 실험</h2>
+
+<div class="tier" data-tier="1">
+  <h3>네트워크 장애는 대부분 "조용히 버려짐" 이다</h3>
+  <p>NetworkPolicy 장애는 에러 메시지를 남기지 않는다. 패킷이 버려지고, 보낸 쪽은 기다리다 시간 초과가 난다. 그래서 "어디서 버려졌나" 를 묻는 순서가 필요하다. 이 절은 ANALYSIS.md 의 깨뜨리기 B3(DNS), B4(allow-from-namespaces), B14(공격자 쪽 정책 삭제)를 한 표로 묶는다.</p>
+  <div class="table-wrap"><table>
+  <thead><tr><th>깨뜨리기</th><th>겉으로 보이는 것</th><th>실제로 버려지는 곳</th><th>핵심 증거</th></tr></thead>
+  <tbody>
+  <tr><td>B3 allow-dns 주석 처리</td><td>이름으로는 실패, IP 로는 성공. 같은 namespace 인데도</td><td>tenant-a 파드의 egress (출발 노드), UDP/TCP 53</td><td><code>hubble observe --namespace tenant-a --verdict DROPPED --port 53</code></td></tr>
+  <tr><td>B4 <code>network:</code> 4줄 삭제</td><td>ksvc READY, curl 은 타임아웃 또는 5xx</td><td>tenant-a 함수 파드의 ingress (exec 노드), 출발 kourier-system·knative-serving</td><td><code>hubble observe --namespace tenant-a --verdict DROPPED</code> 의 출발 ns</td></tr>
+  <tr><td>B14 tenant-b 정책 삭제</td><td>N1·N2 는 그대로 막힘, N3·N4 가 뚫림</td><td>N1·N2: tenant-a ingress (도착 노드). N3·N4: 이제 아무도 안 막음</td><td>s4 표의 PASS/FAIL 변화</td></tr>
+  </tbody></table></div>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>진단 순서와 06 실험 결과</h3>
+  <pre class="mermaid">
+flowchart TD
+  A["요청이 실패한다"] --> B{"즉시 실패인가<br/>시간 초과인가"}
+  B -- "즉시 refused" --> C["포트·Service·엔드포인트<br/>정책 문제 아님"]
+  B -- "HTTP 403" --> D["L7 정책 또는 앱·API 서버 인증"]
+  B -- "시간 초과" --> E{"이름 대신 IP 로 하면 되나"}
+  E -- "IP 는 됨" --> F["DNS 경로: allow-dns, CoreDNS 라벨"]
+  E -- "IP 도 안 됨" --> G["hubble observe --verdict DROPPED"]
+  G --> H{"방향"}
+  H -- "EGRESS 출발 ns" --> I["출발 ns 의 egress 허용 확인"]
+  H -- "INGRESS 도착 ns" --> J["도착 ns 의 ingress 허용 확인<br/>Knative 면 allow-from-namespaces"]
+  G --> K{"DROPPED 가 없다"}
+  K --> L["정책이 집행되고 있나 확인<br/>CNI 가 NetworkPolicy 를 지원하나"]
+  </pre>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 470" role="img" aria-labelledby="f21-t">
+        <title id="f21-t">06 침범 실험 결과표: CNI 와 정책 상태에 따른 PASS와 FAIL</title>
+        <rect x="20" y="20" width="920" height="430" rx="12" class="d-card"/>
+        <text x="40" y="52" class="d-ttl-s">시도</text>
+        <text x="240" y="44" class="d-lbl">대역 kindnet</text>
+        <text x="240" y="62" class="d-lbl">(클라우드 컨테이너)</text>
+        <text x="420" y="44" class="d-lbl">대역 + Calico</text>
+        <text x="420" y="62" class="d-lbl">정책 그대로</text>
+        <text x="600" y="44" class="d-lbl">Calico, tenant-b</text>
+        <text x="600" y="62" class="d-lbl">정책 삭제</text>
+        <text x="780" y="44" class="d-lbl">faas + Cilium</text>
+        <text x="780" y="62" class="d-lbl">(맥, 아직 안 돌림)</text>
+        <text x="40" y="104" class="d-subd">N1 tenant-a Service</text>
+        <rect x="240" y="84" width="150" height="30" rx="6" class="d-fail-box"/><text x="252" y="104" class="d-mono">FAIL http 200</text>
+        <rect x="420" y="84" width="150" height="30" rx="6" class="d-cp-box"/><text x="432" y="104" class="d-mono">PASS 000</text>
+        <rect x="600" y="84" width="150" height="30" rx="6" class="d-cp-box"/><text x="612" y="104" class="d-mono">PASS</text>
+        <rect x="780" y="84" width="150" height="30" rx="6" class="d-plain-box"/><text x="792" y="104" class="d-mono">예상 PASS</text>
+        <text x="40" y="146" class="d-subd">N2 파드 IP 직접</text>
+        <rect x="240" y="126" width="150" height="30" rx="6" class="d-fail-box"/><text x="252" y="146" class="d-mono">FAIL http 200</text>
+        <rect x="420" y="126" width="150" height="30" rx="6" class="d-cp-box"/><text x="432" y="146" class="d-mono">PASS 000</text>
+        <rect x="600" y="126" width="150" height="30" rx="6" class="d-cp-box"/><text x="612" y="146" class="d-mono">PASS</text>
+        <rect x="780" y="126" width="150" height="30" rx="6" class="d-plain-box"/><text x="792" y="146" class="d-mono">예상 PASS</text>
+        <text x="40" y="188" class="d-subd">N3 API 서버</text>
+        <rect x="240" y="168" width="150" height="30" rx="6" class="d-fail-box"/><text x="252" y="188" class="d-mono">FAIL http 403</text>
+        <rect x="420" y="168" width="150" height="30" rx="6" class="d-cp-box"/><text x="432" y="188" class="d-mono">PASS 000</text>
+        <rect x="600" y="168" width="150" height="30" rx="6" class="d-fail-box"/><text x="612" y="188" class="d-mono">FAIL http 403</text>
+        <rect x="780" y="168" width="150" height="30" rx="6" class="d-plain-box"/><text x="792" y="188" class="d-mono">예상 PASS</text>
+        <text x="40" y="230" class="d-subd">N4 169.254.169.254</text>
+        <rect x="240" y="210" width="150" height="30" rx="6" class="d-fail-box"/><text x="252" y="230" class="d-mono">FAIL http 403</text>
+        <rect x="420" y="210" width="150" height="30" rx="6" class="d-cp-box"/><text x="432" y="230" class="d-mono">PASS 000</text>
+        <rect x="600" y="210" width="150" height="30" rx="6" class="d-fail-box"/><text x="612" y="230" class="d-mono">FAIL http 403</text>
+        <rect x="780" y="210" width="150" height="30" rx="6" class="d-plain-box"/><text x="792" y="230" class="d-mono">예상 PASS</text>
+        <text x="40" y="272" class="d-subd">R1·R2 RBAC</text>
+        <rect x="240" y="252" width="150" height="30" rx="6" class="d-cp-box"/><text x="252" y="272" class="d-mono">PASS</text>
+        <rect x="420" y="252" width="150" height="30" rx="6" class="d-cp-box"/><text x="432" y="272" class="d-mono">PASS</text>
+        <rect x="600" y="252" width="150" height="30" rx="6" class="d-cp-box"/><text x="612" y="272" class="d-mono">PASS</text>
+        <rect x="780" y="252" width="150" height="30" rx="6" class="d-plain-box"/><text x="792" y="272" class="d-mono">예상 PASS</text>
+        <text x="40" y="314" class="d-subd">P1 PSA · Q1 한도</text>
+        <rect x="240" y="294" width="150" height="30" rx="6" class="d-cp-box"/><text x="252" y="314" class="d-mono">PASS</text>
+        <rect x="420" y="294" width="150" height="30" rx="6" class="d-cp-box"/><text x="432" y="314" class="d-mono">PASS</text>
+        <rect x="600" y="294" width="150" height="30" rx="6" class="d-cp-box"/><text x="612" y="314" class="d-mono">PASS</text>
+        <rect x="780" y="294" width="150" height="30" rx="6" class="d-plain-box"/><text x="792" y="314" class="d-mono">예상 PASS</text>
+        <text x="40" y="364" class="d-subd">읽는 법: PASS = 막혔다. 000 = 연결 자체가 안 됨(타임아웃). 403 = 연결은 됐고 그 뒤에서 거절.</text>
+        <text x="40" y="390" class="d-sub">kindnet 열 FAIL: 정책이 틀린 게 아니라 그 커널이 kindnet 의 nftables 구현을 못 돌려 무시됨 (06 README 8.4).</text>
+        <text x="40" y="414" class="d-sub">세 번째 열: tenant-b egress 가 사라져도 N1·N2 는 tenant-a ingress 가 막는다. N3·N4 는 막을 사람이 없다.</text>
+        <text x="40" y="438" class="d-sub">출처: poc/06-fault-injection/results/s4-tenant-breach*.csv, README 8.4. 마지막 열은 실행 전 예상.</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 4-21.</b> 06 <code>s4-tenant-breach.sh</code> 결과를 CNI 와 정책 상태별로. 같은 정책 YAML 이 CNI 에 따라 막히기도 하고 무시되기도 한다. "CNI 가 정책을 실제로 집행하는지는 YAML 만 봐선 모른다. 한 번 뚫어 봐야 안다" 가 06 의 결론이다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>공격자 쪽 정책 삭제를 우리 faas 클러스터에서 할 때의 함정</h3>
+  <div class="code-head"><span>poc/06-fault-injection/scripts/s4-tenant-breach.sh</span><span>발췌 (네트워크 시도)</span></div>
+  <pre><code><span class="c"># 파드 안에서 curl. 응답 코드(연결 실패면 000)만 돌려준다</span>
+net_try() {
+  kubectl -n "$TENANT_B" exec attacker -- sh -c "curl -s -o /dev/null -w '%{http_code}' --max-time 3 $1 || true" 2&gt;/dev/null
+}
+T=$(now); c=$(net_try "$VICTIM_SVC")
+[ "$c" = "000" ] &amp;&amp; v=PASS || v=FAIL; row N1 "tenant-a Service ($VICTIM_SVC)" blocked "http $c" $v ...
+T=$(now); c=$(net_try "http://$VICTIM_IP:$VICTIM_PORT/")
+[ "$c" = "000" ] &amp;&amp; v=PASS || v=FAIL; row N2 "tenant-a 파드 IP 직접 ($VICTIM_IP:$VICTIM_PORT)" blocked ...
+T=$(now); c=$(net_try "-k https://kubernetes.default.svc/api")
+[ "$c" = "000" ] &amp;&amp; v=PASS || v=FAIL; row N3 "API 서버 (kubernetes.default.svc)" blocked ...
+T=$(now); c=$(net_try "http://169.254.169.254/latest/meta-data/")
+[ "$c" = "000" ] &amp;&amp; v=PASS || v=FAIL; row N4 "메타데이터 169.254.169.254" blocked ...</code></pre>
+  <ul>
+    <li><code>--max-time 3</code> 와 <code>000</code>: 정책 drop 은 응답이 없으니 curl 이 3초 뒤 포기하고 코드 000 을 낸다. 000 이면 "막혔다" 로 본다.</li>
+    <li>N1 은 Service 이름(DNS → ClusterIP → DNAT), N2 는 파드 IP 직접. 둘 다 막혀야 "Service 를 우회해도 소용없다" 가 증명된다. NetworkPolicy 는 DNAT 뒤 파드 기준이라 두 경우가 같은 규칙에 걸린다 (4절).</li>
+    <li>N3 의 <code>kubernetes.default.svc</code>: API 서버의 ClusterIP. 테넌트 egress 에 없으니 막힌다. 정책이 없으면 연결은 되고 익명 요청이라 API 서버가 401/403 으로 거절한다 (그래서 "http 403").</li>
+    <li>N4: EC2(07 단계)에서는 노드 IAM 자격 증명이 나오는 주소. kind 에서는 아무것도 없지만 시험 항목에 넣었다.</li>
+  </ul>
+  <p><b>함정 1, 정책 이름.</b> 06 README 의 명령 <code>kubectl -n tenant-b delete networkpolicy default-deny</code> 는 대역 클러스터용 이름이다. faas 클러스터의 tenant-b 정책은 <code>default-deny-all</code>, <code>allow-same-namespace</code>, <code>allow-dns</code> 세 장이다. <b>함정 2, 하나만 지우면 아무 일도 안 일어난다.</b> 8절에서 본 대로 allow-same-namespace·allow-dns 도 tenant-b 파드를 고르고 policyTypes 에 Egress 가 있으므로, <code>default-deny-all</code> 만 지워도 egress 는 여전히 격리돼 N3·N4 가 계속 PASS 다. 세 장을 다 지워야 대역과 같은 실험이 된다. <b>함정 3, selfHeal.</b> tenant-b Application 은 <code>automated.selfHeal: true</code> 라서 Argo CD 가 지운 정책을 곧 되살린다. 실험하려면 잠깐 Application 의 자동 동기화를 끄거나(관리자), 되살아나기 전에 바로 돌려야 한다. 이 역시 "GitOps 가 보안 설정의 드리프트를 자동으로 되돌린다" 는 좋은 증거다.</p>
+  <pre class="pseudo"><code><span class="c">// faas 클러스터에서 B14 를 제대로 재현하는 순서 (읽기용, 클러스터 명령은 Jeong 이 맥에서)</span>
+1. tenant-b Application 자동 동기화 잠시 끄기 (argocd app set tenant-b --sync-policy none 또는 UI)
+2. kubectl -n tenant-b delete networkpolicy default-deny-all allow-same-namespace allow-dns
+3. ./scripts/s4-tenant-breach.sh  (TENANT_A·TENANT_B·FN_SELECTOR 를 faas 값으로, 06 README 2절)
+   기대: N1·N2 PASS (tenant-a ingress 가 막음), N3 FAIL (API 서버 401/403), N4 【확인 필요: kind 에선 응답할 곳이 없어 000 일 수도】
+4. hubble observe --from-namespace tenant-b --verdict DROPPED  → N1·N2 는 exec 노드에서 INGRESS DROPPED
+5. 자동 동기화 다시 켜기 → Argo CD 가 정책 세 장을 되살림 → 다시 8/8</code></pre>
+  <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
+  <p>run-all.sh 의 check 단계는 03 <code>test-isolation.sh</code> 의 네트워크 묶음 5줄을 돌려 "전부 PASS" 를 기대한다 (RUN-ALL.md 3절). 06 s4 는 대역 클러스터 kind-chaos(kindnet)가 기본이고, faas 에 겨누려면 06 README 2절의 변수(<code>FN_NAME</code>, <code>FN_SELECTOR</code>)를 Knative 함수에 맞춰야 한다. faas + Cilium 에서 s4 를 돌린 결과는 아직 없다.</p></aside>
+  <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다 (요약)</p>
+  <p><b>DNS 막힘</b>: 이름 실패·IP 성공 → allow-dns. <b>allow-from-namespaces 빠짐</b>: ksvc READY·curl 타임아웃 → tenant-a ingress 에서 kourier/activator 출발 DROPPED. <b>공격자 쪽 정책 삭제</b>: 옆 테넌트는 여전히 막힘(상대 ingress), API 서버·메타데이터가 뚫림 → egress 기본 거부가 "나가는 문" 의 유일한 자물쇠라는 뜻. <b>정책이 아예 집행 안 됨</b>: 모든 N 이 http 200 → CNI 확인 (06 kindnet 열).</p></aside>
+  <aside class="callout why"><p class="callout-title">왜 이렇게 깨뜨려 보나</p>
+  <p>세 경우 모두 "설정은 그럴듯한데 동작이 다르다" 는 공통점이 있다. 본선 심사의 "깨지면 어떻게 되나" 질문에는 증상 → 버려지는 위치 → 증거 명령 → 고치는 파일 순서로 답한다. 그 순서를 몸에 익히는 게 이 절의 목적이다 (ANALYSIS.md 결정 2: "증상이 다른 곳에서 나는 것" 위주).</p></aside>
+  <aside class="callout fact"><p class="callout-title">공식 문서</p>
+  <p><a href="https://kubernetes.io/docs/tasks/administer-cluster/declare-network-policy/">Kubernetes: Declare Network Policy</a> · <a href="https://docs.cilium.io/en/stable/operations/troubleshooting/">Cilium: Troubleshooting</a> · <a href="https://docs.cilium.io/en/stable/security/policy-creation/">Cilium: Creating Policies from Verdicts (감사 모드)</a> · <a href="https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/">Argo CD: Automated Sync (selfHeal)</a> · <a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-service.html">AWS: IMDSv2 (메타데이터 보호)</a></p></aside>
+</div>
+
+<h2 id="recap">정리</h2>
+
+<h3>핵심 개념 체크리스트</h3>
+<ul class="checklist">
+  <li>쿠버네티스 네트워크 모델 세 줄(파드마다 IP, NAT 없는 파드 간 통신, 노드 에이전트와 통신)을 말할 수 있다.</li>
+  <li>netns, veth, bridge, 라우팅, netfilter 다섯 훅, conntrack 이 각각 무엇이고 패킷 길의 어디에 있는지 그릴 수 있다.</li>
+  <li>CNI ADD/DEL/CHECK 의 순서 규칙(ADD 는 앞에서, DEL 은 거꾸로, DEL 은 반드시)과 IPAM 위임, 체이닝을 설명할 수 있다.</li>
+  <li><code>disableDefaultCNI: true</code> 후 노드가 NotReady 인 이유(NetworkReady=false)와 Cilium 에이전트가 hostNetwork 라 풀리는 이유를 안다.</li>
+  <li>ClusterIP·NodePort·LoadBalancer 의 포함 관계, EndpointSlice 의 역할, kube-proxy iptables 체인 모양을 안다.</li>
+  <li>우리 설치가 kube-proxy 를 남긴 혼합 모드일 가능성이 높고, 무엇으로 확인하는지 안다.</li>
+  <li>resolv.conf 의 search·ndots 가 질의 수를 어떻게 바꾸는지, default-deny 가 DNS 를 깨는 이유를 안다.</li>
+  <li>파드가 <code>kind-registry</code> 를 푸는 길(CoreDNS forward → 노드 resolv.conf → kind 의 DNAT → Docker 내장 DNS)을 그릴 수 있다.</li>
+  <li>eBPF 의 프로그램·훅·맵·검증기·JIT·CO-RE·tail call 을 한 문장씩 설명할 수 있다.</li>
+  <li>Cilium 의 identity 가 라벨에서 나오고, ipcache 와 엔드포인트별 정책 맵으로 판단한다는 것을 안다.</li>
+  <li>tenant-b → tenant-a 패킷이 출발지 egress 와 도착지 ingress 두 곳에서 버려질 수 있음을 순서대로 말할 수 있다.</li>
+  <li>NetworkPolicy 의 AND/OR, 합집합, policyTypes 기본값, 노드 예외, Service 이름으로 못 고르는 한계를 안다.</li>
+  <li>우리 정책 4장의 의미와 <code>default-deny-all</code> 이 의미상 중복인 이유를 안다.</li>
+  <li>10/20 Knative 이음새(READY 인데 안 닿음)의 원인과 고친 파일을 말할 수 있다.</li>
+  <li>L7 정책이 Envoy 로 돌려보내 403 을 내는 구조, FQDN 정책이 DNS 프록시로 IP 를 배우는 구조를 안다.</li>
+  <li>Hubble observer·relay·UI 구조와 <code>hubble observe</code> 필터로 drop 위치를 찾을 수 있다.</li>
+  <li>맥 curl → 8081 → 31080 → kube-proxy → Kourier → activator → 함수 파드 홉별로 고장 지점을 짚을 수 있다.</li>
+</ul>
+
+<h3>이 장의 핵심 결정 표</h3>
+<div class="table-wrap"><table>
+<thead><tr><th>결정</th><th>선택</th><th>대안</th><th>버린 이유</th></tr></thead>
+<tbody>
+<tr><td>CNI</td><td><b>Cilium</b> (+ Hubble), v1.20.3, cilium CLI 기본값</td><td>kindnet / Calico</td><td>kindnet: 정책은 집행하지만(v0.24+) 관측이 없어 "왜 막혔나" 를 못 보여 줌, 커널에 따라 무시되는 사례(06). Calico: 표준 정책·관측 다 되고 06 에서 8/8 PASS 로 확인됐지만, eBPF·L7·identity 이야기를 하려면 Cilium. 대가: 클러스터 재생성, 메모리</td></tr>
+<tr><td>정책 언어</td><td><b>표준 NetworkPolicy</b> 기본, CNP 는 L7 연습만</td><td>처음부터 CiliumNetworkPolicy</td><td>표준은 EKS·Calico·kindnet 어디서나 같은 뜻 (03 결정 2). CNP 만 쓰면 CNI 를 바꿀 때 규칙이 사라진다</td></tr>
+<tr><td>기본 자세</td><td><b>default-deny 두 방향</b> + 같은 ns + DNS</td><td>ingress 만 막기</td><td>egress 를 안 막으면 API 서버·메타데이터·인터넷으로 나간다 (06 N3·N4)</td></tr>
+<tr><td>Knative 진입 허용</td><td><b>namespace 단위</b> allowFromNamespaces (knative-serving, kourier-system)</td><td>파드 라벨 + 포트로 좁히기</td><td>Knative 버전마다 라벨·포트를 따라가야 함. PoC 는 짧고 안 깨지는 쪽, 설계 문서엔 좁히기를 다음 단계로</td></tr>
+<tr><td>DNS 허용 범위</td><td><b>kube-system 의 kube-dns 파드</b>(AND)</td><td>kube-system 전체 53 (06 대역)</td><td>kube-system 에 다른 53 포트 파드가 생겨도 닿지 않게</td></tr>
+<tr><td>서비스 처리</td><td><b>kube-proxy 유지</b> (Helm 기본 혼합 모드로 추정)</td><td>kube-proxy 대체(KPR)</td><td>목적(격리 증명)과 무관하고 설정이 늘어남. 큰 규모면 KPR</td></tr>
+<tr><td>노드 간 전달</td><td><b>VXLAN 터널</b> (CLI 기본)</td><td>네이티브 라우팅</td><td>kind 에서 설정 없이 동작. identity 를 VNI 로 실어 나르는 덤</td></tr>
+<tr><td>입구</td><td><b>extraPortMappings 8081 → NodePort 31080</b></td><td>port-forward, MetalLB</td><td>kind 공식 방법, 측정 오염 없음, 8080 은 Argo CD</td></tr>
+</tbody></table></div>
+
+<h3>본선에서 떠올릴 패턴</h3>
+<div class="grid">
+  <div class="item"><h4>규칙과 집행을 나눠 본다</h4><p>NetworkPolicy(규칙) 와 CNI(집행)처럼, 어떤 주제든 "누가 선언하고 누가 실제로 막나" 를 나눈다. RBAC(API 서버), PSA(admission), Quota(API 서버) 도 같은 질문으로 읽힌다. 집행자가 없으면 규칙은 조용히 무용지물이다.</p></div>
+  <div class="item"><h4>기본 거부 + 좁은 허용 + 합집합</h4><p>방화벽, IAM, S3 버킷 정책, API 게이트웨이 어디든 "전부 막고 필요한 것만 연다" 로 설계하고, 허용이 더해지는 방식인지 거부가 이기는 방식인지 먼저 확인한다.</p></div>
+  <div class="item"><h4>IP 대신 신원으로</h4><p>Cilium identity 처럼, 바뀌는 주소 대신 라벨·서비스어카운트·워크로드 신원으로 정책을 건다. 서비스 메시 mTLS(SPIFFE), AWS 보안 그룹 참조도 같은 생각이다. 대가: 신원을 바꿀 수 있는 권한이 곧 정책 우회 권한.</p></div>
+  <div class="item"><h4>READY 와 실제 도달은 다르다</h4><p>컨트롤 플레인의 상태(Ready, Synced)는 데이터 플레인의 도달을 보장하지 않는다. 검증은 항상 끝에서 끝으로(curl, 침범 실험) 하고, 관측(Hubble)으로 증거를 남긴다.</p></div>
+  <div class="item"><h4>양쪽에 벽</h4><p>출발지 egress 와 도착지 ingress 를 둘 다 막으면 한쪽 설정이 사라져도 버틴다 (06 깨뜨리기). 다층 방어를 설명할 때 이 그림을 쓴다.</p></div>
+  <div class="item"><h4>홉별로 주소가 바뀌는 곳을 표로</h4><p>요청 길을 홉으로 쪼개 "누가 주소를 바꾸나, 어디서 검사하나, 끊기면 어디를 보나" 를 표로 만들면, 처음 보는 아키텍처의 장애 질문에도 같은 틀로 답할 수 있다.</p></div>
+</div>
+
+<h3>스스로 답해 볼 질문</h3>
+<ol>
+  <li>Cilium 을 깔기 전 <code>kubectl get nodes</code> 가 NotReady 였던 이유를 kubelet·containerd·CNI 설정 파일로 한 문장에 설명하라.</li>
+  <li>a→b 가 "Connection refused" 가 아니라 3초 타임아웃으로 나오는 이유를 conntrack 과 eBPF drop 으로 설명하라.</li>
+  <li>allow-dns 의 namespaceSelector 와 podSelector 사이에 <code>- </code> 를 하나 더 붙이면 정확히 무엇까지 열리나?</li>
+  <li><code>default-deny-all</code> 을 지워도 tenant-b 의 egress 가 여전히 격리되는 이유는? 그럼 왜 지우지 않고 두나?</li>
+  <li>tenant-b 정책을 다 지웠는데도 N1·N2 가 PASS 인 이유를, 패킷이 버려지는 노드와 eBPF 프로그램 이름으로 말하라.</li>
+  <li>ksvc 가 READY 인데 curl 이 타임아웃이다. 확인할 명령 세 개를 순서대로 말하고, 각각 무엇을 기대하나?</li>
+  <li>allow-from-namespaces 를 namespace 단위가 아니라 파드 라벨·포트로 좁힌다면 YAML 은 어떤 모양이 되고, 무엇이 깨질 위험이 있나?</li>
+  <li>우리 클러스터에서 맥 → 31080 의 DNAT 는 누가 하고, 파드 → ClusterIP 의 DNAT 는 누가 한다고 보나? 어떻게 확인하나?</li>
+  <li>kaniko 파드가 <code>kind-registry</code> 를 푸는 질의 순서를 ndots 5 기준으로 나열하라. 테넌트 파드는 왜 이 길이 필요 없나?</li>
+  <li>identity 가 라벨에서 나온다는 사실이 보안상 어떤 위험을 만들고, 우리 RBAC 는 그걸 어떻게 막나?</li>
+  <li>tenant-b 의 함수를 tenant-a 가 GET 으로만 부르게 하려면 정책이 몇 장, 어느 namespace 에 필요하고, 막힌 POST 는 무슨 응답을 받나?</li>
+  <li>06 의 kindnet 결과(N1~N4 FAIL)를 보고 "정책이 틀렸다" 고 결론 내리면 안 되는 이유와, CNI 의 집행 여부를 확인하는 방법은?</li>
+</ol>
+
+<nav class="pager" aria-label="이전 다음 장"></nav>
+</article>
+</main>
+</div>
+</body>
+</html>

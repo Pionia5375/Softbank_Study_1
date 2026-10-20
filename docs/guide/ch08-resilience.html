@@ -1,0 +1,2038 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>08 장애 주입과 관측 · FaaS PoC 가이드</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="guide.css">
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<script src="guide.js" defer></script>
+<style>
+  .d-axis { fill: none; stroke: var(--text); stroke-width: 1.5; }
+  .d-tick { fill: none; stroke: var(--edge); stroke-width: 1.2; stroke-dasharray: 2 3; }
+  .d-bar-fail { fill: var(--fail-soft); stroke: var(--fail-line); stroke-width: 1; }
+  .d-bar-ok { fill: var(--accent-soft); stroke: var(--accent-line); stroke-width: 1; }
+  .d-dot-fail { fill: var(--fail); }
+  .d-dot-ok { fill: var(--accent); }
+  .d-dot-obs { fill: var(--obs); }
+  .d-dot-user { fill: var(--user); }
+  .d-dot-prov { fill: var(--prov); }
+</style>
+</head>
+<body>
+<div class="shell">
+<nav class="nav" aria-label="장 목록"></nav>
+<main>
+<article class="page">
+
+<header class="chapter-head">
+  <p class="eyebrow">08장 · 관련 폴더 poc/06-fault-injection</p>
+  <h1>장애 주입과 관측</h1>
+  <p class="lede">노드를 일부러 죽이고, 옆 테넌트를 폭주시키고, 나쁜 버전을 내보내고, 남의 방을 두드려 본 뒤 "언제 알았고, 무엇이 막았고, 언제 돌아왔나" 를 같은 시계로 설명할 수 있게 된다. 쿠버네티스가 죽은 노드를 알아채는 내부 순서(하트비트 → 조건 → taint → 축출)와, 그 시간을 줄이는 설정 세 가지(tolerationSeconds, 흩어 놓기, PDB)를 공식 문서 수준으로 이해한다.</p>
+  <div class="chapter-meta">
+    <span class="chip">PoC 폴더 <b>poc/06-fault-injection</b></span>
+    <span class="chip">핵심 기술 <b>카오스 실험 · 노드 수명주기 · Taint 축출 · Topology Spread · PDB · Prometheus 알림 · 런북</b></span>
+    <span class="chip">클러스터 <b>kind-chaos (대역)</b></span>
+  </div>
+</header>
+
+<h2 id="map">이 장의 지도</h2>
+<p>01~05 단계(가이드 1~7장)는 플랫폼을 <b>세웠다</b>. 이 장은 그것을 <b>부순다</b>. 진짜 클러스터 <code>faas</code> 를 직접 치지 않고, 같은 모양(워커 풀 system/build/exec)을 작게 흉내 낸 대역 클러스터 <code>chaos</code> 위에서 장애 네 가지를 넣는다. 결과로 남는 것은 측정 CSV, 방어 설정 파일, 런북 네 개다. 같은 시나리오는 07 단계(가이드 9장)의 EC2 위에서 AWS FIS 로 "진짜 스팟 회수" 로 다시 돌릴 수 있게 설계되어 있다.</p>
+
+<figure>
+  <div class="fig scroll">
+    <svg viewBox="0 0 960 320" role="img" aria-labelledby="f1-t">
+      <title id="f1-t">전체 아키텍처 속 이 장의 위치: faas 클러스터, chaos 대역 클러스터, EC2</title>
+      <defs>
+        <marker id="f1-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        <marker id="f1-m-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+      </defs>
+      <rect x="20" y="20" width="250" height="280" rx="12" class="d-card"/>
+      <text x="40" y="54" class="d-ttl">faas 클러스터</text>
+      <text x="40" y="80" class="d-sub">poc 01~05 (가이드 1~7장)</text>
+      <text x="40" y="116" class="d-subd">Argo CD · Rollouts</text>
+      <text x="40" y="140" class="d-subd">Knative · Kourier</text>
+      <text x="40" y="164" class="d-subd">테넌트 울타리 6겹</text>
+      <text x="40" y="188" class="d-subd">컨트롤 플레인 + MCP</text>
+      <text x="40" y="236" class="d-sub">이 장에서는 건드리지</text>
+      <text x="40" y="258" class="d-sub">않는다 (망가지면 재구축)</text>
+
+      <rect x="320" y="20" width="420" height="280" rx="12" class="d-cp"/>
+      <text x="340" y="54" class="d-ttl">chaos 대역 클러스터 (이 장)</text>
+      <rect x="340" y="76" width="185" height="58" rx="10" class="d-fail-box"/>
+      <text x="356" y="101" class="d-ttl-s">s1 노드 다운</text>
+      <text x="356" y="123" class="d-mono">hard | spot</text>
+      <rect x="540" y="76" width="185" height="58" rx="10" class="d-warn-box"/>
+      <text x="556" y="101" class="d-ttl-s">s2 함수 폭주</text>
+      <text x="556" y="123" class="d-mono">noisy neighbor</text>
+      <rect x="340" y="146" width="185" height="58" rx="10" class="d-prov-box"/>
+      <text x="356" y="171" class="d-ttl-s">s3 나쁜 배포</text>
+      <text x="356" y="193" class="d-mono">kubectl | git</text>
+      <rect x="540" y="146" width="185" height="58" rx="10" class="d-agent"/>
+      <text x="556" y="171" class="d-ttl-s">s4 테넌트 침범</text>
+      <text x="556" y="193" class="d-mono">8 attempts</text>
+      <rect x="340" y="222" width="385" height="58" rx="10" class="d-obs-box"/>
+      <text x="356" y="247" class="d-ttl-s">감지 3겹 (같은 t0)</text>
+      <text x="356" y="269" class="d-sub">합성 프로브 · Prometheus 알림 · K8s 상태</text>
+
+      <rect x="790" y="20" width="150" height="280" rx="12" class="d-card"/>
+      <text x="806" y="54" class="d-ttl">EC2 + k3s</text>
+      <text x="806" y="80" class="d-sub">poc 07</text>
+      <text x="806" y="102" class="d-sub">(가이드 9장)</text>
+      <text x="806" y="140" class="d-subd">AWS FIS</text>
+      <text x="806" y="164" class="d-subd">스팟 회수 예고</text>
+      <text x="806" y="188" class="d-subd">NTH drain</text>
+
+      <path d="M270 160 L318 160" class="d-e-api" marker-end="url(#f1-m-api)"/>
+      <path d="M740 160 L788 160" class="d-e-prov" marker-end="url(#f1-m-prov)"/>
+    </svg>
+  </div>
+  <figcaption><b>그림 8-1.</b> 이 장의 위치. 왼쪽 faas 의 모양(풀 라벨, 쿼터, NetworkPolicy, Rollout)을 흉내 낸 대역 클러스터에서 장애 4종을 넣고(가운데), 같은 시나리오를 EC2 위에서 실물로 돌릴 수 있게 이어진다(오른쪽, 주황 = 프로비저닝).</figcaption>
+</figure>
+
+<div class="table-wrap"><table><thead><tr><th>절</th><th>한 줄</th></tr></thead><tbody>
+<tr><td><a href="#chaos">1. 카오스 엔지니어링</a></td><td>평소 상태 가설 → 실제 사건 흉내 → 영향 범위 최소화. "죽여 봤다" 가 설계 근거가 되는 방식</td></tr>
+<tr><td><a href="#time">2. 시간을 재는 말</a></td><td>t0, 감지, 완화, 복구, MTTD/MTTR. CSV 열이 어떤 순간을 가리키는지</td></tr>
+<tr><td><a href="#detect">3. 감지 세 겹</a></td><td>합성 프로브·Prometheus 알림·쿠버네티스 상태를 같은 t0 로 재는 이유</td></tr>
+<tr><td><a href="#node">4. 노드 장애의 내부</a></td><td>kubelet Lease → node lifecycle controller → Unknown → taint → 축출 → 재스케줄</td></tr>
+<tr><td><a href="#defense">5. 노드 다운 방어 3종</a></td><td>tolerationSeconds 20, topologySpreadConstraints(Honor + matchLabelKeys), PDB minAvailable 1</td></tr>
+<tr><td><a href="#spot">6. 예고 있는 장애 vs 갑작스러운 장애</a></td><td>spot(drain) 과 hard 의 차이, PDB 가 너무 세면 생기는 일, EC2·FIS 연결</td></tr>
+<tr><td><a href="#noisy">7. 시나리오 2: 노이지 네이버</a></td><td>requests/limits/ResourceQuota/LimitRange 가 각각 누구를 무엇으로부터 지키나</td></tr>
+<tr><td><a href="#baddeploy">8. 시나리오 3: 나쁜 배포</a></td><td>Rollouts 분석 abort, kubectl 모드와 git 모드, selfHeal 이 모드를 강제하는 이유</td></tr>
+<tr><td><a href="#breach">9. 시나리오 4: 테넌트 침범</a></td><td>8가지 시도와 각각을 막는 벽 (NetworkPolicy, RBAC, PSA, LimitRange)</td></tr>
+<tr><td><a href="#alerts">10. Prometheus 알림 규칙</a></td><td>평가 주기, for, pending → firing, 라벨·주석·runbook, 규칙 5개, values 두 겹</td></tr>
+<tr><td><a href="#measure">11. 측정 도구: probe.sh 와 analyze.py</a></td><td>사용자 시점 로그를 t0 로 잘라 에러 구간을 계산하는 로직</td></tr>
+<tr><td><a href="#standin">12. 대역 클러스터</a></td><td>왜 따로 세웠나, 진짜 클러스터와 무엇이 다른가</td></tr>
+<tr><td><a href="#runbook">13. 런북</a></td><td>감지 → 진단 → 완화 → 확인 → 후속. RB-01 을 순서도로</td></tr>
+<tr><td><a href="#break">14. 깨뜨렸다 고치기 3종</a></td><td>PDB 너무 세게, 분석이 stable 을 봄, 공격자 쪽 NetworkPolicy 제거</td></tr>
+<tr><td><a href="#recap">정리</a></td><td>체크리스트, 결정 표, 본선에서 옮길 패턴, 스스로 답할 질문</td></tr>
+</tbody></table></div>
+
+<aside class="callout warn"><p class="callout-title">이 장의 숫자 원칙</p><p>README 8절과 <code>results/*.csv</code> 에는 대역에서 잰 숫자가 있지만, 이 가이드는 실측 숫자를 옮기지 않는다. 여기 나오는 숫자는 전부 <b>기본값·설정값</b>(예: <code>--node-monitor-grace-period</code> 기본 50초, DefaultTolerationSeconds 300초, 우리가 고른 tolerationSeconds 20)이다. 측정값은 맥에서 Jeong 이 다시 잰 CSV 를 기준으로 삼는다.</p></aside>
+
+<!-- ============================================================ -->
+<h2 id="chaos">1. 카오스 엔지니어링: 일부러 부숴서 배운다</h2>
+
+<div class="tier" data-tier="1">
+  <h3>무엇이고 왜 하나</h3>
+  <p>카오스 엔지니어링(Chaos Engineering)은 운영 중인 시스템에 <b>일부러, 통제된 방식으로</b> 고장을 넣고 시스템이 어떻게 버티는지 관찰하는 실험 방법이다. 넷플릭스가 서버를 무작위로 끄는 Chaos Monkey 로 알려졌다. 핵심은 "고장 내기" 가 아니라 <b>"가설을 검증하는 실험"</b> 이라는 점이다. "노드 하나가 죽어도 괜찮다" 는 누구나 말할 수 있다. "죽여 봤더니 이 구간에서 요청 일부가 실패했고, 그래서 이 설정을 넣었다" 는 직접 해 본 사람만 말할 수 있다. 본선 심사에서 요구하는 "대안과 버린 이유 + 측정 근거" 가 바로 이 형식이다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 250" role="img" aria-labelledby="f2-t">
+        <title id="f2-t">카오스 실험의 다섯 단계 순환</title>
+        <defs>
+          <marker id="f2-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f2-m-async" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-async"/></marker>
+        </defs>
+        <rect x="20" y="30" width="160" height="110" rx="12" class="d-obs-box"/>
+        <text x="36" y="62" class="d-ttl-s">1 평소 상태</text>
+        <text x="36" y="88" class="d-sub">성공률, p95 를</text>
+        <text x="36" y="110" class="d-sub">숫자로 정한다</text>
+        <rect x="210" y="30" width="160" height="110" rx="12" class="d-card"/>
+        <text x="226" y="62" class="d-ttl-s">2 가설</text>
+        <text x="226" y="88" class="d-sub">"노드 하나가</text>
+        <text x="226" y="110" class="d-sub">죽어도 유지된다"</text>
+        <rect x="400" y="30" width="160" height="110" rx="12" class="d-fail-box"/>
+        <text x="416" y="62" class="d-ttl-s">3 고장 주입</text>
+        <text x="416" y="88" class="d-sub">실제 사건을</text>
+        <text x="416" y="110" class="d-sub">흉내 낸다</text>
+        <rect x="590" y="30" width="160" height="110" rx="12" class="d-card"/>
+        <text x="606" y="62" class="d-ttl-s">4 비교</text>
+        <text x="606" y="88" class="d-sub">평소 상태와</text>
+        <text x="606" y="110" class="d-sub">차이를 잰다</text>
+        <rect x="780" y="30" width="160" height="110" rx="12" class="d-cp-box"/>
+        <text x="796" y="62" class="d-ttl-s">5 고치기</text>
+        <text x="796" y="88" class="d-sub">방어를 넣고</text>
+        <text x="796" y="110" class="d-sub">다시 잰다</text>
+        <path d="M180 85 L208 85" class="d-e-api" marker-end="url(#f2-m-api)"/>
+        <path d="M370 85 L398 85" class="d-e-api" marker-end="url(#f2-m-api)"/>
+        <path d="M560 85 L588 85" class="d-e-api" marker-end="url(#f2-m-api)"/>
+        <path d="M750 85 L778 85" class="d-e-api" marker-end="url(#f2-m-api)"/>
+        <path d="M860 140 L860 200 L290 200 L290 142" class="d-e-async" marker-end="url(#f2-m-async)"/>
+        <text x="420" y="228" class="d-lbl">가설이 틀렸으면 새 가설로 다시 (방어 전 → 방어 후)</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-2.</b> 카오스 실험의 순환. 06 README 1.1 의 다섯 단계와 같다. 우리 PoC 는 이 순환을 "방어 전 측정 → 방어 넣기 → 방어 후 측정" 으로 시나리오마다 한 바퀴씩 돈다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>원칙 다섯 개와 우리 PoC 의 대응</h3>
+  <p><a href="https://principlesofchaos.org/">Principles of Chaos Engineering</a> 은 실험을 이렇게 설계하라고 한다. 이 다섯 원칙이 06 단계의 구조를 거의 그대로 정한다.</p>
+  <div class="table-wrap"><table><thead><tr><th>원칙</th><th>뜻</th><th>06 단계에서</th></tr></thead><tbody>
+  <tr><td>평소 상태 행동에 대한 가설 (Build a Hypothesis around Steady State Behavior)</td><td>내부 지표(CPU 등)가 아니라 <b>시스템이 밖으로 내는 결과</b>(처리량, 에러율, 지연)로 "정상" 을 정의한다</td><td>합성 프로브의 성공률과 p95 가 평소 상태다. 모든 시나리오가 주입 전 일정 시간(BASELINE) 동안 평소 상태를 먼저 잰다</td></tr>
+  <tr><td>실제 사건을 다양하게 (Vary Real-world Events)</td><td>하드웨어 고장, 트래픽 급증, 잘못된 설정 같은 실제로 일어나는 사건을 고른다</td><td>노드 전원 차단(hard), 스팟 회수(spot), 버그 난 함수의 폭주, 나쁜 버전 배포, 악의적 테넌트 코드</td></tr>
+  <tr><td>운영 환경에서 실험 (Run Experiments in Production)</td><td>진짜 트래픽과 진짜 환경에서 해야 진짜 답이 나온다</td><td>PoC 는 반대로 대역에서 한다(12절). 원칙을 어긴 대가로 "kind 노드는 같은 맥의 CPU 를 나눠 쓴다" 같은 환경 차이를 따로 적어 둔다</td></tr>
+  <tr><td>자동화해서 계속 (Automate Experiments to Run Continuously)</td><td>사람이 한 번 하는 것이 아니라 계속 돌린다</td><td>스크립트 한 줄 + CSV 누적. RB-04 는 <code>s4-tenant-breach.sh</code> 를 매일 돌리자고 제안한다</td></tr>
+  <tr><td>영향 범위 최소화 (Minimize Blast Radius)</td><td>실험이 실제 사용자에게 주는 피해를 작게 시작한다</td><td>대역 클러스터, 노드 1대, 카나리 25%, 테넌트 1개. 모든 스크립트가 끝나면 원상 복구(unpause, uncordon, 좋은 버전으로 되돌림)</td></tr>
+  </tbody></table></div>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 330" role="img" aria-labelledby="f3-t">
+        <title id="f3-t">영향 범위를 겹겹이 줄이는 구조</title>
+        <rect x="20" y="20" width="920" height="290" rx="14" class="d-pool"/>
+        <text x="40" y="48" class="d-ttl-s">맥 Docker Desktop</text>
+        <text x="40" y="70" class="d-sub">faas 클러스터는 손대지 않음</text>
+        <rect x="270" y="40" width="650" height="255" rx="14" class="d-cp"/>
+        <text x="290" y="68" class="d-ttl-s">chaos 대역 클러스터</text>
+        <rect x="290" y="86" width="610" height="196" rx="12" class="d-card"/>
+        <text x="310" y="112" class="d-ttl-s">exec 풀 (노드 2대)</text>
+        <rect x="310" y="128" width="270" height="140" rx="10" class="d-fail-box"/>
+        <text x="326" y="154" class="d-ttl-s">s1: 노드 1대</text>
+        <text x="326" y="178" class="d-sub">docker pause 로 얼림</text>
+        <text x="326" y="200" class="d-sub">끝나면 unpause, uncordon</text>
+        <text x="326" y="222" class="d-sub">다른 1대는 살아 있음</text>
+        <rect x="600" y="128" width="280" height="62" rx="10" class="d-prov-box"/>
+        <text x="616" y="154" class="d-ttl-s">s3: 카나리 25%</text>
+        <text x="616" y="176" class="d-sub">파드 4개 중 1개만 나쁜 버전</text>
+        <rect x="600" y="204" width="280" height="64" rx="10" class="d-agent"/>
+        <text x="616" y="230" class="d-ttl-s">s2·s4: 테넌트 1개</text>
+        <text x="616" y="252" class="d-sub">tenant-b 안에서만 폭주·공격</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-3.</b> 영향 범위(blast radius) 최소화. 바깥 점선(맥 전체)부터 안쪽(노드 1대, 카나리 1개)까지, 각 시나리오가 건드리는 범위를 가장 작은 단위로 잡았다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>실험 한 번의 구조 (모든 s*.sh 공통)</h3>
+  <p>네 스크립트는 생김새가 다르지만 뼈대가 같다. 이 뼈대를 알면 새 시나리오(예: 네트워크 지연)를 같은 모양으로 추가할 수 있다.</p>
+  <pre class="pseudo"><code><span class="k">반복</span> 회수만큼:
+  대상 확인        <span class="c">// 피해자 파드가 Ready 인가, 지난 회차 잔여물이 없나</span>
+  probe.sh start   <span class="c">// 사용자 시점 기록 시작</span>
+  sleep BASELINE   <span class="c">// 평소 상태 (가설의 기준선)</span>
+  T0 = now()       <span class="c">// 이 순간이 모든 시간의 0</span>
+  고장 주입        <span class="c">// docker pause / 폭주 Deployment / 나쁜 args / 공격 파드</span>
+  <span class="k">반복</span> 1초마다:
+    쿠버네티스 상태 확인  → 처음 바뀐 시각을 T0 기준으로 기록
+    알림 firing 확인      → 처음 firing 된 시각을 기록 (Prometheus 없으면 n/a)
+    전부 기록됐거나 TIMEOUT 이면 <span class="k">탈출</span>
+  잠깐 더 관찰     <span class="c">// 복구 직후 흔들림까지 로그에 남긴다</span>
+  probe.sh stop    <span class="c">// 로그 회수</span>
+  원상 복구        <span class="c">// unpause·uncordon / 폭주 삭제 / 좋은 버전</span>
+  analyze.py --t0 T0 --extra "시나리오별 열"   <span class="c">// CSV 한 줄</span></code></pre>
+  <p>세 가지 설계가 눈에 띈다. (1) <b>T0 를 스크립트가 직접 찍는다</b>: 모든 감지 시각이 같은 원점에서 측정되므로 서로 비교할 수 있다. (2) <b>관찰은 폴링(1초)</b>: 이벤트 구독보다 단순하지만 측정 해상도가 1초다. (3) <b>원상 복구가 실험의 일부</b>: 영향 범위 최소화 원칙을 코드로 강제한다. 중간에 Ctrl+C 로 끊으면 이 단계가 빠지므로 README 4.1 이 손으로 되살리는 명령을 따로 적어 둔다.</p>
+  <div class="code-head"><span>poc/06-fault-injection/scripts/lib.sh</span><span>발췌</span></div>
+  <pre><code><span class="c"># 현재 시각 (유닉스 초, 소수점 1자리). 맥 date 는 소수점 초를 못 줘서 perl</span>
+now() { perl -MTime::HiRes=time -e 'printf "%.1f\n", time'; }
+<span class="c"># 두 시각의 차 (초, 소수점 1자리)</span>
+since() { perl -e "printf '%.1f', $2 - $1"; }
+<span class="c"># 지금 kubectl 이 어느 클러스터를 보는지 보여 준다 (엉뚱한 클러스터에 장애를 넣지 않게)</span>
+show_ctx() { log "kubectl 컨텍스트: $(kubectl config current-context)"; }</code></pre>
+  <ul>
+    <li><code>now</code>: 맥 기본 <code>date</code> 는 초 단위까지만 주므로 perl 의 Time::HiRes 로 0.1초 해상도를 얻는다. 맥 기본 bash 3.2 와 BSD 도구에서 도는 것이 lib.sh 의 전제다.</li>
+    <li><code>since</code>: 모든 CSV 의 <code>t_*_s</code> 열은 이 함수로 T0 와의 차이를 계산한 값이다.</li>
+    <li><code>show_ctx</code>: 모든 시나리오 첫 줄에서 컨텍스트를 찍는다. 영향 범위 최소화의 가장 싼 장치다. <code>kind-faas</code> 가 찍히면 즉시 멈춘다.</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>장애 4종 = <code>scripts/s1~s4</code>, 평소 상태와 사용자 시점 = <code>scripts/probe.sh</code> + <code>analyze.py</code>, 방어 = <code>defenses/</code> 3개 + <code>gitops/fault-defenses.yaml</code>, 사람용 절차 = <code>runbooks/RB-01~04</code>, 실험장 = <code>standin/</code>. 결과는 <code>results/*.csv</code> 로 커밋하고, 원본 프로브 로그(<code>*.probe.log</code>)는 <code>.gitignore</code> 로 뺀다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>"장애 대응 문서만 쓰기" 대신 실험을 택했다. 문서만 있으면 "tolerationSeconds 를 줄이면 사용자 장애가 준다" 같은 그럴듯한 오해를 검증할 수 없다(5절에서 보듯 실제로는 다른 열이 준다). 비용은 실험 시간과 대역 클러스터 메모리다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: 스크립트를 중간에 끊은 뒤 다음 실험에서 대상 노드가 이상하게 고정되거나, 파드가 한 노드에 몰려 있다. <b>볼 곳</b>: <code>docker ps</code> 의 STATUS 에 <code>Paused</code>, <code>kubectl get nodes</code> 의 <code>SchedulingDisabled</code>. <b>고치는 법</b>: <code>docker unpause &lt;노드&gt; &amp;&amp; kubectl uncordon &lt;노드&gt;</code>, 그 다음 <code>kubectl -n tenant-a rollout restart deploy/hello</code> 로 다시 흩어 놓는다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://principlesofchaos.org/">Principles of Chaos Engineering</a> · <a href="https://sre.google/sre-book/monitoring-distributed-systems/">Google SRE Book: Monitoring Distributed Systems</a> · <a href="https://sre.google/sre-book/postmortem-culture/">Google SRE Book: Postmortem Culture</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="time">2. 시간을 재는 말: t0, 감지, 완화, 복구</h2>
+
+<div class="tier" data-tier="1">
+  <h3>장애 하나를 시간축 위에 놓기</h3>
+  <p>장애를 숫자로 말하려면 "언제부터 언제까지" 의 기준점이 먼저 있어야 한다. 06 단계는 다섯 개의 순간을 쓴다.</p>
+  <dl class="terms">
+    <dt>t0</dt><dd>고장을 넣은 순간. 스크립트가 <code>T0=$(now)</code> 로 찍는다. 모든 시간 열의 원점.</dd>
+    <dt>감지 (detect)</dt><dd>시스템이나 사람이 "고장났다" 를 안 순간. 무엇이 알았느냐에 따라 여러 개다(노드 NotReady, 알림 firing, 분석 Failed).</dd>
+    <dt>완화 (mitigate)</dt><dd>사용자 피해가 멈추기 시작한 순간. 예: 죽은 파드가 Service 에서 빠짐, Rollout abort.</dd>
+    <dt>복구 (recover)</dt><dd>평소 상태로 완전히 돌아온 순간. 예: 원하는 수의 파드가 다른 노드에서 Ready, 나쁜 파드 0개.</dd>
+    <dt>MTTD / MTTR</dt><dd>Mean Time To Detect / Mean Time To Recover(또는 Repair). t0 → 감지, t0 → 복구의 평균. "평균" 이므로 여러 번(README 기준 3회 이상) 재야 한다.</dd>
+  </dl>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 300" role="img" aria-labelledby="f4-t">
+        <title id="f4-t">t0, 첫 에러, 감지, 완화, 복구, 마지막 에러를 한 시간축에 놓은 그림</title>
+        <rect x="60" y="70" width="400" height="34" rx="6" class="d-bar-fail"/>
+        <text x="74" y="92" class="d-lbl">사용자가 에러를 보는 구간 (outage_s)</text>
+        <path d="M40 140 L920 140" class="d-axis"/>
+        <path d="M60 50 L60 250" class="d-tick"/>
+        <path d="M250 50 L250 250" class="d-tick"/>
+        <path d="M460 50 L460 250" class="d-tick"/>
+        <path d="M720 50 L720 250" class="d-tick"/>
+        <circle cx="60" cy="140" r="7" class="d-dot-fail"/>
+        <circle cx="250" cy="140" r="7" class="d-dot-obs"/>
+        <circle cx="460" cy="140" r="7" class="d-dot-user"/>
+        <circle cx="720" cy="140" r="7" class="d-dot-ok"/>
+        <text x="48" y="40" class="d-ttl-s">t0</text>
+        <text x="216" y="40" class="d-ttl-s">감지</text>
+        <text x="426" y="40" class="d-ttl-s">완화</text>
+        <text x="690" y="40" class="d-ttl-s">복구</text>
+        <text x="68" y="170" class="d-mono">T0=$(now)</text>
+        <text x="258" y="170" class="d-mono">t_notready_s</text>
+        <text x="468" y="170" class="d-mono">last_err_s</text>
+        <text x="728" y="170" class="d-mono">t_replaced_s</text>
+        <path d="M60 205 L250 205" class="d-e-obs"/>
+        <text x="110" y="198" class="d-lbl">MTTD</text>
+        <path d="M60 240 L720 240" class="d-e-git"/>
+        <text x="360" y="232" class="d-lbl">MTTR (파드 수 기준 복구)</text>
+        <text x="740" y="100" class="d-sub">완화와 복구는</text>
+        <text x="740" y="122" class="d-sub">다른 순간이다</text>
+        <text x="60" y="285" class="d-sub">첫 에러는 보통 t0 바로 뒤. outage_s = 마지막 에러 − 첫 에러</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-4.</b> 노드 다운 시나리오를 예로 든 시간 용어. 사용자 피해(빨강)는 "완화" 에서 끝나고, 쿠버네티스가 원하는 파드 수를 되찾는 "복구" 는 그보다 뒤일 수 있다. 이 차이가 5절의 핵심이다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>시나리오별로 각 순간이 무엇인가</h3>
+  <div class="table-wrap"><table><thead><tr><th>시나리오</th><th>t0</th><th>감지</th><th>완화</th><th>복구</th></tr></thead><tbody>
+  <tr><td>s1 노드 다운 hard</td><td><code>docker pause</code> 직전</td><td>노드 Ready ≠ True (<code>t_notready_s</code>), 알림 (<code>t_alert_s</code>)</td><td>죽은 파드가 EndpointSlice 에서 빠짐 (프로브의 <code>last_err_s</code> 근처)</td><td>다른 노드에서 원하는 수만큼 Ready (<code>t_replaced_s</code>)</td></tr>
+  <tr><td>s1 spot</td><td>cordon 직전 (예고 수신)</td><td>예고 자체가 감지 (t0 와 같음)</td><td>drain 완료 (<code>drain_s</code>)</td><td>같음 (<code>t_replaced_s</code>)</td></tr>
+  <tr><td>s2 폭주</td><td>폭주 Deployment apply</td><td>쿼터가 막은 이벤트 (<code>t_blocked_s</code>), 알림</td><td>쿼터가 생성을 막는 순간 자체</td><td>폭주 삭제 (<code>fix_at_s</code>)</td></tr>
+  <tr><td>s3 나쁜 배포</td><td>나쁜 args patch (git 모드는 push 후 엔터)</td><td>AnalysisRun Failed (<code>t_failed_s</code>)</td><td>Rollout abort (<code>t_abort_s</code>)</td><td>나쁜 파드 0개 (<code>t_stable_s</code>)</td></tr>
+  <tr><td>s4 침범</td><td>시도마다 각자</td><td>거절 응답 자체 (시도별 <code>seconds</code>), 알림 (D1 줄)</td><td>시도 자체가 실패</td><td>해당 없음</td></tr>
+  </tbody></table></div>
+  <p>Google SRE 책의 모니터링 장은 <b>증상(symptom)</b> 과 <b>원인(cause)</b> 을 나누라고 한다. "사용자가 에러를 본다" 는 증상이고 "노드가 NotReady" 는 원인이다. 위 표에서 프로브가 재는 열(<code>errors</code>, <code>outage_s</code>)은 증상이고, 쿠버네티스 상태 열(<code>t_notready_s</code>)은 원인 쪽 신호다. 둘을 같은 시계로 재야 "원인을 알아챈 시각" 과 "사용자가 아팠던 시간" 의 차이가 보인다.</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>평균의 함정과 측정 해상도</h3>
+  <ul>
+    <li><b>폴링 해상도</b>: 상태 확인 루프가 1초 간격이므로 <code>t_*_s</code> 는 실제보다 최대 약 1초(+ kubectl 호출 시간) 늦게 찍힌다. 프로브 간격은 0.1초 + curl 시간이라 사용자 시점 열이 더 촘촘하다.</li>
+    <li><b>노드 시계 vs 맥 시계</b>: 프로브 로그의 시각은 <code>kubectl logs --timestamps</code> 가 붙인 노드(컨테이너 런타임) 시각이고, T0 는 맥의 perl 시각이다. kind 는 같은 기계라 차이가 무시할 만하지만, EC2(07)에서는 NTP 동기화가 전제가 된다 【확인 필요: 07 단계에서 노드 시계 동기 확인 절차】.</li>
+    <li><b>MTTR 의 정의를 고정</b>: "파드 수 복구" 와 "사용자 에러 끝" 은 다른 값이다. 결정 표에 숫자를 옮길 때 어느 열인지 반드시 적는다. 5절에서 보듯 한 설정이 한쪽만 줄인다.</li>
+    <li><b>평균보다 범위</b>: 회수가 적을 때는 평균보다 최소~최대 범위가 정직하다. README 8절 표도 범위를 같이 적는다.</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>시간 열 이름이 규칙적이다: <code>t_&lt;사건&gt;_s</code> 는 스크립트가 본 쿠버네티스/알림 사건, <code>first_err_s</code>·<code>last_err_s</code>·<code>outage_s</code> 는 analyze.py 가 프로브 로그에서 계산한 사용자 시점. 값이 <code>timeout</code>, <code>n/a</code>(Prometheus 없음), <code>none</code>(안 옴), <code>missed</code>/<code>promoted-bad</code>(분석이 못 잡음)인 칸도 의미가 있다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: s3 에서 감지 시간이 0초처럼 찍힌다. <b>원인</b>: 같은 나쁜 템플릿을 다시 넣으면 Rollouts 가 지난번 실패한 분석 결과를 재사용한다. <b>고친 법</b>: <code>s3-bad-deploy.sh</code> 가 나쁜 args 에 회차마다 다른 <code>BADTAG</code>(시각)를 넣어 파드 템플릿 해시를 매번 바꾼다. 측정 도구 자체도 깨지며, 그때마다 스크립트 주석에 "실제로 밟았다" 로 남겨 두었다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://sre.google/sre-book/monitoring-distributed-systems/">SRE Book: Monitoring Distributed Systems (증상 vs 원인, 블랙박스 vs 화이트박스)</a> · <a href="https://sre.google/sre-book/managing-incidents/">SRE Book: Managing Incidents</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="detect">3. 감지 세 겹: 같은 t0 로 세 군데를 본다</h2>
+
+<div class="tier" data-tier="1">
+  <h3>왜 한 군데만 보면 안 되나</h3>
+  <p>06 단계는 장애 하나를 세 관측점에서 동시에 본다. <b>합성 프로브</b>(사용자 시점, 가장 정직), <b>Prometheus 알림</b>(사람을 깨우는 것), <b>쿠버네티스 상태</b>(자동 복구가 보는 것). 셋은 서로 다른 시각에 장애를 안다. 한 군데만 보면 나머지 두 개의 지연을 모른다. 예: 쿠버네티스 상태만 보면 "노드가 NotReady 되기 전" 구간에 사용자가 실패하고 있었다는 사실을 놓친다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 330" role="img" aria-labelledby="f5-t">
+        <title id="f5-t">같은 t0 위에서 세 감지 층이 장애를 알게 되는 순서</title>
+        <path d="M200 30 L200 300" class="d-tick"/>
+        <text x="186" y="22" class="d-ttl-s">t0</text>
+        <rect x="20" y="50" width="160" height="66" rx="10" class="d-user-box"/>
+        <text x="34" y="78" class="d-ttl-s">합성 프로브</text>
+        <text x="34" y="100" class="d-sub">사용자 시점</text>
+        <rect x="200" y="66" width="500" height="34" rx="6" class="d-bar-fail"/>
+        <text x="214" y="88" class="d-lbl">첫 요청 실패부터 바로 보인다 (000 / 5xx)</text>
+        <circle cx="206" cy="83" r="6" class="d-dot-user"/>
+
+        <rect x="20" y="140" width="160" height="66" rx="10" class="d-cp-box"/>
+        <text x="34" y="168" class="d-ttl-s">K8s 상태</text>
+        <text x="34" y="190" class="d-sub">자동 복구의 눈</text>
+        <path d="M200 173 L470 173" class="d-e-api"/>
+        <text x="214" y="164" class="d-lbl">판정 대기 (grace period)</text>
+        <circle cx="476" cy="173" r="7" class="d-dot-ok"/>
+        <text x="490" y="178" class="d-subd">Ready=Unknown, taint</text>
+
+        <rect x="20" y="230" width="160" height="66" rx="10" class="d-obs-box"/>
+        <text x="34" y="258" class="d-ttl-s">Prometheus 알림</text>
+        <text x="34" y="280" class="d-sub">사람을 깨움</text>
+        <path d="M200 263 L600 263" class="d-e-obs"/>
+        <text x="214" y="254" class="d-lbl">상태 변화 + 긁기 + 평가 + for</text>
+        <circle cx="606" cy="263" r="7" class="d-dot-obs"/>
+        <text x="620" y="268" class="d-subd">firing</text>
+        <text x="720" y="88" class="d-sub">가장 먼저, 가장 정직</text>
+        <text x="720" y="178" class="d-sub">자동 조치는 여기서 시작</text>
+        <text x="720" y="268" class="d-sub">가장 늦다</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-5.</b> 노드 다운 때 세 층의 감지 순서(길이는 개념도이며 실측 비율이 아니다). 프로브는 t0 직후부터, 쿠버네티스 상태는 판정 대기 뒤에, 알림은 그 상태가 지표로 긁히고 규칙이 평가된 뒤에야 안다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>각 층이 무엇을 보고, 무엇을 놓치나</h3>
+  <div class="table-wrap"><table><thead><tr><th>층</th><th>보는 것</th><th>잘하는 것</th><th>놓치는 것</th><th>PoC 파일</th></tr></thead><tbody>
+  <tr><td>합성 프로브 (블랙박스)</td><td>0.1초마다 함수를 부른 응답코드와 걸린 시간</td><td>사용자가 실제로 겪은 것. 원인과 상관없이 증상을 잡는다</td><td>왜 실패했는지 모른다. 프로브 경로 밖(다른 함수)의 장애</td><td><code>scripts/probe.sh</code></td></tr>
+  <tr><td>쿠버네티스 상태</td><td>노드 condition, 파드 Ready, Rollout phase, 이벤트</td><td>자동 복구가 이 신호로 움직인다. 원인을 가리킨다</td><td>판정 전 구간. "Ready 인데 안 닿음"(03 의 NetworkPolicy 이음새)</td><td><code>s1~s3</code> 의 폴링 루프</td></tr>
+  <tr><td>Prometheus 알림 (화이트박스)</td><td>kube-state-metrics·Rollouts·apiserver 지표에 대한 규칙</td><td>사람에게 알린다. 런북 링크를 실어 보낸다. 지속 조건(for)으로 흔들림을 거른다</td><td>긁기·평가 주기만큼 늦다. 규칙이 틀리면 아예 안 온다(s3 깨뜨리기)</td><td><code>defenses/prometheus-alerts-values.yaml</code></td></tr>
+  </tbody></table></div>
+  <figure>
+  <pre class="mermaid">
+sequenceDiagram
+  participant S as s1-node-down.sh
+  participant P as 프로브 파드
+  participant K as API 서버
+  participant M as Prometheus
+  S->>P: probe.sh start (0.1초마다 curl)
+  S->>S: T0 = now, docker pause 노드
+  P-->>P: 응답 000 기록 시작
+  loop 1초마다
+    S->>K: 노드 Ready condition 조회
+    S->>K: 다른 노드의 Ready 파드 수 조회
+    S->>M: ALERTS alertstate firing 질의
+  end
+  K-->>S: Ready Unknown (t_notready_s)
+  M-->>S: FnNodeNotReady firing (t_alert_s)
+  K-->>S: 파드 수 회복 (t_replaced_s)
+  S->>P: probe.sh stop (로그 회수)
+  S->>S: analyze.py --t0 T0
+  </pre>
+  <figcaption><b>그림 8-6.</b> s1 한 회에서 세 층을 같은 T0 로 재는 순서. 쿠버네티스 상태와 알림은 스크립트가 폴링하고, 프로브는 독립적으로 계속 기록한 뒤 나중에 T0 로 잘린다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>세 층을 같은 시계로 맞추는 세부</h3>
+  <ul>
+    <li><b>알림 확인 방법</b>: <code>lib.sh</code> 의 <code>alert_firing</code> 은 Prometheus 가 만드는 합성 시계열 <code>ALERTS{alertname="…",alertstate="firing"}</code> 의 개수를 센다. Prometheus 는 pending 또는 firing 인 알림마다 값 1 인 <code>ALERTS</code> 시계열을 저장한다(공식 문서). Alertmanager 를 거치지 않으므로 "알림 발송" 이 아니라 "규칙이 firing 이 된 순간" 을 잰다.</li>
+    <li><b>port-forward 없이 질의</b>: <code>prom_count</code> 는 API 서버의 서비스 프록시 경로 <code>/api/v1/namespaces/monitoring/services/prometheus-server:80/proxy/api/v1/query</code> 를 쓴다. port-forward 프로세스가 장애 중에 끊겨 측정이 오염되는 일을 피한다. 같은 이유로 프로브도 클러스터 안에서 돈다.</li>
+    <li><b>Prometheus 가 없으면</b>: <code>prom_count</code> 가 -1 을 돌려주고, 시나리오는 알림 열만 <code>n/a</code> 로 남기고 계속 돈다. 측정 도구가 관측 스택에 의존하지 않게 한 것이다.</li>
+    <li><b>pipefail 함정</b>: 응답을 변수에 먼저 받는다. 파이프로 바로 넘기면 <code>set -o pipefail</code> 때문에 kubectl 실패 시 -1 이 두 번 찍혔다(스크립트 주석).</li>
+  </ul>
+  <div class="code-head"><span>poc/06-fault-injection/scripts/lib.sh</span><span>발췌</span></div>
+  <pre><code>prom_count() {
+  local ns="${PROM_SVC%%/*}" rest="${PROM_SVC#*/}"
+  local q; q=$(python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1]))' "$1")
+  local body; body=$(kubectl get --raw "/api/v1/namespaces/$ns/services/$rest/proxy/api/v1/query?query=$q" 2&gt;/dev/null) || { echo -1; return 0; }
+  printf '%s' "$body" | python3 -c 'import json,sys
+try: print(len(json.load(sys.stdin)["data"]["result"]))
+except Exception: print(-1)'
+}
+alert_firing() {
+  local c; c=$(prom_count "ALERTS{alertname=\"$1\",alertstate=\"firing\"}")
+  if [ "$c" = "-1" ]; then echo -1; elif [ "$c" -gt 0 ]; then echo 1; else echo 0; fi
+}</code></pre>
+  <ul>
+    <li><code>PROM_SVC</code> 의 형식은 <code>네임스페이스/서비스:포트</code>(기본 <code>monitoring/prometheus-server:80</code>). <code>%%/*</code> 와 <code>#*/</code> 는 bash 문자열 자르기로 앞뒤를 나눈다.</li>
+    <li>PromQL 을 URL 인코딩한 뒤 <code>kubectl get --raw</code> 로 호출한다. kubectl 의 인증을 그대로 쓰므로 별도 토큰이 필요 없다.</li>
+    <li>결과의 <code>data.result</code> 배열 길이 = 조건을 만족하는 시계열 수. 알림이 firing 이면 1 이상이다.</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>결정 2(06 README 핵심 결정): "합성 프로브 + Prometheus 알림 + 쿠버네티스 상태, 세 겹을 같은 t0 로". 대안 (가) 알림만은 알림이 늦거나 틀려도 모르고, (나) 상태만은 판정 전 사용자 실패 구간을 놓친다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: CSV 의 <code>t_alert_s</code> 가 계속 <code>n/a</code>. <b>볼 곳</b>: <code>kubectl get --raw /api/v1/namespaces/monitoring/services/prometheus-server:80/proxy/api/v1/query?query=up</code> 가 응답하는지. <b>고치는 법</b>: 서비스 이름·포트가 다르면 <code>PROM_SVC=ns/svc:port</code> 를 앞에 붙여 실행한다. 대역은 일부러 2단계 차트와 같은 <code>prometheus-server:80</code> 로 맞췄다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/">Prometheus: Alerting rules (ALERTS 시계열)</a> · <a href="https://prometheus.io/docs/prometheus/latest/querying/api/">Prometheus HTTP API</a> · <a href="https://kubernetes.io/docs/tasks/access-application-cluster/access-cluster-services/">Kubernetes: Access services running on clusters (API 서버 프록시)</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="node">4. 노드 장애의 내부: 쿠버네티스는 죽은 노드를 어떻게 아나</h2>
+
+<div class="tier" data-tier="1">
+  <h3>한 문단 요약</h3>
+  <p>노드의 kubelet 은 주기적으로 "살아 있다" 는 표시(하트비트)를 API 서버에 남긴다. kube-controller-manager 안의 <b>node lifecycle controller</b> 가 이 표시가 일정 시간(<code>--node-monitor-grace-period</code>, 기본 50초) 동안 안 오면 노드의 <code>Ready</code> 조건을 <code>Unknown</code> 으로 바꾸고, 노드에 <code>node.kubernetes.io/unreachable</code> taint 를 붙인다. 그 노드의 파드는 Ready=False 가 되어 Service 의 엔드포인트에서 빠진다. 파드가 그 taint 를 견디는 시간(<code>tolerationSeconds</code>, 기본 300초)이 지나면 파드가 축출(evict)되고, ReplicaSet 이 다른 노드에 새로 만든다. <b>노드 장애의 시간 = 판정 대기 + 견디는 시간 + 재생성 시간</b> 이다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 390" role="img" aria-labelledby="f7-t">
+        <title id="f7-t">kubelet, API 서버, kube-controller-manager 사이의 하트비트와 판정 구조</title>
+        <defs>
+          <marker id="f7-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+          <marker id="f7-m-obs" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-obs"/></marker>
+          <marker id="f7-m-fail" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+        </defs>
+        <rect x="20" y="40" width="250" height="320" rx="12" class="d-card"/>
+        <text x="40" y="72" class="d-ttl">exec 노드</text>
+        <rect x="40" y="96" width="210" height="84" rx="10" class="d-plain-box"/>
+        <text x="56" y="124" class="d-ttl-s">kubelet</text>
+        <text x="56" y="150" class="d-sub">Lease 를 주기적으로</text>
+        <text x="56" y="170" class="d-sub">갱신 (기본 10초)</text>
+        <rect x="40" y="210" width="210" height="126" rx="10" class="d-user-box"/>
+        <text x="56" y="238" class="d-ttl-s">함수 파드 hello</text>
+        <text x="56" y="264" class="d-sub">docker pause 하면</text>
+        <text x="56" y="286" class="d-sub">kubelet 과 함께 얼어</text>
+        <text x="56" y="308" class="d-sub">요청에 응답이 없다</text>
+
+        <rect x="350" y="40" width="260" height="320" rx="12" class="d-card"/>
+        <text x="370" y="72" class="d-ttl">API 서버 (etcd)</text>
+        <rect x="370" y="96" width="220" height="84" rx="10" class="d-obs-box"/>
+        <text x="386" y="124" class="d-ttl-s">Lease</text>
+        <text x="386" y="150" class="d-mono">kube-node-lease/&lt;노드&gt;</text>
+        <text x="386" y="170" class="d-mono">spec.renewTime</text>
+        <rect x="370" y="210" width="220" height="126" rx="10" class="d-plain-box"/>
+        <text x="386" y="238" class="d-ttl-s">Node 오브젝트</text>
+        <text x="386" y="264" class="d-mono">status.conditions[Ready]</text>
+        <text x="386" y="286" class="d-mono">spec.taints</text>
+        <text x="386" y="312" class="d-sub">+ 파드 status (Ready)</text>
+
+        <rect x="690" y="40" width="250" height="320" rx="12" class="d-cp"/>
+        <text x="706" y="72" class="d-ttl-s">kube-controller-manager</text>
+        <rect x="706" y="96" width="218" height="120" rx="10" class="d-card"/>
+        <text x="722" y="124" class="d-ttl-s">node lifecycle</text>
+        <text x="722" y="146" class="d-ttl-s">controller</text>
+        <text x="722" y="172" class="d-sub">기본 5초마다 검사</text>
+        <text x="722" y="194" class="d-sub">grace 50초 넘으면 판정</text>
+        <rect x="706" y="236" width="218" height="100" rx="10" class="d-card"/>
+        <text x="722" y="264" class="d-ttl-s">EndpointSlice</text>
+        <text x="722" y="286" class="d-ttl-s">컨트롤러</text>
+        <text x="722" y="312" class="d-sub">Ready 아닌 파드 제외</text>
+
+        <path d="M250 138 L368 138" class="d-e-api" marker-end="url(#f7-m-api)"/>
+        <path d="M704 132 L592 132" class="d-e-obs" marker-end="url(#f7-m-obs)"/>
+        <path d="M704 196 L650 196 L650 250 L592 250" class="d-e-fail" marker-end="url(#f7-m-fail)"/>
+        <path d="M592 300 L704 300" class="d-e-api" marker-end="url(#f7-m-api)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-7.</b> 하트비트와 판정의 구조. 회색 = kubelet 이 Lease 를 갱신(API 호출), 청록 점선 = 컨트롤러가 갱신 시각을 읽음(관측), 빨강 점선 = 판정 결과를 씀(Ready=Unknown, taint, 파드 Ready=False), 오른쪽 아래 = EndpointSlice 컨트롤러가 파드 상태를 보고 엔드포인트를 정리.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>하트비트 두 가지, 판정, 축출, 재스케줄</h3>
+  <h4>하트비트 두 가지</h4>
+  <p>공식 문서는 노드 하트비트를 두 형태로 정의한다.</p>
+  <ul>
+    <li><b>Node 의 <code>.status</code> 갱신</b>: kubelet 은 상태가 바뀌었을 때, 또는 바뀌지 않았어도 일정 간격(기본 5분)마다 <code>.status</code> 를 갱신한다. 크고 무거운 쓰기다.</li>
+    <li><b><code>kube-node-lease</code> 네임스페이스의 Lease</b>: 노드마다 Lease 오브젝트가 하나 있고, kubelet 이 이를 만들고 <b>기본 10초마다</b> <code>spec.renewTime</code> 을 갱신한다. 작고 가벼운 쓰기다. 갱신이 실패하면 200ms 에서 시작해 최대 7초까지 지수 백오프로 재시도한다.</li>
+  </ul>
+  <p>Lease 가 생긴 이유는 성능이다. 노드가 수천 대인 클러스터에서 모든 노드가 큰 <code>.status</code> 를 10초마다 쓰면 etcd 부하가 크다. 그래서 "살아 있음" 은 작은 Lease 로, "상태 내용" 은 변화가 있을 때만 <code>.status</code> 로 나눴다.</p>
+  <h4>판정: node lifecycle controller</h4>
+  <p>kube-controller-manager 의 node lifecycle controller(공식 문서의 node controller)는 기본 5초(<code>--node-monitor-period</code>)마다 각 노드를 검사한다. 마지막 하트비트(Lease 갱신 또는 status 갱신)로부터 <code>--node-monitor-grace-period</code>(기본 50초)가 지났으면 그 노드의 <code>Ready</code> 조건을 <code>Unknown</code> 으로 바꾼다. kubelet 이 살아서 스스로 "준비 안 됨" 을 보고하면 <code>False</code> 다.</p>
+  <div class="table-wrap"><table><thead><tr><th>Ready 조건 값</th><th>뜻</th><th>붙는 taint</th></tr></thead><tbody>
+  <tr><td><code>True</code></td><td>건강하고 파드를 받을 수 있다</td><td>없음</td></tr>
+  <tr><td><code>False</code></td><td>kubelet 이 살아 있지만 준비 안 됨을 보고 (예: 네트워크 플러그인 미준비)</td><td><code>node.kubernetes.io/not-ready</code></td></tr>
+  <tr><td><code>Unknown</code></td><td>컨트롤러가 grace period 동안 노드에서 아무것도 못 들음</td><td><code>node.kubernetes.io/unreachable</code></td></tr>
+  </tbody></table></div>
+  <p><code>docker pause</code> 는 kubelet 까지 얼리므로 우리 시나리오에서는 <code>Unknown</code> + <code>unreachable</code> 이 된다. 스크립트는 <code>status != True</code> 를 NotReady 로 기록하므로 두 경우를 구별하지 않는다. <code>kubectl get nodes</code> 의 STATUS 열은 둘 다 <code>NotReady</code> 로 보여 준다.</p>
+  <h4>taint 두 종류: NoSchedule 과 NoExecute</h4>
+  <p>컨트롤러는 같은 키로 두 효과(effect)의 taint 를 다룬다. <code>NoSchedule</code> 은 "새 파드를 여기 놓지 마" (taint nodes by condition), <code>NoExecute</code> 는 "이미 있는 파드도 내보내" (taint based evictions, v1.18 GA)다. 공식 문서는 not-ready 와 unreachable 에 대해 NoExecute 효과가 기본으로 붙는다고 적는다. 둘 다 붙는다는 점이 5절의 nodeTaintsPolicy 계산에서 중요해진다 【확인 필요: kind v1.37 에서 <code>kubectl describe node</code> 로 unreachable 의 NoSchedule·NoExecute 두 taint 가 모두 보이는지】.</p>
+  <h4>엔드포인트에서 빠지기와 축출</h4>
+  <p>노드가 Unknown 이 되면 컨트롤러는 그 노드 파드들의 Ready 조건을 False 로 표시한다. EndpointSlice 컨트롤러는 Ready 가 아닌 파드를 서비스 엔드포인트의 준비된 목록에서 뺀다. 이 순간 Service 로 가는 요청이 살아 있는 파드로만 간다. 즉 <b>사용자 장애는 판정(약 grace period)에서 끝난다</b>. 그 뒤 파드가 NoExecute taint 를 견디는 시간(<code>tolerationSeconds</code>)이 지나면 축출되고, 원래 Deployment 의 ReplicaSet 이 "원하는 수보다 적다" 를 보고 새 파드를 만든다. 스케줄러가 살아 있는 노드에 놓고, 그 노드 kubelet 이 띄워 Ready 가 되면 복구가 끝난다.</p>
+  <figure>
+    <pre class="mermaid">
+sequenceDiagram
+  participant KL as kubelet (죽는 노드)
+  participant API as API 서버
+  participant NLC as node lifecycle controller
+  participant EPS as EndpointSlice 컨트롤러
+  participant RS as ReplicaSet 컨트롤러
+  participant SCH as 스케줄러
+  participant KB as kubelet (산 노드)
+  KL->>API: Lease renewTime 갱신 (10초마다)
+  Note over KL: t0 docker pause, 갱신 멈춤
+  loop 5초마다
+    NLC->>API: 노드별 마지막 하트비트 확인
+  end
+  Note over NLC: grace period 50초 경과
+  NLC->>API: Ready=Unknown, unreachable taint 추가
+  NLC->>API: 그 노드 파드 Ready=False
+  API-->>EPS: 파드 상태 변경 감시
+  EPS->>API: 준비된 엔드포인트에서 제외
+  Note over EPS: 사용자 에러 멈춤 (완화)
+  Note over NLC: tolerationSeconds 경과
+  NLC->>API: 파드 삭제 (taint 기반 축출)
+  API-->>RS: 파드 수 부족 감시
+  RS->>API: 새 파드 생성
+  SCH->>API: 살아 있는 exec 노드에 바인딩
+  KB->>API: 컨테이너 시작, Ready=True
+  Note over KB: 원하는 수 회복 (복구)
+    </pre>
+    <figcaption><b>그림 8-8.</b> hard 노드 다운의 전체 순서. "완화"(엔드포인트 제외)와 "복구"(새 파드 Ready) 사이에 tolerationSeconds 가 끼어 있다. 죽은 노드의 옛 파드는 kubelet 이 확인해 주지 못하므로 Terminating 으로 남는다(RB-01).</figcaption>
+  </figure>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 330" role="img" aria-labelledby="f9-t">
+        <title id="f9-t">기본값과 우리 설정의 노드 다운 타임라인 비교</title>
+        <path d="M80 40 L80 300" class="d-tick"/>
+        <path d="M330 40 L330 300" class="d-tick"/>
+        <text x="70" y="30" class="d-ttl-s">t0</text>
+        <text x="250" y="30" class="d-lbl">Unknown + taint (grace 50초)</text>
+        <text x="20" y="96" class="d-ttl-s">기본값</text>
+        <rect x="80" y="74" width="250" height="36" rx="6" class="d-bar-fail"/>
+        <text x="94" y="97" class="d-lbl">요청 일부 실패</text>
+        <rect x="330" y="74" width="450" height="36" rx="6" class="d-warn-box"/>
+        <text x="344" y="97" class="d-lbl">남은 파드 1개로 버팀 · 축출 대기 tolerationSeconds 300</text>
+        <rect x="780" y="74" width="140" height="36" rx="6" class="d-bar-ok"/>
+        <text x="794" y="97" class="d-lbl">재생성·Ready</text>
+        <text x="20" y="196" class="d-ttl-s">우리</text>
+        <rect x="80" y="174" width="250" height="36" rx="6" class="d-bar-fail"/>
+        <text x="94" y="197" class="d-lbl">요청 일부 실패</text>
+        <rect x="330" y="174" width="90" height="36" rx="6" class="d-warn-box"/>
+        <text x="344" y="197" class="d-lbl">20초</text>
+        <rect x="420" y="174" width="140" height="36" rx="6" class="d-bar-ok"/>
+        <text x="434" y="197" class="d-lbl">재생성·Ready</text>
+        <text x="80" y="250" class="d-sub">빨강 구간 길이는 같다: 파드 설정으로는 판정 대기(grace period)를 못 줄인다.</text>
+        <text x="80" y="274" class="d-sub">줄어드는 것은 노랑 구간(파드 수가 모자란 시간)이다. 길이는 개념도이며 비율이 아니다.</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-9.</b> 기본값(tolerationSeconds 300)과 우리 설정(20)의 타임라인. tolerationSeconds 는 "복구(파드 수)" 를 앞당길 뿐 "사용자 장애" 구간은 그대로다. 06 README 4.3 의 확인 질문이 이것을 묻는다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>세부: 플래그, 속도 제한, 영역(zone) 규칙, 엣지 케이스</h3>
+  <div class="table-wrap"><table><thead><tr><th>설정 (kube-controller-manager)</th><th>기본값</th><th>뜻</th></tr></thead><tbody>
+  <tr><td><code>--node-monitor-period</code></td><td>5초</td><td>노드 상태를 검사하는 주기</td></tr>
+  <tr><td><code>--node-monitor-grace-period</code></td><td>50초</td><td>하트비트가 이만큼 없으면 Ready=Unknown. 예전 기본은 40초였고 최근 버전에서 50초로 바뀌었다(공식 node-status 문서는 50초, 일부 문장에는 아직 40초가 남아 있다)</td></tr>
+  <tr><td><code>--node-eviction-rate</code></td><td>0.1/초</td><td>축출 속도 제한: 10초에 노드 1대 분량까지만 축출</td></tr>
+  <tr><td><code>--secondary-node-eviction-rate</code></td><td>0.01/초</td><td>한 영역이 많이 아플 때 줄인 속도</td></tr>
+  <tr><td><code>--unhealthy-zone-threshold</code></td><td>0.55</td><td>영역 안 비정상 노드 비율이 이 이상이면 속도를 줄인다</td></tr>
+  <tr><td><code>--large-cluster-size-threshold</code></td><td>50</td><td>노드가 이 이하인 작은 클러스터는 영역이 아프면 축출을 <b>멈춘다</b></td></tr>
+  </tbody></table></div>
+  <p>영역 규칙의 이유: 한 가용 영역(AZ)이 컨트롤 플레인과 네트워크로 끊기면 그 영역 노드가 한꺼번에 Unknown 이 된다. 실제로는 노드가 살아 있을 수 있으므로 성급하게 전부 축출하면 더 큰 장애가 된다. 그래서 한 영역의 비정상 비율이 높으면 속도를 늦추거나 멈춘다. 단 <b>모든 영역이 다 아프면</b> 컨트롤러는 "컨트롤 플레인 쪽 연결 문제" 로 보고 축출을 아예 하지 않는다. kind 대역에는 영역 라벨이 없어 영역 규칙이 적용되지 않는다(공식 문서: 여러 AZ 에 걸치지 않으면 영역별 판단을 하지 않는다).</p>
+  <pre class="pseudo"><code><span class="k">반복</span> 매 node-monitor-period(5초):
+  <span class="k">각</span> 노드 n 에 대해:
+    last = max(n 의 Lease.renewTime, n.status 의 마지막 하트비트)
+    <span class="k">만약</span> now - last &gt; node-monitor-grace-period(50초):
+      n.Ready = Unknown
+      n 에 unreachable taint (NoSchedule, NoExecute) 추가
+      n 의 파드들 Ready = False          <span class="c">// → EndpointSlice 에서 빠짐</span>
+  <span class="k">각</span> NoExecute taint 가 붙은 노드의 파드 p 에 대해:   <span class="c">// taint 기반 축출</span>
+    t = p 의 toleration 중 그 taint 에 맞는 것
+    <span class="k">만약</span> t 없음: 즉시 축출 대상
+    <span class="k">만약</span> t.tolerationSeconds 없음: 영원히 남음 (DaemonSet 파드)
+    <span class="k">아니면</span> taint 추가 시각 + t.tolerationSeconds 가 지나면 축출 대상
+  축출은 eviction-rate 와 영역 규칙에 맞춰 속도 제한</code></pre>
+  <figure>
+    <pre class="mermaid">
+stateDiagram-v2
+  state "Ready True" as T
+  state "Ready Unknown<br/>unreachable taint" as U
+  state "Ready False<br/>not-ready taint" as F
+  state "노드 삭제됨" as D
+  [*] --> T
+  T --> U : grace 동안 하트비트 없음
+  T --> F : kubelet 이 준비 안 됨 보고
+  F --> T : kubelet 회복 보고
+  U --> T : 하트비트 재개 (unpause)
+  U --> D : kubectl delete node 또는 클라우드 컨트롤러
+  D --> [*]
+    </pre>
+    <figcaption><b>그림 8-10.</b> 노드 Ready 조건의 상태도. 회복되면 컨트롤러나 kubelet 이 taint 를 걷는다. RB-01 의 "급할 때 손으로 당기기"(<code>kubectl delete node</code>)는 U → D 경로를 손으로 타는 것이다.</figcaption>
+  </figure>
+  <h4>엣지 케이스</h4>
+  <ul>
+    <li><b>Terminating 에 멈춘 옛 파드</b>: 축출은 API 에서 삭제 표시를 하는 것이고, 실제로 컨테이너를 끄고 "끝났다" 고 확인하는 것은 그 노드 kubelet 이다. kubelet 이 얼어 있으니 옛 파드는 Terminating 으로 남는다. 공식 문서도 "통신이 끊긴 노드에서는 삭제 대상 파드가 계속 돌 수 있다" 고 적는다. <code>s1-node-down.sh</code> 는 <code>deletionTimestamp</code> 가 있는 파드를 Ready 수에서 빼고 센다.</li>
+    <li><b>DaemonSet 파드</b>: not-ready·unreachable 에 대해 tolerationSeconds 없는 NoExecute toleration 이 자동으로 붙어 축출되지 않는다.</li>
+    <li><b>graceful node shutdown</b>: 노드가 OS 종료 신호를 받으면 kubelet 이 파드를 정상 종료할 시간을 갖는다. <code>docker pause</code> 는 신호 없이 얼리므로 이 경로를 타지 않는다. 07 의 스팟 회수는 OS 종료 신호가 오므로 이중 안전장치가 된다(07 README 1.6).</li>
+    <li><b>Lease 갱신과 status 갱신의 차이</b>: 공식 문서의 Lease 문단은 status 기본 간격(5분)이 "unreachable 판정 시간보다 훨씬 길다" 고 설명한다. 그래서 실제 판정은 사실상 Lease 가 결정한다.</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>s1-node-down.sh</code> 의 hard 모드는 <code>docker pause &lt;노드&gt;</code> 로 kind 노드 컨테이너의 모든 프로세스(kubelet 포함)를 얼린다. docker stop 을 쓰지 않는 이유: kind 노드는 stop/start 하면 IP 가 바뀌어 클러스터가 꼬일 수 있다. unpause 는 깨끗이 돌아온다. EKS 같은 관리형에서는 <code>--node-monitor-grace-period</code>(컨트롤 플레인 설정)를 못 바꾸므로, 우리가 바꿀 수 있는 것은 파드 쪽 설정뿐이라는 전제로 방어를 설계했다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: 노드가 NotReady 인데 파드가 계속 그 노드에 Running 으로 보이고 몇 분째 옮겨 가지 않는다. <b>볼 곳</b>: <code>kubectl get pod &lt;파드&gt; -o jsonpath='{.spec.tolerations}'</code> 에서 unreachable 의 tolerationSeconds, <code>kubectl get events -A --field-selector reason=TaintManagerEviction</code>. <b>고치는 법</b>: 기본 300초를 기다리는 중이면 정상이다. 급하면 RB-01 조치 2(<code>kubectl delete node</code>), 근본적으로는 5절 tolerationSeconds.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>대안 (가) <code>--node-monitor-grace-period</code> 를 줄이기: kind 에서는 되지만 관리형 클러스터에서는 못 바꾸고, 너무 줄이면 잠깐의 네트워크 흔들림에 노드를 죽었다고 오판해 멀쩡한 파드를 옮긴다. 그래서 컨트롤 플레인은 기본값에 두고, 파드 쪽(tolerationSeconds, 흩어 놓기)과 앞단 재시도로 대응한다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/concepts/architecture/nodes/">Nodes (heartbeats, node controller, 축출 속도 제한)</a> · <a href="https://kubernetes.io/docs/reference/node/node-status/">Node Status (conditions, heartbeats)</a> · <a href="https://kubernetes.io/docs/concepts/architecture/leases/">Leases</a> · <a href="https://kubernetes.io/docs/reference/command-line-tools-reference/kube-controller-manager/">kube-controller-manager 플래그</a> · <a href="https://kubernetes.io/docs/concepts/cluster-administration/node-shutdown/">Node Shutdowns</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="defense">5. 노드 다운 방어 3종: tolerationSeconds, 흩어 놓기, PDB</h2>
+
+<div class="tier" data-tier="1">
+  <h3>세 설정이 각각 어느 구간을 고치나</h3>
+  <p>4절의 타임라인에서 우리가 손댈 수 있는 곳은 세 군데다.</p>
+  <div class="grid">
+    <div class="item"><h4>tolerationSeconds 20</h4><p>죽은 노드에 묶여 있는 시간(기본 300초)을 20초로. <b>복구(파드 수)</b> 를 앞당긴다.</p></div>
+    <div class="item"><h4>topologySpreadConstraints</h4><p>파드 2개를 반드시 다른 노드에. 노드 하나가 죽어도 <b>절반은 산다</b>. 노드가 죽은 뒤 새 파드가 산 노드에 뜨게.</p></div>
+    <div class="item"><h4>PodDisruptionBudget</h4><p>예고가 있는 장애(drain)에서 <b>한 번에 다 빼지 않게</b>. 예고 없는 장애에는 효과 없음.</p></div>
+  </div>
+  <div class="code-head"><span>poc/06-fault-injection/defenses/fn-resilience-patch.yaml</span><span>전체 (주석 일부 생략)</span></div>
+  <pre><code><span class="k">spec</span>:
+  <span class="k">template</span>:
+    <span class="k">spec</span>:
+      <span class="k">tolerations</span>:
+        - <span class="k">key</span>: node.kubernetes.io/not-ready
+          <span class="k">operator</span>: Exists
+          <span class="k">effect</span>: NoExecute
+          <span class="k">tolerationSeconds</span>: 20
+        - <span class="k">key</span>: node.kubernetes.io/unreachable
+          <span class="k">operator</span>: Exists
+          <span class="k">effect</span>: NoExecute
+          <span class="k">tolerationSeconds</span>: 20
+      <span class="k">topologySpreadConstraints</span>:
+        - <span class="k">maxSkew</span>: 1
+          <span class="k">topologyKey</span>: kubernetes.io/hostname
+          <span class="k">whenUnsatisfiable</span>: DoNotSchedule
+          <span class="k">nodeTaintsPolicy</span>: Honor
+          <span class="k">matchLabelKeys</span>: [pod-template-hash]
+          <span class="k">labelSelector</span>:
+            <span class="k">matchLabels</span>: { app: hello }</code></pre>
+  <div class="code-head"><span>poc/06-fault-injection/defenses/pdb.yaml</span><span>전체 (주석 생략)</span></div>
+  <pre><code><span class="k">apiVersion</span>: policy/v1
+<span class="k">kind</span>: PodDisruptionBudget
+<span class="k">metadata</span>:
+  <span class="k">name</span>: hello
+  <span class="k">namespace</span>: tenant-a
+<span class="k">spec</span>:
+  <span class="k">minAvailable</span>: 1
+  <span class="k">selector</span>:
+    <span class="k">matchLabels</span>: { app: hello }</code></pre>
+  <ul>
+    <li>패치 파일은 <code>apiVersion</code> 이 없는 "조각" 이다. 대역에서는 <code>kubectl -n tenant-a patch deploy hello --patch-file …</code> 로 strategic merge patch 로 붙인다. 파드 template 이 바뀌므로 파드가 새로 만들어진다.</li>
+    <li>toleration 두 개는 not-ready(False)와 unreachable(Unknown) 각각을 덮는다. <code>operator: Exists</code> 는 값과 상관없이 키만 맞으면 된다는 뜻이다. effect 는 NoExecute 만 적었다: NoSchedule taint 는 견디지 않는다(아래 Honor 계산에서 중요).</li>
+    <li>흩어 놓기 한 줄 = "kubernetes.io/hostname(노드 하나) 단위로, app=hello 이면서 같은 리비전인 파드의 개수 차이가 1을 넘지 않게. 못 지키면 띄우지 마. taint 붙은 노드는 계산에서 빼고".</li>
+    <li>PDB = "app=hello 파드는 자발적 중단 중에도 최소 1개는 살아 있어야 한다". replicas 2 이면 한 번에 1개까지 뺄 수 있다(ALLOWED DISRUPTIONS 1).</li>
+  </ul>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>tolerationSeconds 와 DefaultTolerationSeconds 어드미션</h3>
+  <p>파드 스펙에 not-ready·unreachable toleration 을 쓰지 않아도, 실제 파드를 열어 보면 두 toleration 이 <code>tolerationSeconds: 300</code> 으로 들어 있다. API 서버의 <b>DefaultTolerationSeconds 어드미션 플러그인</b>이 파드 생성 때 넣는 것이다(공식 문서: "사용자나 컨트롤러가 명시하지 않으면 자동으로 300초 toleration 을 추가한다"). 우리가 같은 키·효과의 toleration 을 직접 쓰면 플러그인은 그것을 덮어쓰지 않으므로 20초가 적용된다.</p>
+  <figure>
+    <pre class="mermaid">
+flowchart LR
+  A["파드 생성 요청"] --> B{"not-ready NoExecute<br/>toleration 이 있나"}
+  B -- "없음" --> C["300초 toleration 추가"]
+  B -- "있음" --> D["그대로 둠 (우리 20초)"]
+  C --> E{"unreachable NoExecute<br/>toleration 이 있나"}
+  D --> E
+  E -- "없음" --> F["300초 toleration 추가"]
+  E -- "있음" --> G["그대로 둠 (우리 20초)"]
+  F --> H["etcd 에 저장"]
+  G --> H
+    </pre>
+    <figcaption><b>그림 8-11.</b> DefaultTolerationSeconds 어드미션의 동작 (공식 문서 설명을 순서도로 옮긴 것). 우리 패치는 두 분기 모두 "있음" 으로 가게 만든다.</figcaption>
+  </figure>
+  <p><b>20초를 고른 이유</b>: 판정(grace period) 자체가 이미 "50초 동안 소식 없음" 을 확인한 뒤다. 거기에 20초를 더 기다려 노드가 정말 안 돌아오는지 한 번 더 본다. 0이나 5처럼 너무 짧게 하면 잠깐의 네트워크 흔들림만으로 파드를 버리고 새로 만드는 일이 잦아진다(파드가 상태를 갖거나 콜드 스타트가 비싸면 손해). 긴 값(공식 문서 예시의 6000초)은 로컬 상태가 큰 앱이 네트워크 분할 회복을 기다릴 때 쓴다. 함수는 상태가 없어서 짧은 쪽이 맞다.</p>
+
+  <h3>topologySpreadConstraints: 흩어 놓기</h3>
+  <p>스케줄러는 새 파드를 놓을 노드를 고를 때 제약을 계산한다. 용어부터 정리한다.</p>
+  <dl class="terms">
+    <dt>topologyKey</dt><dd>노드 라벨 키. 같은 값을 가진 노드들이 한 <b>도메인</b>이다. <code>kubernetes.io/hostname</code> 이면 노드 하나가 도메인 하나다. <code>topology.kubernetes.io/zone</code> 이면 AZ 하나가 도메인이다.</dd>
+    <dt>skew (치우침)</dt><dd>어떤 도메인의 매칭 파드 수 − <b>전역 최소</b>(자격 있는 도메인들 중 가장 적은 매칭 파드 수).</dd>
+    <dt>maxSkew</dt><dd>허용하는 최대 치우침. 1 이면 "가장 적은 도메인보다 1개 넘게 많을 수 없다".</dd>
+    <dt>whenUnsatisfiable</dt><dd><code>DoNotSchedule</code>(기본): 못 지키면 놓지 않는다(Pending). <code>ScheduleAnyway</code>: 그래도 놓되 치우침을 줄이는 노드에 점수를 더 준다.</dd>
+    <dt>자격 있는 도메인</dt><dd>nodeAffinityPolicy 와 nodeTaintsPolicy 의 조건을 통과한 노드들의 도메인. 전역 최소는 이 도메인들로만 계산한다.</dd>
+    <dt>nodeAffinityPolicy</dt><dd>파드의 nodeSelector/nodeAffinity 를 계산에 반영할지. 기본 <code>Honor</code>(반영). 그래서 hello(nodeSelector pool=exec)는 system·build 노드를 도메인으로 세지 않는다.</dd>
+    <dt>nodeTaintsPolicy</dt><dd>노드 taint 를 반영할지. 기본 <code>Ignore</code>(모든 노드 포함). <code>Honor</code> 면 taint 없는 노드 + 파드가 견디는 taint 만 가진 노드만 포함.</dd>
+    <dt>matchLabelKeys</dt><dd>파드 자기 라벨 중 이 키들의 값을 labelSelector 에 더해 "같은 값끼리만" 센다. <code>pod-template-hash</code> 를 쓰면 같은 리비전끼리만 센다.</dd>
+  </dl>
+  <figure>
+    <div class="fig scroll-l">
+      <svg viewBox="0 0 1140 400" role="img" aria-labelledby="f12-t">
+        <title id="f12-t">세 상황에서 skew 계산: 평소, 노드 다운에 Ignore, 노드 다운에 Honor</title>
+        <rect x="20" y="20" width="350" height="360" rx="12" class="d-card"/>
+        <text x="40" y="52" class="d-ttl-s">(가) 평소: 두 번째 파드</text>
+        <rect x="40" y="76" width="140" height="120" rx="10" class="d-plain-box"/>
+        <text x="56" y="102" class="d-ttl-s">exec-A</text>
+        <circle cx="80" cy="150" r="16" class="d-dot-user"/>
+        <rect x="210" y="76" width="140" height="120" rx="10" class="d-plain-box"/>
+        <text x="226" y="102" class="d-ttl-s">exec-B</text>
+        <text x="226" y="156" class="d-mono">0개</text>
+        <text x="40" y="236" class="d-subd">전역 최소 = 0 (exec-B)</text>
+        <text x="40" y="262" class="d-sub">A 에 놓으면 2 − 0 = 2 &gt; 1 거절</text>
+        <text x="40" y="288" class="d-sub">B 에 놓으면 1 − 0 = 1 허용</text>
+        <text x="40" y="330" class="d-ttl-s">→ 반드시 B</text>
+
+        <rect x="395" y="20" width="350" height="360" rx="12" class="d-card"/>
+        <text x="415" y="52" class="d-ttl-s">(나) A 사망, Ignore</text>
+        <rect x="415" y="76" width="140" height="120" rx="10" class="d-fail-box"/>
+        <text x="431" y="102" class="d-ttl-s">exec-A</text>
+        <text x="431" y="128" class="d-mono">unreachable</text>
+        <text x="431" y="156" class="d-mono">0개 (축출)</text>
+        <rect x="585" y="76" width="140" height="120" rx="10" class="d-plain-box"/>
+        <text x="601" y="102" class="d-ttl-s">exec-B</text>
+        <circle cx="625" cy="150" r="16" class="d-dot-user"/>
+        <text x="415" y="236" class="d-subd">A 도 자격 있음 → 최소 0</text>
+        <text x="415" y="262" class="d-sub">B 에 놓으면 2 − 0 = 2 &gt; 1 거절</text>
+        <text x="415" y="288" class="d-sub">A 는 NoSchedule taint 로 불가</text>
+        <text x="415" y="330" class="d-ttl-s">→ 새 파드 Pending</text>
+
+        <rect x="770" y="20" width="350" height="360" rx="12" class="d-cp"/>
+        <text x="790" y="52" class="d-ttl-s">(다) A 사망, Honor</text>
+        <rect x="790" y="76" width="140" height="120" rx="10" class="d-fail-box"/>
+        <text x="806" y="102" class="d-ttl-s">exec-A</text>
+        <text x="806" y="128" class="d-mono">계산에서 제외</text>
+        <rect x="960" y="76" width="140" height="120" rx="10" class="d-plain-box"/>
+        <text x="976" y="102" class="d-ttl-s">exec-B</text>
+        <circle cx="1000" cy="150" r="16" class="d-dot-user"/>
+        <circle cx="1050" cy="150" r="16" class="d-dot-ok"/>
+        <text x="790" y="236" class="d-subd">자격 도메인 = B 하나 → 최소 1</text>
+        <text x="790" y="262" class="d-sub">B 에 놓으면 2 − 1 = 1 허용</text>
+        <text x="790" y="288" class="d-sub">죽은 노드를 자리로 세지 않는다</text>
+        <text x="790" y="330" class="d-ttl-s">→ B 에 뜬다 (초록)</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-12.</b> maxSkew 1, DoNotSchedule 일 때 skew 계산. (가) 평소엔 고르게 흩어진다. (나) nodeTaintsPolicy 기본값 Ignore 면 죽은 노드도 "파드 0개인 도메인" 으로 세어 전역 최소가 0 이 되고, 살아 있는 B 에 두 번째를 놓으면 치우침 2 라서 Pending. (다) Honor 면 견디지 못하는 taint 가 붙은 A 가 빠져 B 에 놓을 수 있다. 06 README 8.1 의 "DoNotSchedule + Ignore 는 노드가 죽으면 새 파드가 안 떴다" 가 (나)다.</figcaption>
+  </figure>
+  <p>(다)가 성립하는 조건이 하나 있다. Honor 는 "파드가 견디는 taint 만 가진 노드" 는 포함한다. 우리 파드는 unreachable 의 <b>NoExecute</b> 를 20초 견디므로, 죽은 노드에 NoExecute taint 만 있었다면 계산에 포함될 수도 있다. 죽은 노드에는 같은 키의 <b>NoSchedule</b> taint 도 붙고, 우리 toleration 은 effect 를 NoExecute 로 한정했으므로 그 노드는 제외된다. 그래서 toleration 에 effect 를 비워 두면(모든 효과를 견딤) Honor 의 효과가 사라질 수 있다 【확인 필요: effect 를 비운 toleration 으로 바꿔 대역에서 Pending 이 재현되는지】. spot 모드의 cordon 은 <code>node.kubernetes.io/unschedulable:NoSchedule</code> taint 를 붙이므로 같은 이유로 제외된다.</p>
+
+  <h3>PodDisruptionBudget</h3>
+  <p>공식 문서는 중단(disruption)을 둘로 나눈다. <b>비자발적</b>: 하드웨어 고장, 커널 패닉, 노드가 네트워크에서 사라짐, 클라우드 VM 삭제, 자원 부족 축출. <b>자발적</b>: 노드 drain(수리·업그레이드·축소), Deployment 삭제, 파드 직접 삭제. PDB 는 <b>Eviction API 를 거치는 자발적 중단만</b> 제한한다. 그래서 hard(전원 차단)에는 효과가 없고, spot(예고 → drain)에만 효과가 있다.</p>
+  <figure>
+    <pre class="mermaid">
+flowchart TD
+  A["kubectl drain 노드"] --> B["cordon (unschedulable)"]
+  B --> C["노드의 파드마다 Eviction API 호출"]
+  C --> D{"이 파드를 고르는 PDB 가 있나"}
+  D -- "없음" --> OK["200 OK, 파드 삭제"]
+  D -- "둘 이상" --> E500["500 설정 오류"]
+  D -- "하나" --> E{"빼도 minAvailable 이상 남나"}
+  E -- "예" --> OK
+  E -- "아니오" --> E429["429 Too Many Requests"]
+  E429 --> W["drain 이 잠시 뒤 재시도"]
+  W --> C
+  OK --> G["ReplicaSet 이 다른 노드에 재생성"]
+  G --> H["새 파드 Ready 되면 다음 파드 축출 가능"]
+  H --> C
+    </pre>
+    <figcaption><b>그림 8-13.</b> drain 과 Eviction API, PDB 의 상호작용 (공식 문서 API-initiated Eviction). drain 은 429 를 받으면 재시도하므로, PDB 가 절대 허락하지 않으면 timeout 까지 끝나지 않는다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>세부: 필드, 반올림, 엣지 케이스</h3>
+  <h4>PDB 필드</h4>
+  <div class="table-wrap"><table><thead><tr><th>필드</th><th>값</th><th>규칙 (공식 문서)</th></tr></thead><tbody>
+  <tr><td><code>minAvailable</code></td><td>정수 또는 퍼센트</td><td>축출 뒤에도 남아야 할 수. 퍼센트는 <b>올림</b>(7개의 50% → 4개)</td></tr>
+  <tr><td><code>maxUnavailable</code></td><td>정수 또는 퍼센트</td><td>동시에 없어도 되는 수. 퍼센트는 올림. replicas 가 바뀌어도 의미가 유지되어 문서가 권장</td></tr>
+  <tr><td>둘 중 하나만</td><td></td><td>한 PDB 에 둘을 같이 쓸 수 없다</td></tr>
+  <tr><td><code>unhealthyPodEvictionPolicy</code></td><td><code>IfHealthyBudget</code>(기본) / <code>AlwaysAllow</code></td><td>Running 이지만 Ready 가 아닌 파드를 축출할 수 있나. 기본은 앱이 이미 망가져 있으면 막아서 drain 이 CrashLoop 파드에 막힐 수 있다. 문서는 AlwaysAllow 를 권장한다</td></tr>
+  <tr><td>0 또는 100%</td><td><code>maxUnavailable: 0</code>, <code>minAvailable = replicas</code></td><td>자발적 축출을 0 으로 요구 → 그 파드가 있는 노드의 drain 은 <b>절대 끝나지 않는다</b>(문서가 "허용된 의미" 라고 명시)</td></tr>
+  </tbody></table></div>
+  <h4>Eviction API 응답</h4>
+  <ul>
+    <li><code>200 OK</code>: 허용. Eviction 하위 리소스가 생기고 파드는 DELETE 와 같은 방식으로 지워진다(삭제 표시 → kubelet 정상 종료 → EndpointSlice 에서 제거 → grace 후 강제 종료).</li>
+    <li><code>429 Too Many Requests</code>: PDB 때문에 지금은 안 된다. 나중에 다시. API 속도 제한 때문에도 올 수 있다.</li>
+    <li><code>500 Internal Server Error</code>: 설정 오류. 예: 한 파드를 PDB 여러 개가 고른다.</li>
+    <li>PDB 가 없으면 항상 200.</li>
+  </ul>
+  <h4>topology spread 엣지 케이스</h4>
+  <ul>
+    <li><b>matchLabelKeys 와 배포</b>: 아래 그림처럼 롤링 배포 중에는 옛 ReplicaSet 파드와 새 ReplicaSet 파드가 같이 있다. labelSelector 가 <code>app=hello</code> 만이면 둘을 합쳐 세므로, 새 파드들이 옛 파드가 없는 노드로 몰리고, 옛 파드가 사라지면 새 파드끼리는 한 노드에 몰려 있게 된다. <code>matchLabelKeys: [pod-template-hash]</code> 는 새 파드 자신의 해시 값을 셀렉터에 더해 같은 리비전끼리만 센다. 공식 문서: v1.27 부터 beta 로 기본 활성, v1.34 부터는 키-값이 labelSelector 에 명시적으로 합쳐진다. labelSelector 가 없으면 쓸 수 없고, 같은 키가 둘 다에 있으면 안 된다.</li>
+    <li><b>축소는 재조정하지 않는다</b>: 제약은 스케줄 순간에만 본다. 파드가 지워져 치우침이 생겨도 스케줄러가 옮기지 않는다(Descheduler 같은 별도 도구 몫). 그래서 <code>s1-node-down.sh</code> 는 매 회차 끝에 <code>rollout restart</code> 로 다시 흩는다.</li>
+    <li><b>도메인은 존재하는 노드에서만 안다</b>: 노드가 0대인 풀(영역)은 도메인으로 세지 않는다. 오토스케일 환경에서 함정이 된다.</li>
+    <li><b>minDomains</b>: DoNotSchedule 과 함께만 쓴다. 자격 도메인 수가 이보다 적으면 전역 최소를 0 으로 본다. 우리는 쓰지 않았다(쓰면 exec 노드 한 대가 죽었을 때 (나)와 같은 Pending 이 다시 생길 수 있다 【확인 필요】).</li>
+    <li><b>nodeTaintsPolicy, nodeAffinityPolicy</b>: v1.26 beta, v1.33 GA. nodeAffinityPolicy 기본 Honor, nodeTaintsPolicy 기본 Ignore.</li>
+  </ul>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 330" role="img" aria-labelledby="f14-t">
+        <title id="f14-t">matchLabelKeys 가 없을 때 배포 중 쏠림이 생기는 과정</title>
+        <text x="20" y="34" class="d-ttl-s">배포 중 (옛 리비전 o, 새 리비전 n)</text>
+        <rect x="20" y="50" width="200" height="110" rx="10" class="d-plain-box"/>
+        <text x="36" y="76" class="d-ttl-s">exec-A</text>
+        <rect x="240" y="50" width="200" height="110" rx="10" class="d-plain-box"/>
+        <text x="256" y="76" class="d-ttl-s">exec-B</text>
+        <circle cx="60" cy="122" r="15" class="d-dot-prov"/>
+        <text x="55" y="127" class="d-num-t">o</text>
+        <circle cx="280" cy="122" r="15" class="d-dot-user"/>
+        <text x="275" y="127" class="d-num-t">n</text>
+        <circle cx="320" cy="122" r="15" class="d-dot-user"/>
+        <text x="315" y="127" class="d-num-t">n</text>
+        <text x="20" y="190" class="d-sub">app=hello 로 다 세면 A 1, B 0 → 새 파드 n 은 B 로.</text>
+        <text x="20" y="212" class="d-sub">B 1, A 1 → 다음 n 은 아무 데나 (B 일 수도)</text>
+
+        <text x="500" y="34" class="d-ttl-s">배포 끝 (o 삭제)</text>
+        <rect x="500" y="50" width="200" height="110" rx="10" class="d-plain-box"/>
+        <text x="516" y="76" class="d-ttl-s">exec-A</text>
+        <text x="516" y="128" class="d-mono">0개</text>
+        <rect x="720" y="50" width="220" height="110" rx="10" class="d-fail-box"/>
+        <text x="736" y="76" class="d-ttl-s">exec-B</text>
+        <circle cx="760" cy="122" r="15" class="d-dot-user"/>
+        <text x="755" y="127" class="d-num-t">n</text>
+        <circle cx="800" cy="122" r="15" class="d-dot-user"/>
+        <text x="795" y="127" class="d-num-t">n</text>
+        <text x="500" y="190" class="d-sub">새 리비전 2개가 한 노드에. B 가 죽으면 전부 죽는다.</text>
+
+        <rect x="20" y="236" width="920" height="74" rx="10" class="d-cp-box"/>
+        <text x="36" y="264" class="d-ttl-s">matchLabelKeys: [pod-template-hash]</text>
+        <text x="36" y="290" class="d-sub">새 파드는 자기 해시(n)와 같은 파드만 센다 → n 끼리 A 1, B 1 로 흩어진다. 옛 파드 o 는 계산에 안 들어간다.</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-14.</b> matchLabelKeys 가 막는 쏠림. 06 README 8.1 의 "Honor 를 붙여도 matchLabelKeys 없이는 배포 중 옛 파드를 같이 세서 다시 2/2 가 나왔다" 가 이 상황이다. (주황 o = 옛 리비전, 파랑 n = 새 리비전)</figcaption>
+  </figure>
+  <pre class="pseudo"><code><span class="c">// 스케줄러의 PodTopologySpread 필터 (DoNotSchedule), 새 파드 p, 후보 노드 n</span>
+selector = p.labelSelector + { k: p.labels[k] <span class="k">for</span> k <span class="k">in</span> matchLabelKeys }
+도메인들 = { 노드.labels[topologyKey] : 노드가 nodeAffinityPolicy·nodeTaintsPolicy 통과 }
+<span class="k">각</span> 도메인 d: count[d] = d 안의 selector 매칭 파드 수 (지우는 중인 파드 제외 【확인 필요】)
+globalMin = 도메인 수 &lt; minDomains <span class="k">이면</span> 0 <span class="k">아니면</span> min(count)
+skew = count[n 의 도메인] + 1 - globalMin
+<span class="k">만약</span> skew &gt; maxSkew: n 탈락
+<span class="c">// ScheduleAnyway 면 탈락 대신 점수에 반영 (치우침을 줄이는 노드가 높은 점수)</span></code></pre>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>흩어 놓기는 세 번 바꿨다(06 README 8.1, 핵심 결정 3). ScheduleAnyway → 평소에 한 노드에 몰린 때가 있었다. DoNotSchedule + Ignore → 노드가 죽으면 새 파드가 Pending. DoNotSchedule + Honor → 배포 중 쏠림. 최종 DoNotSchedule + Honor + matchLabelKeys. PDB 는 <code>minAvailable: 1</code>. 진짜 클러스터(A)에서는 kubectl patch 대신 같은 필드를 함수 차트 template 에 넣고 push 한다(selfHeal 이 patch 를 되돌리므로). PDB 는 <code>gitops/fault-defenses.yaml</code> Application 으로 배포한다(아래).</p></aside>
+<div class="code-head"><span>poc/06-fault-injection/gitops/fault-defenses.yaml</span><span>발췌</span></div>
+<pre><code>  <span class="k">source</span>:
+    <span class="k">repoURL</span>: https://github.com/Pionia5375/Softbank_Study_1
+    <span class="k">targetRevision</span>: main
+    <span class="k">path</span>: poc/06-fault-injection/defenses
+    <span class="k">directory</span>:
+      <span class="c"># 쿠버네티스 리소스가 아닌 파일 두 개를 뺀다: 패치 조각(apiVersion 없음), Helm values</span>
+      <span class="k">exclude</span>: '{fn-resilience-patch.yaml,prometheus-alerts-values.yaml}'
+  <span class="k">syncPolicy</span>:
+    <span class="k">automated</span>: { prune: true, selfHeal: true }</code></pre>
+<ul>
+  <li><code>directory.exclude</code> 는 glob 이다. 중괄호 안의 쉼표 목록 = 여러 파일. 안 빼면 Argo CD 가 apiVersion 없는 YAML 을 리소스로 읽으려다 Sync 실패한다.</li>
+  <li>남는 것은 <code>pdb.yaml</code> 하나. 이 Application 이 PDB 를 Git 으로 지키므로 누가 kubectl 로 minAvailable 을 바꿔도 selfHeal 이 되돌린다. 그래서 14절의 "PDB 너무 세게" 실습은 대역에서 한다.</li>
+</ul>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상 1</b>: 노드 다운 뒤 새 파드가 Pending, Events 에 <code>didn't match pod topology spread constraints</code>. <b>볼 곳</b>: <code>kubectl get deploy hello -o yaml | grep -A8 topologySpread</code> 에 nodeTaintsPolicy 가 있나. <b>고치는 법</b>: <code>nodeTaintsPolicy: Honor</code>. <b>증상 2</b>: 배포 직후 두 파드가 같은 노드. <b>볼 곳</b>: <code>kubectl -n tenant-a get pods -o wide</code>. <b>고치는 법</b>: <code>matchLabelKeys: [pod-template-hash]</code>, 이미 몰렸으면 rollout restart. <b>증상 3</b>: <code>kubectl get pdb</code> 의 ALLOWED DISRUPTIONS 가 0. drain 이 영원히 안 끝난다(6절, 14절).</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>tolerationSeconds: 기본 300 은 복구가 너무 늦고, 5 는 오판이 잦다 → 20. 흩어 놓기: ScheduleAnyway 는 평소 쏠림, DoNotSchedule+Ignore 는 노드 다운 후 Pending → DoNotSchedule+Honor+matchLabelKeys. 대안 podAntiAffinity(required)는 "노드당 1개" 를 강제해 replicas 가 노드 수보다 많아지면 Pending 이 되므로 버렸다. PDB: replicas 와 같게(=0 허용)는 drain 을 영원히 막고, 0(PDB 없음)은 drain 이 두 파드를 동시에 뺄 수 있어 → minAvailable 1. 비율(50%)은 replicas 가 늘어날 때 유리하지만 2개에서는 같은 값이라 단순한 정수를 택했다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/#taint-based-evictions">Taints and Tolerations: Taint based Evictions</a> · <a href="https://kubernetes.io/docs/reference/access-authn-authz/admission-controllers/#defaulttolerationseconds">Admission Controllers: DefaultTolerationSeconds</a> · <a href="https://kubernetes.io/docs/concepts/scheduling-eviction/topology-spread-constraints/">Pod Topology Spread Constraints</a> · <a href="https://kubernetes.io/docs/concepts/workloads/pods/disruptions/">Disruptions</a> · <a href="https://kubernetes.io/docs/tasks/run-application/configure-pdb/">Specifying a Disruption Budget</a> · <a href="https://kubernetes.io/docs/concepts/scheduling-eviction/api-eviction/">API-initiated Eviction</a> · <a href="https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/">Safely Drain a Node</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="spot">6. 예고 있는 장애 vs 갑작스러운 장애: spot 과 hard</h2>
+
+<div class="tier" data-tier="1">
+  <h3>같은 "노드가 사라짐" 인데 결과가 다르다</h3>
+  <p>AWS 스팟 인스턴스는 회수 <b>2분 전</b>에 예고(인스턴스 메타데이터와 EventBridge 이벤트)를 준다. 이 예고를 받아 노드를 미리 비우면(cordon + drain), 노드가 꺼질 때 그 위에는 이미 파드가 없다. 사용자 요청은 drain 중 정상 종료 경로(EndpointSlice 에서 먼저 빠짐)를 타므로 거의 실패하지 않는다. 예고가 없거나 무시하면 4절의 hard 경로를 그대로 탄다. 06 README 의 결론: <b>사용자 장애를 크게 줄이는 것은 tolerationSeconds 가 아니라 "미리 비우기" 다.</b></p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 360" role="img" aria-labelledby="f15-t">
+        <title id="f15-t">hard, spot, PDB 가 너무 센 spot 의 세 타임라인 비교</title>
+        <path d="M150 30 L150 330" class="d-tick"/>
+        <text x="140" y="24" class="d-ttl-s">t0</text>
+        <text x="20" y="76" class="d-ttl-s">hard</text>
+        <rect x="150" y="56" width="260" height="34" rx="6" class="d-bar-fail"/>
+        <text x="164" y="78" class="d-lbl">판정까지 요청 실패</text>
+        <rect x="410" y="56" width="120" height="34" rx="6" class="d-warn-box"/>
+        <text x="424" y="78" class="d-lbl">toleration</text>
+        <rect x="530" y="56" width="130" height="34" rx="6" class="d-bar-ok"/>
+        <text x="544" y="78" class="d-lbl">재생성</text>
+
+        <text x="20" y="166" class="d-ttl-s">spot</text>
+        <rect x="150" y="146" width="120" height="34" rx="6" class="d-bar-ok"/>
+        <text x="164" y="168" class="d-lbl">cordon+drain</text>
+        <rect x="270" y="146" width="110" height="34" rx="6" class="d-plain-box"/>
+        <text x="284" y="168" class="d-lbl">빈 노드</text>
+        <path d="M380 140 L380 190" class="d-e-fail"/>
+        <text x="390" y="168" class="d-sub">노드 정지 (위에 파드 없음)</text>
+        <text x="150" y="208" class="d-sub">PDB 를 지키며 하나씩 옮겨서 사용자 에러는 거의 없다</text>
+
+        <text x="20" y="266" class="d-ttl-s">spot</text>
+        <text x="20" y="288" class="d-sub">PDB 과다</text>
+        <rect x="150" y="246" width="300" height="34" rx="6" class="d-warn-box"/>
+        <text x="164" y="268" class="d-lbl">drain 이 429 로 막힘 (110초 timeout)</text>
+        <rect x="450" y="246" width="260" height="34" rx="6" class="d-bar-fail"/>
+        <text x="464" y="268" class="d-lbl">결국 hard 와 같은 경로</text>
+        <rect x="710" y="246" width="200" height="34" rx="6" class="d-bar-ok"/>
+        <text x="724" y="268" class="d-lbl">더 늦은 복구</text>
+        <text x="150" y="316" class="d-sub">예고를 받았는데도 예고 없는 장애보다 나빠질 수 있다 (두 파드가 같은 노드에 남아 있으므로)</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-15.</b> 같은 노드 정지의 세 경우. spot 의 110초는 스크립트가 쓰는 drain timeout 설정값으로, 2분 예고 안에 끝나야 한다는 가정이다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>s1-node-down.sh 의 두 모드</h3>
+  <div class="code-head"><span>poc/06-fault-injection/scripts/s1-node-down.sh</span><span>발췌</span></div>
+  <pre><code>T0=$(now); DRAIN_S=""
+<span class="k">if</span> [ "$MODE" = spot ]; <span class="k">then</span>
+  log "  t0: 스팟 회수 예고 → cordon + drain (PDB 를 지키며 비운다, 최대 110초)"
+  kubectl cordon "$NODE" &gt;/dev/null
+  <span class="k">if</span> kubectl drain "$NODE" --ignore-daemonsets --delete-emptydir-data --timeout=110s &gt;/dev/null 2&gt;&amp;1; <span class="k">then</span>
+    DRAIN_S=$(since "$T0" "$(now)")
+  <span class="k">else</span>
+    DRAIN_S="timeout"
+  <span class="k">fi</span>
+<span class="k">fi</span>
+docker pause "$NODE" &gt;/dev/null</code></pre>
+  <ul>
+    <li><code>kubectl cordon</code>: 노드에 <code>spec.unschedulable=true</code>(= unschedulable NoSchedule taint). 새 파드가 이 노드로 오지 않는다.</li>
+    <li><code>kubectl drain</code>: 노드의 파드마다 Eviction API 를 부른다. <code>--ignore-daemonsets</code> 는 DaemonSet 파드를 건너뛰고(어차피 다시 생김), <code>--delete-emptydir-data</code> 는 emptyDir 을 쓰는 파드도 지워도 된다는 동의다. <code>--timeout=110s</code> 는 2분 예고 안에 끝내야 한다는 뜻이다.</li>
+    <li>drain 이 실패해도 스크립트는 <code>docker pause</code> 로 간다. 예고 시간이 끝나면 AWS 는 기다려 주지 않기 때문이다. CSV 의 <code>drain_s</code> 열에 걸린 초 또는 <code>timeout</code> 이 남는다.</li>
+    <li>예고를 받는 주체는 PoC 에서는 스크립트지만, 실물에서는 <b>AWS Node Termination Handler</b>(NTH, 스팟 노드마다 DaemonSet) 또는 Karpenter 의 interruption 처리다. 07 은 NTH 를 Argo CD Application 으로 넣는다(<code>enableSpotInterruptionDraining: true</code>).</li>
+  </ul>
+  <figure>
+    <pre class="mermaid">
+sequenceDiagram
+  participant AWS as AWS (IMDS, EventBridge)
+  participant NTH as Node Termination Handler
+  participant API as API 서버
+  participant PDB as PDB 검사
+  participant ASG as 오토스케일링 그룹
+  AWS->>NTH: 2분 뒤 회수 예고
+  NTH->>API: cordon
+  loop 파드마다
+    NTH->>API: Eviction 요청
+    API->>PDB: minAvailable 확인
+    PDB-->>API: 허용 또는 429
+    API-->>NTH: 200 또는 429 (재시도)
+  end
+  AWS->>ASG: 회수 신호 (capacity rebalance)
+  ASG->>AWS: 교체 인스턴스 요청
+  Note over AWS: T0 인스턴스 종료, OS 종료 신호
+  Note over API: 남은 노드 오브젝트는 k3s 에선 손으로 삭제
+    </pre>
+    <figcaption><b>그림 8-16.</b> 07 단계(가이드 9장)의 실물 스팟 회수 흐름(07 README 1.6). 06 의 spot 모드는 이 중 "cordon + drain → 정지" 만 흉내 낸다. k3s 에는 AWS 클라우드 컨트롤러가 없어 꺼진 노드 오브젝트가 NotReady 로 남는다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>FIS 로 진짜 예고를 보내기, 그리고 남은 구멍</h3>
+  <p>07 의 <code>terraform/cluster/fis.tf</code> 는 AWS FIS 실험 템플릿을 만든다. 액션 <code>aws:ec2:send-spot-instance-interruptions</code>, 파라미터 <code>durationBeforeInterruption = PT2M</code>, 대상은 태그 <code>Pool=exec</code> 인 스팟 인스턴스 중 <code>COUNT(1)</code>. 즉 06 의 "spot 모드" 를 AWS 가 진짜 신호로 재현한다. 06 README 10절은 07 에서 바꿀 것으로 "<code>docker pause</code> → EC2 인스턴스 정지 또는 FIS" 와 "exec 노드 2대 이상(AZ 2개)" 를 적는다.</p>
+  <pre class="pseudo"><code><span class="k">만약</span> 예고 있음 (spot, 업그레이드, 축소):
+  cordon → drain(PDB 존중) → 정지          <span class="c">// 사용자 에러 ≈ 0, PDB 가 핵심</span>
+<span class="k">아니면</span> (전원 차단, 커널 패닉, 예고 무시):
+  grace period 동안 일부 실패             <span class="c">// 파드 설정으로 못 줄임</span>
+  → tolerationSeconds 뒤 재생성             <span class="c">// 20초로 줄임</span>
+  → 남은 구멍: grace 구간의 실패
+     <span class="c">// 앞단(Kourier/Envoy) 재시도·아웃라이어 감지로 메우는 후보 (RB-01 재발 방지 2, 【추정】 미측정)</span></code></pre>
+  <ul>
+    <li>hard 의 남은 구멍은 "요청을 보내는 쪽" 이 메워야 한다. 프로브는 Service 로 바로 부르므로 재시도가 없다. 진짜 함수 경로는 Kourier(Envoy)를 거치므로 재시도 정책을 넣을 자리가 있다. 측정은 아직 안 했다.</li>
+    <li>DaemonSet 인 NTH 자신은 not-ready/unreachable 에 tolerationSeconds 없는 toleration 을 가지므로 노드 문제로 축출되지 않는다(4절).</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>./scripts/s1-node-down.sh spot 1</code> = 2분 예고 흉내. 07 의 NTH Application(<code>gitops/apps/node-termination-handler.yaml</code>)과 FIS 템플릿(<code>terraform/cluster/fis.tf</code>)이 같은 실험의 실물판이다. 07 의 실행 풀은 스팟 2대다. 07 의 표본 함수(<code>gitops/workloads/placement-check/fn-sample.yaml</code>)는 PDB minAvailable 1 과 흩어 놓기를 갖지만, 흩어 놓기가 <code>ScheduleAnyway</code> 이고 tolerationSeconds·nodeTaintsPolicy·matchLabelKeys 가 없다. 06 이 버린 첫 번째 조합이다. 07 에서 hard 경로(NTH 가 놓친 회수)를 재면 06 의 "방어 전" 에 가까운 결과가 나올 것이다 【추정】.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: 스크립트가 "drain 이 110초 안에 안 끝났다" 를 찍고, 결과 줄의 <code>drain_s</code> 가 <code>timeout</code>, <code>errors</code> 가 hard 보다 많다. <b>볼 곳</b>: <code>kubectl get pdb -A</code> 의 ALLOWED DISRUPTIONS, <code>kubectl -n tenant-a get pods -o wide</code> 로 두 파드가 같은 노드에 있었는지. <b>고치는 법</b>: PDB 를 minAvailable 1 로, 흩어 놓기 확인(14절 실습 1).</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>06 은 두 모드를 한 스크립트에 넣어 "같은 노드 정지" 를 예고 유무만 바꿔 비교한다. 대안으로 실물 스팟만 재면 AWS 비용과 시간이 들고, 예고 유무를 통제할 수 없다. 반대로 kind 에서는 진짜 예고 신호가 없으므로 07 의 FIS 가 짝을 이룬다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/spot-instance-termination-notices.html">EC2 Spot Instance interruption notices</a> · <a href="https://docs.aws.amazon.com/fis/latest/userguide/fis-actions-reference.html">AWS FIS actions reference</a> · <a href="https://github.com/aws/aws-node-termination-handler">AWS Node Termination Handler</a> · <a href="https://kubernetes.io/docs/tasks/administer-cluster/safely-drain-node/">Safely Drain a Node</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="noisy">7. 시나리오 2: 노이지 네이버 (함수 폭주)</h2>
+
+<div class="tier" data-tier="1">
+  <h3>무엇이 무엇으로부터 누구를 지키나</h3>
+  <p>노이지 네이버(noisy neighbor)는 같은 노드나 같은 풀을 쓰는 다른 테넌트가 CPU·메모리·노드 자리를 다 가져가서 내 함수가 느려지거나 아예 못 뜨는 상황이다. 시나리오 2 는 tenant-b 의 "버그 난 함수" 가 오토스케일로 30개까지 늘어나는 상황을 흉내 낸다. 각 파드는 CPU 0.5코어를 예약(requests)하고 1코어까지(limits) 무한 루프로 태운다. 03 단계(가이드 3장)에서 넣은 ResourceQuota·LimitRange 가 정말 막는지, 그리고 그 벽을 빼면 어떻게 되는지를 같은 스크립트로 잰다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 420" role="img" aria-labelledby="f17-t">
+        <title id="f17-t">폭주 파드가 지나가는 네 개의 벽과 피해자가 지키는 것</title>
+        <defs>
+          <marker id="f17-m-fail" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+        </defs>
+        <rect x="20" y="40" width="170" height="120" rx="10" class="d-agent"/>
+        <text x="34" y="68" class="d-ttl-s">tenant-b 폭주</text>
+        <text x="34" y="94" class="d-mono">replicas 30</text>
+        <text x="34" y="116" class="d-mono">req 500m</text>
+        <text x="34" y="138" class="d-mono">limit 1 core</text>
+        <rect x="215" y="40" width="170" height="120" rx="10" class="d-cp-box"/>
+        <text x="229" y="68" class="d-ttl-s">LimitRange</text>
+        <text x="229" y="94" class="d-sub">컨테이너 1개</text>
+        <text x="229" y="116" class="d-sub">기본값 주입,</text>
+        <text x="229" y="138" class="d-sub">최대치 거절</text>
+        <rect x="410" y="40" width="170" height="120" rx="10" class="d-cp-box"/>
+        <text x="424" y="68" class="d-ttl-s">ResourceQuota</text>
+        <text x="424" y="94" class="d-sub">네임스페이스 합</text>
+        <text x="424" y="116" class="d-sub">넘으면 파드</text>
+        <text x="424" y="138" class="d-sub">생성 자체 거절</text>
+        <rect x="605" y="40" width="170" height="120" rx="10" class="d-plain-box"/>
+        <text x="619" y="68" class="d-ttl-s">스케줄러</text>
+        <text x="619" y="94" class="d-sub">requests 로</text>
+        <text x="619" y="116" class="d-sub">노드 자리 계산,</text>
+        <text x="619" y="138" class="d-sub">없으면 Pending</text>
+        <rect x="800" y="40" width="140" height="120" rx="10" class="d-plain-box"/>
+        <text x="814" y="68" class="d-ttl-s">커널 cgroup</text>
+        <text x="814" y="94" class="d-sub">limits 넘는</text>
+        <text x="814" y="116" class="d-sub">CPU 는 멈칫</text>
+        <text x="814" y="138" class="d-sub">(throttling)</text>
+        <path d="M190 100 L213 100" class="d-e-fail" marker-end="url(#f17-m-fail)"/>
+        <path d="M385 100 L408 100" class="d-e-fail" marker-end="url(#f17-m-fail)"/>
+        <path d="M580 100 L603 100" class="d-e-fail" marker-end="url(#f17-m-fail)"/>
+        <path d="M775 100 L798 100" class="d-e-fail" marker-end="url(#f17-m-fail)"/>
+        <text x="229" y="192" class="d-lbl">API 서버 어드미션</text>
+        <text x="424" y="192" class="d-lbl">API 서버 어드미션</text>
+        <text x="619" y="192" class="d-lbl">kube-scheduler</text>
+        <text x="814" y="192" class="d-lbl">노드 커널</text>
+        <rect x="20" y="220" width="920" height="80" rx="10" class="d-user-box"/>
+        <text x="36" y="250" class="d-ttl-s">tenant-a hello (피해자)가 지키는 것</text>
+        <text x="36" y="278" class="d-sub">새 파드를 만들 권리(쿼터는 테넌트별) · 노드의 예약 자리(requests) · 실제 CPU 시간(limits)</text>
+        <rect x="20" y="320" width="920" height="80" rx="10" class="d-warn-box"/>
+        <text x="36" y="350" class="d-ttl-s">kind 의 한계</text>
+        <text x="36" y="378" class="d-sub">kind 노드는 모두 같은 맥(VM)의 CPU 를 나눠 쓴다. 노드가 달라도 CPU 는 진짜로 분리되지 않는다 (EC2 는 기계가 다르다).</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-17.</b> 폭주 파드가 거치는 네 벽. 앞의 둘(LimitRange, ResourceQuota)은 API 서버가 파드 생성 순간에 거절하고, 뒤의 둘(스케줄러, cgroup)은 만들어진 파드가 실제로 자리와 CPU 를 얼마나 가져가는지 제한한다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>네 개념의 정확한 뜻</h3>
+  <div class="table-wrap"><table><thead><tr><th>개념</th><th>단위</th><th>누가 집행</th><th>넘으면</th><th>대역 값 (standin/targets.yaml)</th></tr></thead><tbody>
+  <tr><td>requests</td><td>컨테이너</td><td>스케줄러 (노드 할당 가능량 − 이미 예약된 합)</td><td>놓을 노드가 없으면 Pending</td><td>폭주 500m, hello 50m</td></tr>
+  <tr><td>limits</td><td>컨테이너</td><td>노드 커널 cgroup. CPU 는 CFS 쿼터, 메모리는 OOM</td><td>CPU = 멈칫(throttling), 메모리 = OOMKilled</td><td>폭주 1코어, hello 200m</td></tr>
+  <tr><td>ResourceQuota</td><td>네임스페이스 합</td><td>API 서버 어드미션 (ResourceQuota)</td><td>파드 생성 거절. ReplicaSet 이벤트 <code>FailedCreate … exceeded quota</code></td><td>requests.cpu 1, limits.cpu 2, pods 15 (두 테넌트 같음)</td></tr>
+  <tr><td>LimitRange</td><td>컨테이너 (type Container)</td><td>API 서버 어드미션 (LimitRanger). 기본값 주입은 mutating, 최대치 검사는 validating</td><td>max 초과 시 생성 거절</td><td>defaultRequest 50m, default 500m, max 1코어</td></tr>
+  </tbody></table></div>
+  <p>대역 값으로 계산하면: 폭주 파드 하나가 requests.cpu 500m 이므로 쿼터 1코어 안에는 2개만 들어간다. 나머지 28개는 ReplicaSet 이 만들려 할 때마다 어드미션에서 거절된다. 쿼터를 지우면 다음 벽은 스케줄러다: exec 노드 2대의 할당 가능 CPU 를 requests 로 채울 때까지 뜨고, 그 뒤로는 Pending 이 된다. 이때 피해자 hello 의 스케일업도 같은 자리를 다투게 된다.</p>
+  <figure>
+    <pre class="mermaid">
+flowchart TD
+  A["ReplicaSet 이 파드 생성 요청"] --> B["LimitRanger: 빈 값에 기본값 주입"]
+  B --> C{"컨테이너 limits 가 max 이하인가"}
+  C -- "아니오" --> X1["거절 (maximum cpu usage per Container)"]
+  C -- "예" --> D{"네임스페이스 합이 쿼터 이하인가"}
+  D -- "아니오" --> X2["거절 (exceeded quota), FailedCreate 이벤트"]
+  D -- "예" --> E["파드 저장"]
+  E --> F{"requests 를 받아 줄 노드가 있나"}
+  F -- "아니오" --> P["Pending (Insufficient cpu)"]
+  F -- "예" --> G["노드에서 실행"]
+  G --> H["limits 넘는 CPU 는 cgroup 이 throttle"]
+    </pre>
+    <figcaption><b>그림 8-18.</b> 폭주 파드 하나가 지나가는 판정 순서. s2 스크립트는 X2 의 이벤트 시각을 <code>t_blocked_s</code> 로, Running/Pending 개수를 <code>burners_running</code>·<code>burners_pending</code> 으로 남긴다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>스크립트 세부와 측정의 함정</h3>
+  <div class="code-head"><span>poc/06-fault-injection/scripts/s2-noisy-neighbor.sh</span><span>발췌</span></div>
+  <pre><code><span class="c"># 이벤트는 1시간 남아 있어서, 지난 회차 것과 섞이지 않게 t0 이후 시각(lastTimestamp)인 것만 본다</span>
+<span class="k">if</span> [ -z "$T_BLOCKED" ] &amp;&amp; kubectl -n "$TENANT_B" get events --field-selector reason=FailedCreate \
+     -o jsonpath='{range .items[*]}{.lastTimestamp} {.message}{"\n"}{end}' 2&gt;/dev/null \
+     | awk -v t="$T0_ISO" '$1 &gt;= t' | grep -q 'exceeded quota'; <span class="k">then</span>
+  T_BLOCKED=$(since "$T0" "$(now)")
+<span class="k">fi</span></code></pre>
+  <ul>
+    <li><code>--field-selector reason=FailedCreate</code>: 쿼터가 막을 때 ReplicaSet 컨트롤러가 남기는 이벤트 이유.</li>
+    <li>ISO 8601 시각 문자열은 같은 형식이면 사전순 비교가 곧 시간 비교다. <code>awk '$1 &gt;= t'</code> 로 t0 이후 이벤트만 남긴다. 이벤트 보존 기본 1시간 동안 지난 회차 기록이 섞이는 것을 막는다.</li>
+    <li>쿼터 오브젝트가 0개면(깨뜨리기) 20초만 보고 넘어간다. 막힘도 쿼터 알림도 오지 않기 때문이다.</li>
+  </ul>
+  <pre class="pseudo"><code>QUOTA = tenant-b 의 ResourceQuota 개수          <span class="c">// 1 = 방어 있음, 0 = 깨뜨린 상태 (CSV quota_objects)</span>
+probe start, BASELINE 대기
+T0; 폭주 Deployment apply (replicas = 30)
+최대 60초: FailedCreate exceeded quota 이벤트 시각, TenantQuotaNearLimit firing 시각
+10초 뒤 Running / Pending 개수 세기
+피해자 scale ORIG → ORIG+2, rollout status 60초      <span class="c">// victim_scaleup_s 또는 timeout</span>
+HOLD(60초) 채울 때까지 유지
+폭주 삭제, 피해자 원래 수로, 15초 뒤 probe stop
+analyze.py --window HOLD                              <span class="c">// p95_window_ms = 폭주 중 피해자 지연</span></code></pre>
+  <ul>
+    <li><b>쿼터 알림은 "예약량" 을 본다</b>: <code>kube_resourcequota{type="used"}</code> 는 requests/limits 의 <b>합계 선언값</b>이지 실제 사용량이 아니다. 예약은 작게 하고 실제로만 많이 태우는 파드는 이 알림을 피한다. 그 경우는 limits 가 막고, 감지는 CPU throttling 지표(<code>container_cpu_cfs_throttled_periods_total</code>, 대역 Prometheus 가 cadvisor 에서 긁어 두었다)로 해야 한다. 06 README 가 셀프 연습 후보로 남겼다.</li>
+    <li><b>스케일다운 순간의 에러</b>: 끝에 피해자를 원래 수로 줄일 때 소수의 에러가 날 수 있다. 파드가 지워질 때 EndpointSlice 에서 빠지기 전에 요청이 가는 문제로, 04 단계 preStop 과 같은 원인이다. 측정 창(<code>--window HOLD</code>) 밖이라 <code>p95_window_ms</code> 에는 안 들어가지만 <code>errors</code> 에는 들어간다.</li>
+    <li><b>진짜 클러스터에서는 비교가 어렵다</b>: 쿼터를 지워도 Argo CD selfHeal 이 몇 초 만에 되살린다. 그래서 "쿼터 없음" 비교는 대역에서 한다. 진짜 클러스터에서 지워 보고 돌아오는 시간을 재면 그게 "격리 벽 복구 시간" 이다.</li>
+    <li><b>쿼터 합 ≤ 풀 용량</b>: 테넌트 쿼터의 합이 노드 풀 용량보다 크면 모든 테넌트가 "쿼터 안에서" 노드 자리를 다 가져갈 수 있다(RB-02 재발 방지). 대역은 테넌트 2개 × requests.cpu 1 로 맞췄다.</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>대역은 두 테넌트에 같은 쿼터(requests.cpu 1, limits.cpu 2, pods 15)를 준다. 진짜 클러스터의 03 은 다르다: <code>tenants/tenant-b.yaml</code> 이 "작은 요금제" 로 requests.cpu 500m, limits.cpu 1, pods 5 를 주고, 차트 LimitRange 기본 limit 은 200m 이다. 그래서 진짜 클러스터에서는 폭주 파드(requests 500m, limits 1코어)가 <b>1개만</b> 뜬다(06 README 3절). 같은 스크립트라도 대상의 쿼터 숫자에 따라 결과 열이 달라지므로, CSV 에 <code>label</code> 로 어느 클러스터인지 남긴다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>실습</b>: <code>kubectl -n tenant-b delete resourcequota tenant-quota</code> 후 <code>./scripts/s2-noisy-neighbor.sh 30 1</code>. <b>증상</b>: 폭주 파드가 노드 자리까지 차고 나머지가 Pending, 피해자 p95 가 크게 오르고 쿼터 알림은 안 울린다(지표 자체가 없다). <b>볼 곳</b>: <code>kubectl -n tenant-a describe pod &lt;Pending 파드&gt;</code> Events 맨 아래(<code>Insufficient cpu</code> 면 자리를 뺏긴 것), <code>kubectl top pods</code>. <b>고치는 법</b>: <code>kubectl apply -f standin/targets.yaml</code> 로 쿼터만 되살린다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>이 시나리오는 새 방어를 넣지 않고 03 의 방어를 "빼 보는" 것으로 효과를 잰다. 대안 PriorityClass(플랫폼 부품 우선)·노드 풀 분리(테넌트별 전용 노드)는 RB-02 재발 방지 후보로 남겼다. 전용 노드는 격리가 확실하지만 FaaS 의 집적도(비용)를 버린다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/">Resource Management for Pods and Containers</a> · <a href="https://kubernetes.io/docs/concepts/policy/resource-quotas/">Resource Quotas</a> · <a href="https://kubernetes.io/docs/concepts/policy/limit-range/">Limit Ranges</a> · <a href="https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/">Pod Priority and Preemption</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="baddeploy">8. 시나리오 3: 나쁜 배포와 자동 롤백</h2>
+
+<div class="tier" data-tier="1">
+  <h3>카나리 + 분석 = 자동 롤백, 그리고 Git 은 여전히 나쁘다</h3>
+  <p>02 단계(가이드 2장)의 Argo Rollouts 카나리를 대역에서 작게 재현한다. Rollout <code>api</code> 는 파드 4개, 첫 단계 <code>setWeight: 25</code>(카나리 파드 1개), 다음 단계에서 분석(AnalysisTemplate <code>http-success</code>)을 돌린다. 분석이 실패하면 Rollout 이 abort 해 카나리 파드를 0으로 줄이고 트래픽은 안정 버전으로만 간다. 이것이 자동 롤백이다. 단, 롤백은 <b>클러스터 안에서만</b> 일어난다. GitOps 라면 Git 에는 여전히 나쁜 버전이 적혀 있어 Argo CD 화면에서는 Synced 인데 Degraded 로 보인다. 진짜 정리는 <code>git revert</code> + push 다(RB-03).</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 400" role="img" aria-labelledby="f19-t">
+        <title id="f19-t">대역 api Rollout 의 카나리, 서비스 세 개, 분석 Job</title>
+        <defs>
+          <marker id="f19-m-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-user"/></marker>
+          <marker id="f19-m-obs" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-obs"/></marker>
+          <marker id="f19-m-async" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-async"/></marker>
+        </defs>
+        <rect x="20" y="40" width="180" height="80" rx="10" class="d-user-box"/>
+        <text x="36" y="70" class="d-ttl-s">프로브</text>
+        <text x="36" y="96" class="d-mono">api.tenant-a.svc</text>
+        <rect x="260" y="40" width="200" height="80" rx="10" class="d-card"/>
+        <text x="276" y="70" class="d-ttl-s">Service api</text>
+        <text x="276" y="96" class="d-mono">app=api (전부)</text>
+        <rect x="520" y="30" width="420" height="230" rx="12" class="d-pool"/>
+        <text x="536" y="56" class="d-ttl-s">Rollout api (replicas 4)</text>
+        <rect x="536" y="72" width="250" height="80" rx="10" class="d-cp-box"/>
+        <text x="552" y="100" class="d-ttl-s">stable RS · 파드 3</text>
+        <text x="552" y="126" class="d-mono">-status-code=200</text>
+        <rect x="536" y="166" width="250" height="80" rx="10" class="d-fail-box"/>
+        <text x="552" y="194" class="d-ttl-s">canary RS · 파드 1</text>
+        <text x="552" y="220" class="d-mono">-status-code=500</text>
+        <text x="800" y="120" class="d-sub">25% =</text>
+        <text x="800" y="142" class="d-sub">파드 수 비율</text>
+        <rect x="260" y="170" width="200" height="80" rx="10" class="d-card"/>
+        <text x="276" y="200" class="d-ttl-s">api-canary</text>
+        <text x="276" y="226" class="d-mono">+ canary 해시</text>
+        <rect x="260" y="290" width="200" height="80" rx="10" class="d-card"/>
+        <text x="276" y="320" class="d-ttl-s">api-stable</text>
+        <text x="276" y="346" class="d-mono">+ stable 해시</text>
+        <rect x="20" y="170" width="180" height="120" rx="10" class="d-obs-box"/>
+        <text x="36" y="198" class="d-ttl-s">AnalysisRun</text>
+        <text x="36" y="222" class="d-sub">curl Job 5초 간격</text>
+        <text x="36" y="244" class="d-sub">최대 3회</text>
+        <text x="36" y="266" class="d-sub">실패 2회면 Failed</text>
+        <path d="M200 80 L258 80" class="d-e-user" marker-end="url(#f19-m-user)"/>
+        <path d="M460 80 L534 100" class="d-e-user" marker-end="url(#f19-m-user)"/>
+        <path d="M460 80 L534 196" class="d-e-user" marker-end="url(#f19-m-user)"/>
+        <path d="M200 210 L258 210" class="d-e-obs" marker-end="url(#f19-m-obs)"/>
+        <path d="M460 210 L534 210" class="d-e-obs" marker-end="url(#f19-m-obs)"/>
+        <path d="M60 290 L60 380 L700 380 L700 248" class="d-e-async" marker-end="url(#f19-m-async)"/>
+        <text x="480" y="372" class="d-lbl">Failed → abort: canary 0개</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-19.</b> 대역의 카나리 구조. 트래픽 비율은 서비스 메시 없이 <b>파드 수</b>로 근사한다(02 결정과 같음). 분석은 Prometheus 대신 api-canary Service 에 curl 하는 Job 이다. 프로브는 사용자처럼 api Service 를 부르므로 약 25% 가 나쁜 파드로 간다. api-stable 은 14절의 깨뜨리기에서 분석이 잘못 가리키는 곳이다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>두 모드: kubectl 과 git, 그리고 selfHeal</h3>
+  <p><code>s3-bad-deploy.sh</code> 는 나쁜 버전을 넣는 방법이 둘이다. <b>kubectl 모드</b>는 스크립트가 Rollout 의 컨테이너 args 를 JSON patch 로 직접 바꾼다. <b>git 모드</b>는 사람이 나쁜 값을 커밋·push 한 뒤 엔터를 치면 그 순간을 t0 로 잡는다. 왜 둘인가? 진짜 클러스터의 Rollout 은 Argo CD Application 이 selfHeal 로 지킨다. kubectl 로 고치면 Argo CD 가 몇 초 만에 Git 값으로 되돌리므로, "Rollouts 가 롤백했다" 가 아니라 "Argo CD 가 되돌렸다" 를 재게 된다. 그래서 스크립트는 Argo CD 가 관리하는 흔적이 보이면 kubectl 모드를 거부한다.</p>
+  <figure>
+    <pre class="mermaid">
+flowchart TD
+  S["s3-bad-deploy.sh 모드"] --> H{"Rollout phase 가 Healthy 인가"}
+  H -- "아니오" --> X["중단: 먼저 정상으로"]
+  H -- "예" --> M{"모드"}
+  M -- "kubectl" --> A{"Argo CD 관리 흔적이 있나<br/>tracking-id 주석 또는 instance 라벨"}
+  A -- "있음, FORCE 없음" --> X2["중단: selfHeal 이 되돌린다, git 모드로"]
+  A -- "없음" --> K["args 를 나쁜 값으로 patch<br/>BADTAG 로 해시를 매번 다르게"]
+  M -- "git" --> G["사람이 push 후 엔터, t0<br/>APP 있으면 Argo CD refresh"]
+  K --> W["1초마다 관찰"]
+  G --> W
+  W --> R["끝나면 kubectl 은 좋은 값으로 patch<br/>git 은 git revert 안내"]
+    </pre>
+    <figcaption><b>그림 8-20.</b> 모드 선택 순서도. git 모드의 t0 는 push 시각이라 Argo CD 가 변경을 알아채는 시간(01 단계의 폴링·refresh)이 감지 앞에 더해진다. git 모드는 회수가 1로 고정된다.</figcaption>
+  </figure>
+  <figure>
+    <pre class="mermaid">
+sequenceDiagram
+  participant S as 스크립트
+  participant R as Rollouts 컨트롤러
+  participant AR as AnalysisRun Job
+  participant SVC as api Service
+  participant P as 프로브
+  S->>R: args patch (나쁜 버전), T0
+  R->>R: 새 ReplicaSet, setWeight 25
+  Note over SVC: 파드 4개 중 1개가 500
+  P->>SVC: 0.1초마다 요청, 일부 500
+  R->>AR: analysis 단계 시작
+  loop 5초 간격 최대 3회
+    AR->>AR: api-canary 에 curl 5번
+  end
+  AR-->>R: 실패 2회, Failed (t_failed_s)
+  R->>R: abort, canary 0개 (t_abort_s)
+  Note over SVC: 안정 버전만 남음 (t_stable_s)
+  S->>R: 좋은 버전으로 되돌림 (정리)
+    </pre>
+    <figcaption><b>그림 8-21.</b> kubectl 모드 한 회. 분석 실패 = 감지, abort = 완화 시작, 나쁜 파드 0개 = 복구.</figcaption>
+  </figure>
+  <p><b>사용자 피해 ≈ 카나리 비율 × 감지 시간 × 요청률</b>. 분석 간격·count·failureLimit 를 줄이면 감지가 빨라지고 피해가 준다. 대신 일시적 흔들림에 멀쩡한 버전을 롤백하는 "거짓 롤백" 이 는다. 첫 단계를 25% 에서 10% 로 낮추면 같은 감지 시간에 피해 요청이 준다.</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>분석 설정의 산수와 스크립트 세부</h3>
+  <div class="code-head"><span>poc/06-fault-injection/standin/targets.yaml</span><span>발췌 (AnalysisTemplate)</span></div>
+  <pre><code>  <span class="k">metrics</span>:
+    - <span class="k">name</span>: canary-http-200
+      <span class="k">count</span>: 3
+      <span class="k">interval</span>: 5s
+      <span class="k">failureLimit</span>: 1
+      <span class="k">provider</span>:
+        <span class="k">job</span>:
+          ...
+                    args:
+                      - |
+                        for i in 1 2 3 4 5; do
+                          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 http://api-canary.tenant-a.svc/)
+                          [ "$code" = "200" ] || exit 1
+                          sleep 1
+                        done</code></pre>
+  <ul>
+    <li><code>count: 3</code>, <code>interval: 5s</code>: 5초 간격으로 최대 3번 측정. Job provider 는 Job 이 성공(종료 코드 0)하면 측정 성공, 실패하면 측정 실패다.</li>
+    <li><code>failureLimit: 1</code>: 실패가 1번을 <b>넘으면</b>(=2번째 실패) 분석 Failed. 02 의 Prometheus 분석과 같은 규칙이다.</li>
+    <li>Rollouts 는 <code>count ≥ failureLimit + consecutiveSuccessLimit</code> 를 검사한다. failureLimit 를 count 이상으로 올리면 AnalysisRun 이 Error 로 끝나고 안전하게 abort 한다(06 README 6절의 덤 실험, 메시지 <code>count (3) must be &gt;= failureLimit + consecutiveSuccessLimit</code>).</li>
+    <li>curl 이 <code>api-canary</code> 를 부른다. Rollouts 는 canaryService/stableService 에 <code>rollouts-pod-template-hash</code> 셀렉터를 덧붙여 각각 카나리·안정 파드만 고르게 한다. 원래 YAML 의 셀렉터가 둘 다 <code>app=api</code> 인 이유다.</li>
+  </ul>
+  <div class="code-head"><span>poc/06-fault-injection/scripts/s3-bad-deploy.sh</span><span>발췌</span></div>
+  <pre><code><span class="k">if</span> [ -n "$BADHASH" ] &amp;&amp; [ -z "$T_FAILED" ]; <span class="k">then</span>
+  ph=$(kubectl -n "$ROLLOUT_NS" get analysisrun -l rollouts-pod-template-hash="$BADHASH" \
+         -o jsonpath='{range .items[*]}{.metadata.name} {.status.phase}{"\n"}{end}' 2&gt;/dev/null \
+       | <span class="k">while</span> read -r n p; <span class="k">do</span> case "$OLD_AR" in *" $n "*) ;; *) echo "$p";; esac; <span class="k">done</span> | tr '\n' ' ')
+  case "$ph" in *Failed*|*Error*) T_FAILED=$(since "$T0" "$T");; esac
+<span class="k">fi</span>
+<span class="k">if</span> [ -z "$T_ABORT" ] &amp;&amp; [ "$(R '{.status.abort}')" = "true" ]; <span class="k">then</span>
+  T_ABORT=$(since "$T0" "$T")
+<span class="k">fi</span></code></pre>
+  <ul>
+    <li>나쁜 버전의 해시(<code>currentPodHash</code> 가 안정 해시와 달라진 값)를 먼저 잡고, 그 해시 라벨이 붙은 AnalysisRun 만 본다.</li>
+    <li><code>OLD_AR</code>: 주입 전 이미 있던 AnalysisRun 이름 목록. 앞뒤에 공백을 붙여 <code>case</code> 패턴으로 "목록에 있나" 를 검사한다. 지난 회차 결과를 이번 것으로 세지 않게 한다.</li>
+    <li>Failed 뿐 아니라 Error 도 감지로 친다. 분석 자체가 망가져도(Prometheus 주소 오타 등) abort 되는 fail-closed 동작(02 의 consecutiveErrorLimit)과 맞춘 것이다.</li>
+    <li>복구 판정: abort 뒤 나쁜 ReplicaSet 의 replicas 가 0 이고 Rollout availableReplicas ≥ 원하는 수. 반대로 Rollout 이 Healthy 인데 stableRS 가 나쁜 해시면 "나쁜 버전이 100% 승격" 으로 기록하고 끝낸다(<code>promoted-bad</code>).</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>대역은 Argo CD 가 없어서 kubectl 모드로 3회 잰다. 진짜 클러스터에서는 <code>ROLLOUT_NS=fn-canary ROLLOUT=podinfo APP=podinfo ./scripts/s3-bad-deploy.sh git</code>. 02 의 podinfo 분석은 Prometheus 질의(2xx 비율 ≥ 0.95, 15초 간격, 백그라운드 분석 startingStep 1)이므로, 대역의 curl Job 분석보다 감지가 느릴 것이다 【추정】. git 모드는 kubectl 모드의 기본값 <code>BAD_ARGS</code> 를 쓰지 않으므로 무엇을 나쁘게 바꿀지는 사람이 정한다(02 rollout.yaml 의 <code>--random-error</code> 주석 풀기).</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: Argo CD 에서 podinfo 가 Synced 인데 Degraded, 몇 분 뒤에도 그대로. <b>원인</b>: Rollouts 는 abort 했지만 Git 은 나쁜 버전이다. <b>볼 곳</b>: <code>kubectl argo rollouts get rollout podinfo -n fn-canary</code> 에 RolloutAborted. <b>고치는 법</b>: <code>git revert &lt;커밋&gt; &amp;&amp; git push</code>. 그러면 Rollout spec 이 안정 버전과 같아져 새 배포 없이 Healthy 로 돌아온다. abort 상태에서 <code>promote --full</code> 은 금지(분석을 건너뛰고 나쁜 버전을 100% 로).</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>대역 분석을 Prometheus 대신 curl Job 으로 한 이유: Prometheus 없이도 시나리오가 돌게. 대신 "사용자 트래픽의 에러율" 이 아니라 "카나리에 직접 보낸 시험 요청" 을 보므로, 트래픽이 없는 시간에도 판정할 수 있는 장점과 실제 사용자 경로를 안 본다는 단점이 같이 있다. 02 의 Prometheus 분석은 반대 성질(부하가 없으면 NaN → 실패)이다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://argo-rollouts.readthedocs.io/en/stable/features/analysis/">Argo Rollouts: Analysis &amp; Progressive Delivery</a> · <a href="https://argo-rollouts.readthedocs.io/en/stable/analysis/job/">Job metrics</a> · <a href="https://argo-rollouts.readthedocs.io/en/stable/features/canary/">Canary</a> · <a href="https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/">Argo CD: Automated Sync (selfHeal)</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="breach">9. 시나리오 4: 테넌트 침범 시도 8가지</h2>
+
+<div class="tier" data-tier="1">
+  <h3>공격자 파드 하나, 벽 네 겹</h3>
+  <p>tenant-b 의 함수 코드가 악의적이라고 가정한다. 그 파드(함수와 같은 서비스계정 <code>default</code>, 같은 보안 설정) 안에서 옆 테넌트와 플랫폼을 건드려 본다. 각 시도는 "막혀야 한다" 가 기대값이고, 막히면 PASS, 뚫리면 FAIL 이다. 하나라도 FAIL 이면 스크립트는 종료 코드 1 로 끝나 CI 에 그대로 쓸 수 있다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 440" role="img" aria-labelledby="f22-t">
+        <title id="f22-t">공격자 파드에서 출발한 8가지 시도와 각각을 막는 벽</title>
+        <defs>
+          <marker id="f22-m-fail" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-fail"/></marker>
+          <marker id="f22-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <rect x="20" y="40" width="200" height="140" rx="12" class="d-agent"/>
+        <text x="36" y="70" class="d-ttl-s">attacker 파드</text>
+        <text x="36" y="96" class="d-sub">tenant-b</text>
+        <text x="36" y="118" class="d-mono">sa: default</text>
+        <text x="36" y="140" class="d-mono">curl, 비루트</text>
+        <rect x="20" y="250" width="200" height="140" rx="12" class="d-agent"/>
+        <text x="36" y="280" class="d-ttl-s">kubectl --as</text>
+        <text x="36" y="306" class="d-mono">sa tenant-b:default</text>
+        <text x="36" y="328" class="d-sub">또는 관리자 권한</text>
+        <text x="36" y="350" class="d-sub">dry-run=server</text>
+
+        <rect x="290" y="30" width="200" height="180" rx="12" class="d-cp-box"/>
+        <text x="306" y="58" class="d-ttl-s">NetworkPolicy</text>
+        <text x="306" y="82" class="d-sub">tenant-b egress:</text>
+        <text x="306" y="104" class="d-sub">같은 ns + DNS 만</text>
+        <text x="306" y="130" class="d-sub">tenant-a ingress:</text>
+        <text x="306" y="152" class="d-sub">같은 ns 만</text>
+        <text x="306" y="186" class="d-lbl">N1 N2 N3 N4</text>
+
+        <rect x="290" y="240" width="200" height="170" rx="12" class="d-cp-box"/>
+        <text x="306" y="268" class="d-ttl-s">API 서버</text>
+        <text x="306" y="294" class="d-sub">RBAC → R1 R2</text>
+        <text x="306" y="318" class="d-sub">PSA → P1</text>
+        <text x="306" y="342" class="d-sub">LimitRange·Quota</text>
+        <text x="306" y="364" class="d-sub">→ Q1</text>
+
+        <rect x="570" y="30" width="370" height="54" rx="10" class="d-user-box"/>
+        <text x="586" y="62" class="d-subd">N1 tenant-a Service · N2 파드 IP 직접</text>
+        <rect x="570" y="96" width="370" height="54" rx="10" class="d-card"/>
+        <text x="586" y="128" class="d-subd">N3 API 서버 (kubernetes.default.svc)</text>
+        <rect x="570" y="162" width="370" height="54" rx="10" class="d-warn-box"/>
+        <text x="586" y="194" class="d-subd">N4 169.254.169.254 (클라우드 메타데이터)</text>
+        <rect x="570" y="240" width="370" height="54" rx="10" class="d-card"/>
+        <text x="586" y="272" class="d-subd">R1 tenant-a Secret · R2 파드 생성</text>
+        <rect x="570" y="306" width="370" height="54" rx="10" class="d-fail-box"/>
+        <text x="586" y="338" class="d-subd">P1 privileged + hostPath / (노드 탈출)</text>
+        <rect x="570" y="372" width="370" height="54" rx="10" class="d-warn-box"/>
+        <text x="586" y="404" class="d-subd">Q1 CPU 4코어 파드 (자원 독점)</text>
+
+        <path d="M220 110 L288 110" class="d-e-fail" marker-end="url(#f22-m-fail)"/>
+        <path d="M220 320 L288 320" class="d-e-api" marker-end="url(#f22-m-api)"/>
+        <path d="M490 120 L530 120" class="d-e-fail"/>
+        <path d="M530 57 L530 189" class="d-e-fail"/>
+        <path d="M530 57 L566 57" class="d-e-fail" marker-end="url(#f22-m-fail)"/>
+        <path d="M530 123 L566 123" class="d-e-fail" marker-end="url(#f22-m-fail)"/>
+        <path d="M530 189 L566 189" class="d-e-fail" marker-end="url(#f22-m-fail)"/>
+        <path d="M490 330 L530 330" class="d-e-api"/>
+        <path d="M530 267 L530 399" class="d-e-api"/>
+        <path d="M530 267 L566 267" class="d-e-api" marker-end="url(#f22-m-api)"/>
+        <path d="M530 333 L566 333" class="d-e-api" marker-end="url(#f22-m-api)"/>
+        <path d="M530 399 L566 399" class="d-e-api" marker-end="url(#f22-m-api)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-22.</b> 8가지 시도와 벽. 위쪽 N1~N4 는 공격자 파드에서 나가는 네트워크 연결(빨강 점선 = 막혀야 하는 시도)이고 NetworkPolicy 가 막는다. 아래쪽 R·P·Q 는 쿠버네티스 API 요청(회색 = API 호출)이고 API 서버 안의 인가·어드미션이 막는다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>시도별 해설</h3>
+  <div class="table-wrap"><table><thead><tr><th>id</th><th>시도</th><th>막는 벽</th><th>PASS 판정</th><th>왜 위험한가</th></tr></thead><tbody>
+  <tr><td>N1</td><td>tenant-a Service 를 DNS 이름으로 curl</td><td>tenant-b egress(같은 ns 만) + tenant-a ingress(같은 ns 만)</td><td>응답코드 000 (3초 타임아웃)</td><td>남의 함수를 마음대로 부른다</td></tr>
+  <tr><td>N2</td><td>tenant-a 파드 IP:포트 직접</td><td>같음 (Service 를 우회해도 파드 단위 정책)</td><td>000</td><td>Service 수준 통제만 있으면 우회된다</td></tr>
+  <tr><td>N3</td><td>API 서버 <code>https://kubernetes.default.svc/api</code></td><td>tenant-b egress 정책 (함수가 API 를 부를 일은 없다)</td><td>000</td><td>토큰이 새면 API 를 직접 친다. 연결 자체를 막아 두면 RBAC 이 두 번째 벽이 된다</td></tr>
+  <tr><td>N4</td><td><code>169.254.169.254</code> 메타데이터</td><td>tenant-b egress 정책</td><td>000</td><td>EC2 에서는 노드 IAM 자격 증명이 나온다. 07 에서는 IMDSv2 hop limit 1 과 같이 건다</td></tr>
+  <tr><td>R1</td><td>tenant-b 의 default SA 로 tenant-a Secret 목록</td><td>RBAC (권한 없음)</td><td><code>Forbidden</code></td><td>남의 비밀값</td></tr>
+  <tr><td>R2</td><td>같은 SA 로 자기 ns 에 파드 생성</td><td>RBAC</td><td><code>Forbidden</code></td><td>함수가 파드를 만들면 다른 벽(PSA 등)을 시험할 발판이 된다</td></tr>
+  <tr><td>P1</td><td>privileged + hostPath <code>/</code> 파드 (관리자 권한으로도)</td><td>Pod Security Admission (enforce)</td><td><code>violates PodSecurity</code></td><td>노드 루트 파일시스템 = 노드 탈출</td></tr>
+  <tr><td>Q1</td><td>CPU 4코어 requests/limits 파드</td><td>LimitRange max(1코어) 또는 ResourceQuota</td><td><code>maximum cpu usage per Container</code> 또는 <code>exceeded quota</code></td><td>자원 독점(7절)</td></tr>
+  </tbody></table></div>
+  <figure>
+    <pre class="mermaid">
+flowchart LR
+  A["API 요청"] --> B["인증<br/>누구인가"]
+  B --> C{"RBAC 인가<br/>이 동사를 할 수 있나"}
+  C -- "아니오" --> F1["403 Forbidden<br/>R1 R2"]
+  C -- "예" --> D["변경 어드미션<br/>LimitRanger 기본값"]
+  D --> E{"검증 어드미션<br/>PSA, LimitRange max, Quota"}
+  E -- "위반" --> F2["거절<br/>P1 Q1"]
+  E -- "통과" --> G["etcd 저장"]
+    </pre>
+    <figcaption><b>그림 8-23.</b> R·P·Q 시도가 막히는 위치. P1·Q1 은 관리자 권한(인가 통과)으로 <code>--dry-run=server</code> 를 보내 어드미션만 시험한다. 그래서 "RBAC 을 통과한 사람도 이 파드는 못 만든다" 를 확인한다. dry-run 이므로 실제로 만들어지지 않는다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>판정 로직과 감지 신호</h3>
+  <div class="code-head"><span>poc/06-fault-injection/scripts/s4-tenant-breach.sh</span><span>발췌</span></div>
+  <pre><code>net_try() {
+  kubectl -n "$TENANT_B" exec attacker -- sh -c "curl -s -o /dev/null -w '%{http_code}' --max-time 3 $1 || true" 2&gt;/dev/null
+}
+T=$(now); c=$(net_try "$VICTIM_SVC")
+[ "$c" = "000" ] &amp;&amp; v=PASS || v=FAIL; row N1 "tenant-a Service ($VICTIM_SVC)" blocked "http $c" $v "$(since "$T" "$(now)")"
+
+T=$(now); out=$(kubectl --as="$AS" -n "$TENANT_A" get secrets 2&gt;&amp;1 || true)
+echo "$out" | grep -q Forbidden &amp;&amp; v=PASS || v=FAIL; row R1 "SA 로 tenant-a Secret 목록" forbidden ...</code></pre>
+  <ul>
+    <li>네트워크 시도는 <b>000(연결 실패)만</b> PASS 다. 403 처럼 숫자가 찍히면 "연결은 됐고 그 뒤에서 거절" 이므로 FAIL 이다. 네트워크 벽이 없다는 뜻이기 때문이다(14절 실습 3).</li>
+    <li>RBAC 시도는 <code>kubectl --as=system:serviceaccount:tenant-b:default</code> 로 그 계정 행세를 한다(impersonation). 파드 안에서 토큰을 꺼내 부르는 것과 인가 결과가 같고, N3 이 막혀 있어도 RBAC 만 따로 시험할 수 있다.</li>
+    <li>결과마다 CSV 에 <code>date,id,attempt,expected,actual,verdict,seconds</code> 한 줄. <code>seconds</code> 는 거절까지 걸린 시간: 네트워크는 타임아웃(3초 근처), API 거절은 즉시.</li>
+    <li>감지: P1 시각부터 <code>TenantPolicyDenied</code> 알림이 firing 될 때까지 최대 90초 기다려 D1 줄로 남긴다. 그 밖에 apiserver 403 시계열 수, PSA 거부 시계열 수를 출력하고, <code>hubble</code> CLI 가 있으면(Cilium) tenant-b 에서 나간 DROPPED 흐름 20개를 보여 준다.</li>
+  </ul>
+  <pre class="pseudo"><code>공격자 파드 생성 (tenant-b, sa default, restricted 를 통과하는 보안 설정)
+<span class="k">각</span> 네트워크 시도 N1..N4: code = curl --max-time 3; PASS ⇔ code == 000
+<span class="k">각</span> 권한 시도 R1, R2:   out = kubectl --as SA ...; PASS ⇔ "Forbidden" 포함
+P1: privileged+hostPath 를 dry-run=server; PASS ⇔ "violates PodSecurity" 포함
+Q1: cpu 4 파드를 dry-run=server; PASS ⇔ forbidden | exceeded quota | maximum cpu 포함
+<span class="k">만약</span> Prometheus: TenantPolicyDenied firing 까지 시간 → D1 줄
+FAILS == 0 <span class="k">이면</span> "8/8 PASS" <span class="k">아니면</span> exit 1</code></pre>
+  <ul>
+    <li><b>CNI 가 정책을 집행하는지는 YAML 로 모른다</b>: 06 README 8.4 는 클라우드 컨테이너의 kindnet 이 커널 문제로 NetworkPolicy 를 무시해 N1~N4 가 FAIL 이었고, 같은 YAML 을 Calico 클러스터에 넣으니 전부 PASS 였다고 적는다. 정책을 "써 둔 것" 과 "집행되는 것" 은 다르다. 이 스크립트처럼 한 번 뚫어 봐야 안다.</li>
+    <li><b>PSA 레벨 차이</b>: 대역 네임스페이스는 <code>enforce: restricted</code>, 03 차트는 <code>enforce: baseline</code> + <code>warn: restricted</code> 다. P1(privileged + hostPath)은 baseline 에서도 막혀 결과는 같고 메시지만 <code>baseline:latest</code> 로 바뀐다.</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>03 의 울타리 6겹 중 이 스크립트가 직접 시험하는 것은 4겹(NetworkPolicy, RBAC, PSA, LimitRange/Quota)이다. Namespace 자체와 AppProject(Argo CD 쪽 권한)는 시도 대상이 아니다. 04 의 gVisor 는 이 벽을 다 넘어 커널 취약점을 쳐도 진짜 커널이 아니라 gVisor 를 친다는 "다섯 번째 벽" 으로 RB-04 가 언급한다(대역에는 gVisor 가 없다).</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: N1·N2 가 <code>http 200</code> 으로 FAIL. <b>볼 곳</b>: <code>kubectl -n tenant-a get networkpolicy</code>(정책이 있나), 그다음 CNI 가 집행하는지(Cilium 이면 <code>hubble observe --verdict DROPPED</code> 에 흐름이 찍히나). <b>고치는 법</b>: 정책이 없으면 Argo CD 에서 테넌트 Application Sync, 정책이 있는데 뚫리면 CNI 문제(RB-04 조치 2).</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>정적 검사(정책 YAML 리뷰, kubeconform)만으로는 "집행되는가" 를 모른다는 것이 이 PoC 에서 실제로 드러났다. 대안으로 kube-bench·kubescape 같은 스캐너는 설정 모범 사례를 보지만 "tenant-b 에서 tenant-a 로 실제 연결이 되나" 를 직접 시도하지는 않는다. 8줄짜리 실제 시도가 가장 싸고 정직하다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/concepts/services-networking/network-policies/">Network Policies</a> · <a href="https://kubernetes.io/docs/reference/access-authn-authz/rbac/">RBAC</a> · <a href="https://kubernetes.io/docs/reference/access-authn-authz/authentication/#user-impersonation">User impersonation</a> · <a href="https://kubernetes.io/docs/concepts/security/pod-security-admission/">Pod Security Admission</a> · <a href="https://kubernetes.io/docs/concepts/security/pod-security-standards/">Pod Security Standards</a> · <a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/configuring-instance-metadata-options.html">EC2 IMDS 옵션 (hop limit)</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="alerts">10. Prometheus 알림 규칙: 사람을 깨우는 층</h2>
+
+<div class="tier" data-tier="1">
+  <h3>규칙 하나 = 조건 + 지속 시간 + 꼬리표</h3>
+  <p>Prometheus 알림 규칙(alerting rule)은 PromQL 식 하나다. 정해진 주기마다 식을 평가해서 결과 시계열이 하나라도 나오면 그 시계열마다 알림이 "활성" 이 된다. <code>for</code> 동안 계속 활성이면 firing 이 된다. 06 단계는 규칙 다섯 개를 그룹 <code>fault-injection</code> 으로 넣고, 각 규칙의 <code>runbook</code> 주석이 해당 런북 파일을 가리킨다. 알림은 자동 복구를 하지 않는다. 자동 복구는 쿠버네티스와 Rollouts 가 하고, 알림은 <b>사람에게 "무엇이 일어났고 어느 문서를 열라" 를 전달</b>하는 층이다.</p>
+  <div class="table-wrap"><table><thead><tr><th>알림</th><th>시나리오</th><th>식 (요약)</th><th>for</th><th>severity</th><th>런북</th></tr></thead><tbody>
+  <tr><td><code>FnNodeNotReady</code></td><td>s1</td><td>노드 Ready=true 시계열이 0</td><td>0s</td><td>critical</td><td>RB-01</td></tr>
+  <tr><td><code>FnReplicasUnavailable</code></td><td>s1·s2</td><td>tenant-* Deployment 의 available &lt; spec</td><td>30s</td><td>warning</td><td>RB-01</td></tr>
+  <tr><td><code>TenantQuotaNearLimit</code></td><td>s2</td><td>쿼터 used / hard &gt; 0.9</td><td>0s</td><td>warning</td><td>RB-02</td></tr>
+  <tr><td><code>RolloutAborted</code></td><td>s3</td><td><code>rollout_info{phase="Abort"} == 1</code></td><td>0s</td><td>warning</td><td>RB-03</td></tr>
+  <tr><td><code>TenantPolicyDenied</code></td><td>s4</td><td>최근 5분 PSA enforce 거부 수 &gt; 0</td><td>0s</td><td>warning</td><td>RB-04</td></tr>
+  </tbody></table></div>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 300" role="img" aria-labelledby="f24-t">
+        <title id="f24-t">상태 변화가 알림 firing 이 되기까지의 파이프라인</title>
+        <defs>
+          <marker id="f24-m-obs" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-obs"/></marker>
+        </defs>
+        <rect x="20" y="40" width="160" height="100" rx="10" class="d-plain-box"/>
+        <text x="34" y="68" class="d-ttl-s">K8s 오브젝트</text>
+        <text x="34" y="94" class="d-sub">노드 condition,</text>
+        <text x="34" y="116" class="d-sub">쿼터, Rollout</text>
+        <rect x="210" y="40" width="160" height="100" rx="10" class="d-obs-box"/>
+        <text x="224" y="68" class="d-ttl-s">exporter</text>
+        <text x="224" y="94" class="d-sub">ksm · Rollouts ·</text>
+        <text x="224" y="116" class="d-sub">apiserver 지표</text>
+        <rect x="400" y="40" width="160" height="100" rx="10" class="d-obs-box"/>
+        <text x="414" y="68" class="d-ttl-s">긁기 (scrape)</text>
+        <text x="414" y="94" class="d-mono">scrape_interval</text>
+        <text x="414" y="116" class="d-sub">TSDB 에 저장</text>
+        <rect x="590" y="40" width="160" height="100" rx="10" class="d-obs-box"/>
+        <text x="604" y="68" class="d-ttl-s">규칙 평가</text>
+        <text x="600" y="94" class="d-mono">evaluation_interval</text>
+        <text x="604" y="116" class="d-sub">식이 참이면 pending</text>
+        <rect x="780" y="40" width="160" height="100" rx="10" class="d-fail-box"/>
+        <text x="794" y="68" class="d-ttl-s">firing</text>
+        <text x="794" y="94" class="d-mono">for 경과</text>
+        <text x="794" y="116" class="d-mono">ALERTS 시계열</text>
+        <path d="M180 90 L208 90" class="d-e-obs" marker-end="url(#f24-m-obs)"/>
+        <path d="M370 90 L398 90" class="d-e-obs" marker-end="url(#f24-m-obs)"/>
+        <path d="M560 90 L588 90" class="d-e-obs" marker-end="url(#f24-m-obs)"/>
+        <path d="M750 90 L778 90" class="d-e-obs" marker-end="url(#f24-m-obs)"/>
+        <rect x="20" y="180" width="920" height="100" rx="10" class="d-card"/>
+        <text x="36" y="210" class="d-ttl-s">최악의 지연 ≈ 상태 반영 + scrape_interval + evaluation_interval + for</text>
+        <text x="36" y="238" class="d-sub">대역: scrape 15s, evaluation 15s (standin/monitoring.yaml). 02 차트: scrape 10s, evaluation 30s (02 values).</text>
+        <text x="36" y="262" class="d-sub">노드 알림은 그 앞에 K8s 판정(grace period)이 먼저 있다. 그래서 알림은 항상 프로브보다 늦다.</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-24.</b> 알림 지연의 구성. 각 칸의 주기만큼 최대로 늦어질 수 있다. 숫자는 설정값이다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>상태, 평가 주기, 라벨과 주석</h3>
+  <figure>
+    <pre class="mermaid">
+stateDiagram-v2
+  state "inactive" as I
+  state "pending" as P
+  state "firing" as F
+  [*] --> I
+  I --> P : 평가에서 식이 결과를 냄
+  P --> I : 다음 평가에서 결과 없음
+  P --> F : for 동안 매 평가마다 계속 결과
+  I --> F : for 가 0 이면 첫 평가에서 바로
+  F --> I : 결과 없음 (keep_firing_for 가 있으면 그만큼 유지)
+    </pre>
+    <figcaption><b>그림 8-25.</b> 알림 하나(라벨 조합 하나)의 상태. pending 과 firing 동안 Prometheus 는 <code>ALERTS{alertname, alertstate}</code> 시계열을 값 1 로 저장한다. lib.sh 는 이 중 firing 만 센다.</figcaption>
+  </figure>
+  <ul>
+    <li><b>평가 주기</b>: 규칙 그룹은 <code>evaluation_interval</code>(전역 또는 그룹별 <code>interval</code>)마다 평가된다. 그룹 안 규칙은 순서대로 평가된다.</li>
+    <li><b><code>for</code></b>: "처음 결과가 나온 뒤 이 시간 동안 매 평가마다 계속 나와야 firing". 순간적인 흔들림을 거르는 대가로 감지가 그만큼 늦다. 없거나 0s 면 첫 평가에서 바로 firing. <code>keep_firing_for</code> 는 반대로, 조건이 사라진 뒤에도 일정 시간 firing 을 유지해 들쭉날쭉(flapping)을 줄인다(우리 규칙은 안 씀).</li>
+    <li><b>labels</b>: 알림에 붙는 추가 라벨. <code>severity</code>(critical/warning)는 Alertmanager 가 라우팅·묶기에 쓰는 관례다. <code>scenario</code> 는 우리가 붙인 분류다. 값은 템플릿이 가능하다.</li>
+    <li><b>annotations</b>: 사람용 정보. 공식 문서가 "설명이나 runbook 링크" 를 예로 든다. <code>{{ $labels.node }}</code>, <code>{{ $value }}</code> 로 알림 인스턴스의 라벨과 값을 넣는다.</li>
+    <li><b>Alertmanager</b>: 알림 규칙은 "지금 무엇이 깨졌나" 만 판단한다. 묶기·무음·발송(Slack 등)은 Alertmanager 몫이다. 02 차트 values 는 Alertmanager 를 껐고, 06 도 켜지 않는다. 그래서 06 의 "알림 시각" 은 <b>발송 시각이 아니라 firing 시각</b>이다.</li>
+  </ul>
+  <h3>Helm values 두 겹과 configmapReload</h3>
+  <p>진짜 클러스터의 Prometheus 는 02 단계에서 Helm 차트 <code>prometheus-community/prometheus</code>(29.37.0)로 깔았다. 알림 규칙도 그 차트의 values(<code>serverFiles.alerting_rules.yml</code>)로 넣는다. 그래서 06 의 파일은 02 values <b>위에 덧붙이는</b> values 다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 330" role="img" aria-labelledby="f26-t">
+        <title id="f26-t">차트 기본값, 02 values, 06 values 가 합쳐져 Prometheus 설정이 되는 과정</title>
+        <defs>
+          <marker id="f26-m-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-prov"/></marker>
+          <marker id="f26-m-async" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-async"/></marker>
+        </defs>
+        <rect x="20" y="30" width="250" height="70" rx="10" class="d-plain-box"/>
+        <text x="36" y="60" class="d-ttl-s">차트 기본 values.yaml</text>
+        <text x="36" y="84" class="d-sub">부품 5개 켜짐, 1m 긁기</text>
+        <rect x="20" y="120" width="250" height="70" rx="10" class="d-prov-box"/>
+        <text x="36" y="150" class="d-ttl-s">-f 02 values</text>
+        <text x="36" y="174" class="d-sub">ksm·reload 끔, 10s/30s</text>
+        <rect x="20" y="210" width="250" height="90" rx="10" class="d-prov-box"/>
+        <text x="36" y="240" class="d-ttl-s">-f 06 values (뒤가 이김)</text>
+        <text x="36" y="264" class="d-sub">ksm·reload 켬, 규칙 5개,</text>
+        <text x="36" y="286" class="d-sub">Rollouts 긁기 추가</text>
+        <rect x="350" y="110" width="200" height="90" rx="10" class="d-card"/>
+        <text x="366" y="140" class="d-ttl-s">helm upgrade</text>
+        <text x="366" y="164" class="d-sub">맵은 깊게 합치고</text>
+        <text x="366" y="186" class="d-sub">목록·값은 덮어씀</text>
+        <rect x="630" y="30" width="310" height="80" rx="10" class="d-plain-box"/>
+        <text x="646" y="62" class="d-ttl-s">ConfigMap prometheus-server</text>
+        <text x="646" y="88" class="d-mono">alerting_rules.yml</text>
+        <rect x="630" y="140" width="310" height="80" rx="10" class="d-obs-box"/>
+        <text x="646" y="172" class="d-ttl-s">configmapReload 옆 컨테이너</text>
+        <text x="646" y="198" class="d-sub">파일이 바뀌면 /-/reload 호출</text>
+        <rect x="630" y="250" width="310" height="60" rx="10" class="d-obs-box"/>
+        <text x="646" y="286" class="d-ttl-s">Prometheus 규칙 다시 읽음</text>
+        <path d="M270 65 L348 140" class="d-e-prov" marker-end="url(#f26-m-prov)"/>
+        <path d="M270 155 L348 155" class="d-e-prov" marker-end="url(#f26-m-prov)"/>
+        <path d="M270 255 L348 175" class="d-e-prov" marker-end="url(#f26-m-prov)"/>
+        <path d="M550 140 L628 80" class="d-e-prov" marker-end="url(#f26-m-prov)"/>
+        <path d="M785 110 L785 138" class="d-e-async" marker-end="url(#f26-m-async)"/>
+        <path d="M785 220 L785 248" class="d-e-async" marker-end="url(#f26-m-async)"/>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-26.</b> values 두 겹. <code>-f</code> 를 두 번 주면 뒤 파일이 앞 파일의 같은 칸을 덮는다. 02 values 를 빼먹으면 02 에서 정한 값(긁기 10s, Alertmanager 끔 등)이 차트 기본값으로 돌아간다. configmapReload 가 켜져 있어야 helm upgrade 만으로 파드 재시작 없이 반영된다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>규칙 다섯 개를 한 줄씩</h3>
+  <div class="code-head"><span>poc/06-fault-injection/defenses/prometheus-alerts-values.yaml</span><span>발췌</span></div>
+  <pre><code><span class="k">kube-state-metrics</span>:
+  <span class="k">enabled</span>: true
+<span class="k">configmapReload</span>:
+  <span class="k">prometheus</span>:
+    <span class="k">enabled</span>: true
+<span class="k">extraScrapeConfigs</span>: |
+  - job_name: argo-rollouts
+    static_configs:
+      - targets: ["argo-rollouts-metrics.argo-rollouts.svc:8090"]
+<span class="k">serverFiles</span>:
+  <span class="k">alerting_rules.yml</span>:
+    <span class="k">groups</span>:
+      - <span class="k">name</span>: fault-injection
+        <span class="k">rules</span>:
+          - <span class="k">alert</span>: FnNodeNotReady
+            <span class="k">expr</span>: kube_node_status_condition{condition="Ready",status="true"} == 0
+            <span class="k">for</span>: 0s
+            <span class="k">labels</span>: { severity: critical, scenario: s1 }
+            <span class="k">annotations</span>:
+              <span class="k">summary</span>: "노드 {{ $labels.node }} NotReady"
+              <span class="k">runbook</span>: poc/06-fault-injection/runbooks/RB-01-node-down.md
+          - <span class="k">alert</span>: FnReplicasUnavailable
+            <span class="k">expr</span>: |
+              kube_deployment_status_replicas_available{namespace=~"tenant-.*"}
+                &lt; kube_deployment_spec_replicas{namespace=~"tenant-.*"}
+            <span class="k">for</span>: 30s
+          - <span class="k">alert</span>: TenantQuotaNearLimit
+            <span class="k">expr</span>: |
+              kube_resourcequota{type="used"}
+                / ignoring(type) kube_resourcequota{type="hard"} &gt; 0.9
+          - <span class="k">alert</span>: RolloutAborted
+            <span class="k">expr</span>: rollout_info{phase="Abort"} == 1
+          - <span class="k">alert</span>: TenantPolicyDenied
+            <span class="k">expr</span>: sum(increase(pod_security_evaluations_total{decision="deny",mode="enforce"}[5m])) &gt; 0</code></pre>
+  <dl class="terms">
+    <dt>FnNodeNotReady</dt><dd>kube-state-metrics 는 노드 condition 마다 <code>status</code> 라벨이 true/false/unknown 인 시계열 세 개를 내고, 현재 상태인 것만 값 1 이다. <code>status="true"</code> 시계열이 0 이면 False 든 Unknown 이든 "Ready 가 아님". <code>== 0</code> 은 비교 필터라 조건에 맞는 시계열만 남는다. 노드 장애는 이미 K8s 판정(grace period)을 거친 신호라 <code>for: 0s</code>(더 기다릴 이유가 없다). critical 인 유일한 규칙.</dd>
+    <dt>FnReplicasUnavailable</dt><dd>같은 라벨(namespace, deployment)끼리 일대일로 비교한다. 정규식 <code>tenant-.*</code> 로 테넌트 네임스페이스만. 배포 중에는 잠깐 available 이 모자라는 게 정상이라 <code>for: 30s</code> 로 거른다. 원인이 노드든 폭주든 증상 쪽 알림이다.</dd>
+    <dt>TenantQuotaNearLimit</dt><dd><code>kube_resourcequota</code> 는 쿼터의 자원마다 <code>type="used"</code>, <code>type="hard"</code> 두 시계열을 낸다. 나누려면 양쪽 라벨이 같아야 하는데 <code>type</code> 만 다르므로 <code>ignoring(type)</code> 으로 그 라벨을 빼고 맞춘다. 결과 라벨에 <code>resource</code>(requests.cpu 등)가 남아 주석에서 쓴다. 쿼터가 없으면 시계열 자체가 없어 알림도 없다(7절 깨뜨리기).</dd>
+    <dt>RolloutAborted</dt><dd>Rollouts 컨트롤러 지표 <code>rollout_info</code> 의 <code>phase</code> 라벨. 주의: Rollout 의 <code>status.phase</code> 는 Degraded 지만 지표의 phase 라벨 값은 <code>Abort</code> 다(파일 주석, 대역 실측). 그래서 규칙을 쓸 때 Prometheus 화면에서 라벨 값을 먼저 확인한다(README 3절 빈칸 3). 이 지표는 차트 기본 긁기 목록에 없어 <code>extraScrapeConfigs</code> 로 추가했다.</dd>
+    <dt>TenantPolicyDenied</dt><dd>API 서버 지표 <code>pod_security_evaluations_total</code> 의 <code>decision="deny"</code>, <code>mode="enforce"</code>. counter 라 <code>increase(…[5m])</code> 로 5분 증가량을 보고 합친다. 5분 창이라 한 번 거부되면 약 5분 동안 firing 이 유지되고, 그 뒤 꺼진다. 반대로 Q1(쿼터·LimitRange 거부)이나 R1(RBAC 403)은 이 규칙에 안 잡힌다.</dd>
+  </dl>
+  <h4>대역에 규칙을 넣는 load-rules.sh</h4>
+  <pre class="pseudo"><code>F = defenses/prometheus-alerts-values.yaml
+"  alerting_rules.yml:" 다음 줄부터 들여쓰기가 4칸보다 얕아지기 전까지 잘라 앞 4칸을 뺀다
+   <span class="c">// 그 부분이 Prometheus 규칙 파일 형식(groups:)과 똑같다는 점을 이용</span>
+"___" 가 남아 있으면 거부
+ConfigMap prometheus-rules 로 apply (dry-run=client | apply 로 멱등)
+파드 안 파일의 cksum 이 같아질 때까지 최대 120초 대기   <span class="c">// ConfigMap → 볼륨 반영 지연</span>
+POST /-/reload                                         <span class="c">// --web.enable-lifecycle 로 열어 둔 엔드포인트</span>
+/api/v1/rules 의 규칙 수 == 파일의 "- alert:" 수 <span class="k">이면</span> 성공</code></pre>
+  <ul>
+    <li>대역은 Helm 없이 띄운 Prometheus 라 configmapReload 가 없다. 그래서 스크립트가 "파일이 바뀔 때까지 기다렸다가 reload" 를 직접 한다. 진짜 클러스터에서는 configmapReload 옆 컨테이너가 같은 일을 한다.</li>
+    <li>문법이 틀리면 Prometheus 는 규칙 파일 전체를 거부한다. 그래서 마지막에 개수를 비교한다.</li>
+    <li>06 README 의 확인 질문 "for: 0s 와 1m 의 차이" 의 답: 1m 은 짧은 흔들림(배포 중 잠깐 모자람, 일시적 Unknown)에 사람을 깨우지 않는 대신, 진짜 장애도 최소 1분 늦게 안다. 노드 알림처럼 이미 다른 곳에서 지속 판정을 거친 신호에는 0s, 원래 흔들리는 신호에는 for 를 둔다.</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>대역: <code>./standin/load-rules.sh defenses/prometheus-alerts-values.yaml</code>(run-all.sh chaos 단계가 자동으로 부른다). 진짜: <code>helm upgrade prometheus prometheus-community/prometheus --version 29.37.0 -n monitoring -f ../02-rollouts/platform/prometheus/values.yaml -f defenses/prometheus-alerts-values.yaml</code>. README 는 helm upgrade 경로를 못 돌려 봤다고 적는다(차트 저장소 접근 차단) 【미검증】. TenantPolicyDenied 가 쓰는 apiserver 지표를 진짜 클러스터 차트가 긁는지도 확인이 필요하다 【확인 필요: 차트 기본 scrape 설정의 apiserver job 과 02 values 의 영향】.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: s3 를 돌렸는데 <code>t_alert_s</code> 가 <code>none</code>(복구 후 90초 안에 안 옴). <b>볼 곳</b>: Prometheus 화면 Status → Targets 에서 argo-rollouts 대상이 up 인지, Query 에서 <code>rollout_info</code> 의 phase 라벨 값. <b>고치는 법</b>: extraScrapeConfigs 확인, phase 값을 실제 라벨에 맞춤. 규칙 파일 문법 오류면 <code>kubectl -n monitoring logs deploy/prometheus-server -c prometheus-server | tail</code>.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>알림을 차트 values 로 넣은 이유: 02 에서 이미 Helm 으로 관리하므로 같은 경로를 쓰면 Git 에 values 파일 하나만 늘어난다. 대안 kube-prometheus-stack 의 PrometheusRule CRD 는 규칙을 쿠버네티스 리소스로 다뤄 Argo CD 로 관리하기 좋지만, 02 가 고른 가벼운 차트에는 operator 가 없어 버렸다. Alertmanager 발송은 PoC 범위 밖이라 껐다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/">Prometheus: Alerting rules</a> · <a href="https://prometheus.io/docs/prometheus/latest/configuration/recording_rules/">Defining recording rules (그룹, 평가 주기)</a> · <a href="https://prometheus.io/docs/prometheus/latest/querying/operators/#vector-matching">PromQL vector matching (ignoring)</a> · <a href="https://github.com/kubernetes/kube-state-metrics/tree/main/docs">kube-state-metrics 지표 문서</a> · <a href="https://argo-rollouts.readthedocs.io/en/stable/features/controller-metrics/">Argo Rollouts controller metrics</a> · <a href="https://github.com/prometheus-community/helm-charts/tree/main/charts/prometheus">prometheus 차트</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="measure">11. 측정 도구: probe.sh 와 analyze.py</h2>
+
+<div class="tier" data-tier="1">
+  <h3>사용자 대신 0.1초마다 부르는 파드</h3>
+  <p>합성 프로브(synthetic probe)는 진짜 사용자 대신 함수를 계속 부르는 작은 파드다. 줄마다 "응답코드 걸린초" 를 남기고, <code>kubectl logs --timestamps</code> 가 앞에 시각을 붙인다. 실험이 끝나면 analyze.py 가 이 로그를 t0 기준으로 잘라 평소 상태와 장애 구간을 계산해 CSV 한 줄로 만든다. 이 로그가 "사용자가 실제로 본 것" 의 유일한 근거다. 쿠버네티스가 다 괜찮다고 해도 이 로그에 에러가 있으면 사용자는 아팠던 것이다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 330" role="img" aria-labelledby="f27-t">
+        <title id="f27-t">프로브 로그를 t0 와 window 로 잘라 지표를 계산하는 방법</title>
+        <path d="M40 150 L920 150" class="d-axis"/>
+        <path d="M300 40 L300 300" class="d-tick"/>
+        <path d="M780 40 L780 300" class="d-tick"/>
+        <text x="290" y="32" class="d-ttl-s">t0</text>
+        <text x="720" y="32" class="d-ttl-s">t0 + window</text>
+        <rect x="40" y="60" width="260" height="50" rx="8" class="d-bar-ok"/>
+        <text x="54" y="90" class="d-lbl">before: baseline p50·p95·err%</text>
+        <rect x="300" y="60" width="620" height="50" rx="8" class="d-plain-box"/>
+        <text x="314" y="90" class="d-lbl">after: after_n, errors (2xx 아닌 줄 전부)</text>
+        <circle cx="70" cy="150" r="5" class="d-dot-ok"/>
+        <circle cx="130" cy="150" r="5" class="d-dot-ok"/>
+        <circle cx="190" cy="150" r="5" class="d-dot-ok"/>
+        <circle cx="250" cy="150" r="5" class="d-dot-ok"/>
+        <circle cx="330" cy="150" r="5" class="d-dot-fail"/>
+        <circle cx="380" cy="150" r="5" class="d-dot-ok"/>
+        <circle cx="430" cy="150" r="5" class="d-dot-fail"/>
+        <circle cx="480" cy="150" r="5" class="d-dot-fail"/>
+        <circle cx="530" cy="150" r="5" class="d-dot-ok"/>
+        <circle cx="580" cy="150" r="5" class="d-dot-fail"/>
+        <circle cx="640" cy="150" r="5" class="d-dot-ok"/>
+        <circle cx="700" cy="150" r="5" class="d-dot-ok"/>
+        <circle cx="760" cy="150" r="5" class="d-dot-ok"/>
+        <circle cx="840" cy="150" r="5" class="d-dot-ok"/>
+        <circle cx="890" cy="150" r="5" class="d-dot-ok"/>
+        <path d="M330 185 L580 185" class="d-e-fail"/>
+        <text x="340" y="208" class="d-lbl">outage_s = 마지막 에러 − 첫 에러</text>
+        <text x="306" y="236" class="d-mono">first_err_s</text>
+        <text x="540" y="236" class="d-mono">last_err_s</text>
+        <rect x="300" y="256" width="480" height="40" rx="8" class="d-obs-box"/>
+        <text x="314" y="282" class="d-lbl">window: err_pct_window, p95_window_ms (2xx 만으로 p95)</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-27.</b> analyze.py 가 로그를 자르는 방식. 점 하나 = 프로브 요청 한 줄(초록 = 2xx, 빨강 = 그 밖, 000 포함). 장애 구간은 "첫 에러 ~ 마지막 에러" 이므로 그 사이에 성공이 섞여 있어도 하나의 구간으로 본다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>probe.sh 의 설계 선택</h3>
+  <figure>
+    <pre class="mermaid">
+flowchart TD
+  A["probe.sh start 이름 ns URL"] --> B["같은 이름 프로브 파드 삭제"]
+  B --> C["Pod apply<br/>curl 루프, exec 풀이 아닌 노드 선호"]
+  C --> D["Ready 까지 60초 대기"]
+  D --> E["루프: curl --max-time 1, sleep 0.1"]
+  E --> F["stdout 한 줄: 코드 걸린초"]
+  F --> E
+  G["probe.sh stop"] --> H["kubectl logs --timestamps 를 results/이름.probe.log"]
+  H --> I["프로브 파드 삭제"]
+  I --> J["analyze.py --log --t0 --window --csv --extra"]
+    </pre>
+    <figcaption><b>그림 8-28.</b> 프로브의 수명. start 와 stop 사이에 시나리오가 고장을 넣는다. 로그는 파드 stdout 이라 별도 저장소가 필요 없다.</figcaption>
+  </figure>
+  <ul>
+    <li><b>클러스터 안에서 부른다</b>: 맥에서 port-forward 로 부르면 port-forward 자체가 장애 중에 끊겨 장애와 구분이 안 된다.</li>
+    <li><b>피해자와 같은 네임스페이스</b>: 03 NetworkPolicy 가 다른 네임스페이스에서 오는 것을 막기 때문이다. 대역의 default-deny 도 같은 ns 만 연다.</li>
+    <li><b>exec 풀이 아닌 노드를 선호</b>: <code>preferredDuringScheduling</code> nodeAffinity 로 <code>pool NotIn [exec]</code>. 프로브가 죽는 노드 위에 있으면 측정자 자신이 죽는다. "선호" 라 자리가 없으면 exec 에도 뜰 수 있다.</li>
+    <li><b><code>--max-time 1</code></b>: 1초 안에 응답이 없으면 000 으로 기록. 죽은 파드로 간 요청은 응답 없이 매달리므로 이 상한이 없으면 프로브가 멈춘다.</li>
+    <li><b>restricted 를 통과하는 보안 설정</b>: runAsNonRoot, seccomp RuntimeDefault, capabilities drop ALL. 대역 네임스페이스가 PSA restricted 라서 이게 없으면 프로브 자체가 거절된다.</li>
+  </ul>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>analyze.py 의 계산</h3>
+  <div class="code-head"><span>poc/06-fault-injection/scripts/analyze.py</span><span>발췌</span></div>
+  <pre><code><span class="k">def</span> pct(vals, p):
+    <span class="k">if not</span> vals:
+        <span class="k">return</span> None
+    v = sorted(vals)
+    k = max(0, min(len(v) - 1, int(round(p / 100.0 * len(v) + 0.5)) - 1))
+    <span class="k">return</span> v[k]
+
+before = [r <span class="k">for</span> r <span class="k">in</span> rows <span class="k">if</span> r[0] &lt; a.t0]
+after = [r <span class="k">for</span> r <span class="k">in</span> rows <span class="k">if</span> r[0] &gt;= a.t0]
+ok = <span class="k">lambda</span> r: r[1].startswith(<span class="s">"2"</span>)
+errs = [r <span class="k">for</span> r <span class="k">in</span> after <span class="k">if not</span> ok(r)]
+win = [r <span class="k">for</span> r <span class="k">in</span> after <span class="k">if</span> r[0] &lt; a.t0 + a.window]</code></pre>
+  <ul>
+    <li><code>parse_ts</code>: <code>2026-10-20T15:30:01.123456789Z</code> 처럼 나노초까지 오는 시각을 마이크로초로 자르고 UTC 유닉스 초로 바꾼다. 형식이 다른 줄(공백 3칸이 아닌 줄)은 버린다.</li>
+    <li><code>pct</code>: 정렬 후 <b>nearest-rank</b> 방식의 백분위. <code>p/100·n + 0.5</code> 를 반올림하면 사실상 올림(ceil)이 되고, 1을 빼 0부터 세는 인덱스로 만든다. 표본이 적으면 p95 는 가장 느린 몇 개 중 하나다.</li>
+    <li>성공 판정은 "응답코드가 2로 시작". 000(타임아웃), 5xx, 4xx 모두 에러다.</li>
+    <li>지연(p50, p95)은 <b>성공한 요청만</b>으로 계산한다. 실패 요청의 걸린 시간(타임아웃 1초)을 섞으면 지연이 아니라 에러율이 p95 에 끼어든다.</li>
+    <li><code>window</code>: s1 은 120초, s2 는 HOLD(60초), s3 는 60초. 그 창 안의 에러율과 p95 를 따로 낸다.</li>
+  </ul>
+  <pre class="pseudo"><code>rows = [(시각, 코드, 걸린초) ...]
+before = rows 중 시각 &lt; t0;  after = rows 중 시각 ≥ t0
+errs = after 중 코드가 2xx 아님
+res.baseline_p95_ms = pct(before 의 성공 걸린초, 95)
+res.errors = len(errs)
+res.first_err_s = errs[0].시각 - t0;  res.last_err_s = errs[-1].시각 - t0
+res.outage_s = errs[-1].시각 - errs[0].시각       <span class="c">// 에러가 없으면 0</span>
+res.err_pct_window = window 안 에러 비율;  res.p95_window_ms = window 안 성공 p95
+row = { date, <span class="k">extra</span> 의 key=value 들, res }
+CSV 가 없으면 헤더를 쓰고, 있으면 한 줄 추가     <span class="c">// 헤더는 첫 줄 기준: 열 순서가 바뀌면 안 된다</span></code></pre>
+  <h4>CSV 열 사전 (숫자는 싣지 않고 뜻만)</h4>
+  <div class="table-wrap"><table><thead><tr><th>파일</th><th>스크립트가 넣는 열 (--extra)</th><th>analyze.py 가 넣는 열</th></tr></thead><tbody>
+  <tr><td><code>s1-node-down.csv</code></td><td><code>label</code> 방어 전/후 이름표, <code>mode</code> hard/spot, <code>run</code>, <code>node</code> 죽인 노드, <code>pods_on_node</code> 그 노드의 피해자 파드/전체, <code>exec_nodes</code> Ready 인 exec 노드 수, <code>drain_s</code> spot drain 시간 또는 timeout, <code>t_notready_s</code> 감지, <code>t_replaced_s</code> 복구, <code>t_alert_s</code> FnNodeNotReady firing</td><td rowspan="3"><code>date</code>, <code>baseline_n</code>·<code>baseline_p50_ms</code>·<code>baseline_p95_ms</code>·<code>baseline_err_pct</code> (주입 전), <code>after_n</code>, <code>errors</code>, <code>err_pct_window</code>, <code>p95_window_ms</code>, <code>first_err_s</code>, <code>last_err_s</code>, <code>outage_s</code></td></tr>
+  <tr><td><code>s2-noisy-neighbor.csv</code></td><td><code>quota_objects</code> 1/0, <code>burners_wanted</code>, <code>burners_running</code>, <code>burners_pending</code>, <code>t_blocked_s</code> 쿼터 거절 이벤트, <code>t_alert_s</code>, <code>victim_scaleup_s</code> 피해자 +2 Ready 까지, <code>fix_at_s</code> 폭주 삭제 시각</td></tr>
+  <tr><td><code>s3-bad-deploy.csv</code></td><td><code>mode</code>, <code>replicas</code>, <code>t_canary_s</code> 나쁜 파드 생성, <code>t_failed_s</code> 분석 실패, <code>t_abort_s</code>, <code>t_stable_s</code> 나쁜 파드 0 (또는 promoted-bad), <code>t_alert_s</code></td></tr>
+  <tr><td><code>s4-tenant-breach*.csv</code></td><td colspan="2">analyze.py 를 쓰지 않는다. <code>date,id,attempt,expected,actual,verdict,seconds</code>: 시도 id(N1~Q1, D1), 설명, 기대(blocked/forbidden/firing), 실제(http 코드·Forbidden·PSA 문구), PASS/FAIL, 걸린 초. <code>-calico</code> 파일은 Calico 클러스터에서 같은 스크립트를 돌린 것</td></tr>
+  </tbody></table></div>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>로그(<code>results/*.probe.log</code>)는 커밋하지 않고 CSV 만 커밋한다. 같은 시나리오를 여러 번 돌리면 CSV 에 줄이 쌓이고, <code>label</code> 열로 방어 전/후·클러스터를 구분한다(<code>LABEL=방어전 ./scripts/s1-node-down.sh hard 1</code>).</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: analyze.py 가 "프로브 로그가 비었다" 로 끝난다. <b>볼 곳</b>: 프로브 파드가 Ready 였는지(<code>kubectl -n tenant-a get pod probe-…</code>), PSA 거절 이벤트, NetworkPolicy 로 URL 에 못 닿는지. <b>고치는 법</b>: 피해자와 같은 ns 인지, URL(<code>FN_URL</code>)이 맞는지. 진짜 클러스터의 Knative 함수는 Kourier 를 거치므로 egress 에 kourier-system 이 열려 있어야 한다(README 3절 【미검증】).</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>대안 (가) 부하 도구(k6, hey): 처리량은 더 높지만 요청마다 시각을 남기려면 설정이 더 필요하다. (나) Prometheus 지표로 에러율: 긁기 주기만큼 해상도가 거칠다. curl 루프 + 로그 시각은 0.1초 해상도로 "언제부터 언제까지" 를 바로 보여 준다. 대가는 초당 요청 수가 낮다는 점이다(수십 개 수준).</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/reference/kubectl/generated/kubectl_logs/">kubectl logs (--timestamps)</a> · <a href="https://curl.se/docs/manpage.html">curl manpage (--max-time, -w)</a> · <a href="https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#node-affinity">Node affinity (preferred)</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="standin">12. 대역 클러스터: 같은 모양, 다른 몸</h2>
+
+<div class="tier" data-tier="1">
+  <h3>왜 따로 세웠나</h3>
+  <p>장애 주입은 클러스터를 실제로 망가뜨린다. 진짜 클러스터 <code>faas</code> 를 치면 05 단계까지 다시 세워야 할 수 있고, ANALYSIS.md 가 지적하듯 PDB·프로브 라벨이 Knative 파드 라벨과 맞지 않는다. 그래서 <code>standin/</code> 은 03·04 의 최종 모양을 작게 흉내 낸 클러스터 <code>chaos</code> 를 만든다. exec 노드를 <b>2대</b>로 둔 것이 핵심이다. 1대면 "노드 다운 = 전면 장애" 하나만 보이고, "쿠버네티스가 알아채고 옮기기까지" 를 잴 수 없다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 360" role="img" aria-labelledby="f29-t">
+        <title id="f29-t">chaos 대역 클러스터의 노드와 파드 배치</title>
+        <rect x="20" y="20" width="920" height="320" rx="14" class="d-pool"/>
+        <text x="40" y="48" class="d-ttl-s">kind 클러스터 chaos (kindest/node v1.37.0, CNI kindnet)</text>
+        <rect x="40" y="66" width="160" height="250" rx="12" class="d-cp-box"/>
+        <text x="56" y="94" class="d-ttl-s">control-plane</text>
+        <text x="56" y="120" class="d-sub">API 서버, etcd,</text>
+        <text x="56" y="142" class="d-sub">컨트롤러 매니저</text>
+        <rect x="220" y="66" width="200" height="250" rx="12" class="d-card"/>
+        <text x="236" y="94" class="d-ttl-s">worker · system</text>
+        <text x="236" y="122" class="d-mono">monitoring/</text>
+        <text x="236" y="142" class="d-sub">prometheus</text>
+        <text x="236" y="162" class="d-sub">kube-state-metrics</text>
+        <text x="236" y="190" class="d-mono">argo-rollouts/</text>
+        <text x="236" y="218" class="d-mono">probe-* (선호)</text>
+        <rect x="440" y="66" width="140" height="250" rx="12" class="d-card"/>
+        <text x="456" y="94" class="d-ttl-s">worker · build</text>
+        <text x="456" y="122" class="d-sub">대역에선</text>
+        <text x="456" y="144" class="d-sub">쓰지 않음</text>
+        <rect x="600" y="66" width="160" height="250" rx="12" class="d-fail-box"/>
+        <text x="616" y="94" class="d-ttl-s">worker · exec</text>
+        <circle cx="636" cy="130" r="12" class="d-dot-user"/>
+        <text x="656" y="135" class="d-sub">hello</text>
+        <circle cx="636" cy="166" r="12" class="d-dot-prov"/>
+        <text x="656" y="171" class="d-sub">api ×2</text>
+        <text x="616" y="210" class="d-sub">s1 이 고르는</text>
+        <text x="616" y="232" class="d-sub">대상 후보</text>
+        <rect x="780" y="66" width="140" height="250" rx="12" class="d-card"/>
+        <text x="796" y="94" class="d-ttl-s">worker · exec</text>
+        <circle cx="816" cy="130" r="12" class="d-dot-user"/>
+        <text x="836" y="135" class="d-sub">hello</text>
+        <circle cx="816" cy="166" r="12" class="d-dot-prov"/>
+        <text x="836" y="171" class="d-sub">api ×2</text>
+        <text x="796" y="210" class="d-sub">살아남는</text>
+        <text x="796" y="232" class="d-sub">쪽</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-29.</b> 대역 클러스터의 배치. 풀 라벨 <code>pool=system|build|exec</code> 는 03·04 와 같다. hello(2개)와 api(4개)는 nodeSelector <code>pool=exec</code> 로 exec 두 대에 뜨고, Prometheus·kube-state-metrics 는 system 에, 프로브는 exec 가 아닌 곳을 선호한다. api 의 노드별 개수는 예시다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>진짜 클러스터와 다른 점</h3>
+  <div class="table-wrap"><table><thead><tr><th>항목</th><th>진짜 faas (03·04·02)</th><th>대역 chaos</th><th>결과에 주는 영향</th></tr></thead><tbody>
+  <tr><td>exec 노드 수</td><td>1대</td><td>2대</td><td>진짜에서 s1 은 "전면 장애 + 노드가 돌아올 때까지 복구 불가" 가 정답 (스크립트가 경고를 찍는다)</td></tr>
+  <tr><td>풀 taint</td><td>build·exec 에 <code>pool=&lt;값&gt;:NoSchedule</code></td><td>라벨만, taint 없음 (kind-config 에 taint 설정이 없다)</td><td>대역 대상은 nodeSelector 만으로 exec 에 간다. 진짜 함수는 pool toleration 도 필요</td></tr>
+  <tr><td>CNI</td><td>Cilium + Hubble</td><td>kindnet (NetworkPolicy 지원, 관측 없음)</td><td>s4 의 DROPPED 흐름은 진짜에서만. 정책 집행 여부는 환경에 따라 다름(9절)</td></tr>
+  <tr><td>함수</td><td>Knative Service (scale-to-zero, 라벨 <code>serving.knative.dev/service</code>)</td><td>평범한 Deployment hello (<code>app=hello</code>)</td><td>진짜에서 s1 은 min-scale 을 걸어야 대상이 생긴다. PDB 셀렉터도 바꿔야 한다</td></tr>
+  <tr><td>Pod Security</td><td>enforce baseline + warn restricted</td><td>enforce restricted</td><td>P1 결과는 같고 메시지만 다름</td></tr>
+  <tr><td>쿼터</td><td>tenant-a 1/2코어, tenant-b 500m/1코어·pods 5</td><td>두 테넌트 같음 (1/2코어, pods 15)</td><td>s2 의 폭주 파드 수가 다름</td></tr>
+  <tr><td>NetworkPolicy</td><td>4장 (default-deny-all, same-namespace, dns, from-namespaces)</td><td>1장 default-deny 에 같은 ns·DNS 허용을 합침</td><td>s4 깨뜨리기에서 지울 이름이 다름</td></tr>
+  <tr><td>Prometheus</td><td>Helm 차트, scrape 10s / eval 30s, Alertmanager 끔</td><td>Helm 없이 Deployment, scrape 15s / eval 15s, <code>--web.enable-lifecycle</code></td><td>알림 지연이 다름. 서비스 이름은 같게 <code>prometheus-server:80</code></td></tr>
+  <tr><td>분석</td><td>Prometheus 질의 (2xx 비율)</td><td>curl Job</td><td>s3 감지 시간의 구성이 다름</td></tr>
+  <tr><td>GitOps</td><td>Argo CD selfHeal</td><td>없음</td><td>s3 kubectl 모드, s2·s4 깨뜨리기가 대역에서만 의미 있음</td></tr>
+  <tr><td>CPU</td><td>(07 EC2) 노드마다 별도 기계</td><td>모든 노드가 같은 맥의 CPU</td><td>s2 에서 다른 노드의 폭주도 피해자 지연에 번진다</td></tr>
+  </tbody></table></div>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>대역 관측 스택의 세부</h3>
+  <div class="code-head"><span>poc/06-fault-injection/standin/monitoring.yaml</span><span>발췌</span></div>
+  <pre><code>    <span class="k">global</span>:
+      <span class="k">scrape_interval</span>: 15s
+      <span class="k">evaluation_interval</span>: 15s
+    <span class="k">rule_files</span>: [/etc/prometheus/rules/*.yaml]
+    <span class="k">scrape_configs</span>:
+      - <span class="k">job_name</span>: kube-state-metrics
+      - <span class="k">job_name</span>: argo-rollouts
+      - <span class="k">job_name</span>: apiserver
+        <span class="k">metric_relabel_configs</span>:
+          - <span class="k">source_labels</span>: [__name__]
+            <span class="k">regex</span>: apiserver_request_total|pod_security_evaluations_total
+            <span class="k">action</span>: keep
+      - <span class="k">job_name</span>: cadvisor
+        <span class="k">kubernetes_sd_configs</span>: [{ role: node }]
+        <span class="k">relabel_configs</span>:
+          - <span class="k">target_label</span>: __address__
+            <span class="k">replacement</span>: kubernetes.default.svc:443
+          - <span class="k">source_labels</span>: [__meta_kubernetes_node_name]
+            <span class="k">target_label</span>: __metrics_path__
+            <span class="k">replacement</span>: /api/v1/nodes/$1/proxy/metrics/cadvisor</code></pre>
+  <ul>
+    <li>긁기 대상 네 개: 쿠버네티스 상태(kube-state-metrics), Rollouts 컨트롤러, API 서버(필요한 지표 두 개만 keep), 노드 cAdvisor(CPU 사용·throttling 세 개만 keep).</li>
+    <li>cAdvisor 는 API 서버의 노드 프록시 경로로 긁는다. 노드마다 kubelet 에 직접 붙는 대신 <code>__address__</code> 를 API 서버로, <code>__metrics_path__</code> 를 <code>/api/v1/nodes/&lt;노드&gt;/proxy/metrics/cadvisor</code> 로 바꾼다. 그래서 ClusterRole 에 <code>nodes/proxy</code> 가 있다.</li>
+    <li><code>metric_relabel_configs</code> 의 keep 은 긁은 뒤 저장 전에 거른다. API 서버 지표는 매우 많아서 필요한 것만 남긴다.</li>
+    <li>규칙 ConfigMap 은 <code>optional: true</code> 로 마운트해 규칙이 없어도 Prometheus 가 뜬다. 규칙은 load-rules.sh 가 나중에 넣는다.</li>
+    <li>kube-state-metrics 는 공식 이미지(registry.k8s.io) 대신 검증 환경에서 레지스트리가 막혀 미러 이미지를 썼다(파일 주석). 맥에서는 공식 이미지로 바꿔도 된다.</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>poc/run-all.sh chaos</code> 가 kind-chaos 생성 → Argo Rollouts v1.10.1 설치 → targets.yaml → monitoring.yaml → load-rules.sh 를 한 번에 한다. kubectl 컨텍스트가 kind-chaos 로 바뀌므로 끝나면 <code>kubectl config use-context kind-faas</code> 로 돌아간다. 메모리가 모자라면 faas 를 지우고 해도 된다(Git 에서 다시 세울 수 있으므로).</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: hello·api 파드가 Pending. <b>볼 곳</b>: <code>kubectl get nodes -L pool</code> 에 exec 가 두 줄인지. <b>고치는 법</b>: kind-config 의 labels 확인, 다른 이름이면 <code>EXEC_LABEL</code> 을 덮어쓴다. <b>증상 2</b>: s4 의 N1~N4 가 전부 FAIL. CNI 가 정책을 집행하지 않는 환경일 수 있다. 같은 YAML 을 Calico 를 깐 클러스터에서 돌려 비교한다(README 8.4).</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>ANALYSIS.md 결정 3: (가) 진짜 faas 에서 하기는 PDB·프로브 라벨이 Knative 파드와 안 맞고 망가지면 05 까지 재구축이다. 대역은 메모리 약 3GB 를 더 쓰고 환경 차이(위 표)를 감수하는 대신, 원리를 숫자로 보는 데 집중할 수 있다. 본선 데모용 숫자는 진짜 클러스터에서 다시 잰다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kind.sigs.k8s.io/docs/user/configuration/">kind configuration</a> · <a href="https://prometheus.io/docs/prometheus/latest/configuration/configuration/">Prometheus configuration (relabel, kubernetes_sd)</a> · <a href="https://prometheus.io/docs/prometheus/latest/management_api/">Prometheus management API (/-/reload)</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="runbook">13. 런북: 새벽 3시의 사람을 위한 문서</h2>
+
+<div class="tier" data-tier="1">
+  <h3>런북은 알림과 짝이다</h3>
+  <p>런북(runbook)은 알림을 받은 사람이 생각하지 않고 그대로 따라 할 수 있는 절차서다. 06 의 알림 규칙 다섯 개는 모두 <code>runbook</code> 주석으로 RB-01~04 중 하나를 가리킨다. 네 런북은 같은 뼈대를 쓴다: <b>언제 여나 → 영향 → 1분 안에 확인 → 판단 → 조치 → 복구 확인 → 재발 방지 → 기록</b>. 이것은 일반적인 사고 대응 순서 <b>감지 → 진단 → 완화 → 확인 → 후속</b> 에 그대로 대응한다.</p>
+  <figure>
+    <div class="fig scroll">
+      <svg viewBox="0 0 960 300" role="img" aria-labelledby="f30-t">
+        <title id="f30-t">사고 대응 다섯 단계와 런북 소제목의 대응</title>
+        <defs>
+          <marker id="f30-m-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="d-mk-api"/></marker>
+        </defs>
+        <rect x="20" y="30" width="160" height="70" rx="10" class="d-obs-box"/>
+        <text x="36" y="72" class="d-ttl-s">1 감지</text>
+        <rect x="210" y="30" width="160" height="70" rx="10" class="d-card"/>
+        <text x="226" y="72" class="d-ttl-s">2 진단</text>
+        <rect x="400" y="30" width="160" height="70" rx="10" class="d-fail-box"/>
+        <text x="416" y="72" class="d-ttl-s">3 완화</text>
+        <rect x="590" y="30" width="160" height="70" rx="10" class="d-cp-box"/>
+        <text x="606" y="72" class="d-ttl-s">4 확인</text>
+        <rect x="780" y="30" width="160" height="70" rx="10" class="d-agent"/>
+        <text x="796" y="72" class="d-ttl-s">5 후속</text>
+        <path d="M180 65 L208 65" class="d-e-api" marker-end="url(#f30-m-api)"/>
+        <path d="M370 65 L398 65" class="d-e-api" marker-end="url(#f30-m-api)"/>
+        <path d="M560 65 L588 65" class="d-e-api" marker-end="url(#f30-m-api)"/>
+        <path d="M750 65 L778 65" class="d-e-api" marker-end="url(#f30-m-api)"/>
+        <rect x="20" y="130" width="160" height="140" rx="10" class="d-plain-box"/>
+        <text x="36" y="160" class="d-subd">언제 이 문서를</text>
+        <text x="36" y="182" class="d-subd">여나 (알림 이름,</text>
+        <text x="36" y="204" class="d-subd">사용자 증상)</text>
+        <text x="36" y="236" class="d-subd">영향 표</text>
+        <rect x="210" y="130" width="160" height="140" rx="10" class="d-plain-box"/>
+        <text x="226" y="160" class="d-subd">1분 안에 확인</text>
+        <text x="226" y="182" class="d-subd">(명령 4~5개)</text>
+        <text x="226" y="214" class="d-subd">판단 표</text>
+        <text x="226" y="236" class="d-subd">(보이는 것 → 뜻)</text>
+        <rect x="400" y="130" width="160" height="140" rx="10" class="d-plain-box"/>
+        <text x="416" y="160" class="d-subd">조치</text>
+        <text x="416" y="182" class="d-subd">자동으로 되는 것</text>
+        <text x="416" y="204" class="d-subd">손으로 할 것</text>
+        <text x="416" y="226" class="d-subd">하지 말 것</text>
+        <rect x="590" y="130" width="160" height="140" rx="10" class="d-plain-box"/>
+        <text x="606" y="160" class="d-subd">복구 확인</text>
+        <text x="606" y="182" class="d-subd">(기대 출력이</text>
+        <text x="606" y="204" class="d-subd">있는 명령)</text>
+        <rect x="780" y="130" width="160" height="140" rx="10" class="d-plain-box"/>
+        <text x="796" y="160" class="d-subd">재발 방지</text>
+        <text x="796" y="182" class="d-subd">(넣은 것 / 다음)</text>
+        <text x="796" y="214" class="d-subd">기록할 것</text>
+        <text x="796" y="236" class="d-subd">(CSV 같은 열로)</text>
+      </svg>
+    </div>
+    <figcaption><b>그림 8-30.</b> 다섯 단계(위)와 RB-01~04 의 소제목(아래). "후속" 의 기록 항목이 측정 CSV 의 열과 같아서, 실제 장애도 실험과 같은 표에 쌓인다. SRE 책의 사후 분석(postmortem)이 이 기록에서 출발한다.</figcaption>
+  </figure>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>RB-01 을 순서도로</h3>
+  <figure>
+    <pre class="mermaid">
+flowchart TD
+  A["알림 FnNodeNotReady 또는 FnReplicasUnavailable"] --> B["kubectl get nodes -L pool"]
+  B --> C{"NotReady 노드가 있나"}
+  C -- "없음" --> Z["다른 원인: RB-02 또는 배포 확인"]
+  C -- "있음" --> D{"다른 노드에서 파드가 다 찼나"}
+  D -- "예" --> E["자동 복구 끝, 노드만 처리"]
+  D -- "아니오, 아직 Running 으로 보임" --> F{"tolerationSeconds 가 지났나"}
+  F -- "아니오" --> G["기다리기, 급하면 kubectl delete node"]
+  F -- "예, 새 파드 Pending" --> H["describe pod Events 확인<br/>자리 부족, 쿼터, spread 제약"]
+  D -- "spot drain 이 안 끝남" --> I["kubectl get pdb -A<br/>ALLOWED DISRUPTIONS 0 이면 PDB 고치기"]
+  E --> J["노드 처리<br/>kind unpause, EC2 ASG 교체 확인"]
+  G --> K["복구 확인<br/>nodes Ready, rollout status"]
+  H --> K
+  I --> K
+  J --> K
+  K --> L["기록: t0, 감지, 복구, 에러 수"]
+    </pre>
+    <figcaption><b>그림 8-31.</b> RB-01(실행 노드 다운)의 판단 흐름. Argo CD 는 손대지 않는다: 노드 문제는 Git 과 무관해 Synced 가 정상이다.</figcaption>
+  </figure>
+  <div class="table-wrap"><table><thead><tr><th>런북</th><th>여는 알림</th><th>핵심 판단</th><th>핵심 조치</th><th>하지 말 것 / 함정</th></tr></thead><tbody>
+  <tr><td>RB-01 노드 다운</td><td>FnNodeNotReady, FnReplicasUnavailable</td><td>자동 복구 끝났나, toleration 남았나, Pending 원인</td><td>기다리기 또는 <code>kubectl delete node</code>, 노드 처리</td><td>Terminating 에 멈춘 옛 파드는 정상 (kubelet 이 없다)</td></tr>
+  <tr><td>RB-02 폭주</td><td>TenantQuotaNearLimit</td><td>쿼터가 막고 있나, 피해자가 Pending 인가(자리) 지연만인가(CPU)</td><td>폭주 함수 scale 0 (GitOps 면 Git 에서)</td><td>selfHeal 이 kubectl scale 을 되돌린다</td></tr>
+  <tr><td>RB-03 나쁜 배포</td><td>RolloutAborted, Argo CD Degraded</td><td>진짜 롤백인가 거짓 롤백(분석 고장)인가, 승격돼 버렸나</td><td><code>git revert</code> + push, 거짓이면 분석 고치고 retry</td><td>abort 상태에서 <code>promote --full</code></td></tr>
+  <tr><td>RB-04 침범</td><td>TenantPolicyDenied</td><td>벽이 일했나, 빠진 벽이 있나, 메타데이터가 뚫렸나</td><td>의심 함수 정지, 벽은 Git 에서 Sync, s4 재실행</td><td>토큰 무효화는 서비스계정 재생성</td></tr>
+  </tbody></table></div>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>런북이 좋은지 판단하는 기준</h3>
+  <ul>
+    <li><b>명령에 기대 출력이 붙어 있다</b>: "<code>kubectl get nodes</code> → 전부 Ready" 처럼. 결과를 해석할 필요가 없어야 새벽 3시에 쓸 수 있다.</li>
+    <li><b>판단은 표로</b>: "보이는 것 → 뜻 → 할 일". 런북 네 개 모두 이 형식이다.</li>
+    <li><b>자동으로 되는 것과 손으로 할 것을 나눈다</b>: 사람이 자동 복구와 경쟁하면(예: 쿠버네티스가 옮기는 중에 손으로 지우기) 상황이 더 꼬인다.</li>
+    <li><b>GitOps 와의 관계를 명시</b>: RB-02·03·04 는 "selfHeal 이 kubectl 변경을 되돌린다" 를 적고 Git 경로를 준다. RB-01 은 반대로 "Argo CD 는 손대지 않는다" 를 적는다.</li>
+    <li><b>실측으로 갱신</b>: 런북의 "영향" 표는 측정 CSV 에서 온다. 숫자가 바뀌면 런북도 바꾼다. 현재 RB-01 의 "넣은 것" 줄은 흩어 놓기를 <code>ScheduleAnyway</code> 로 적고 있어 최종 설정(DoNotSchedule + Honor + matchLabelKeys)과 다르다. 이런 어긋남이 런북이 늙는 전형적인 모습이다.</li>
+    <li><b>사후 분석과 이어진다</b>: SRE 책의 Postmortem Culture 는 비난 없는(blameless) 사후 분석을 권한다. "기록할 것" 칸이 그 재료다: t0, 감지, 복구, 피해, 무엇이 막았나.</li>
+  </ul>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>runbooks/RB-01-node-down.md</code> ~ <code>RB-04-tenant-breach.md</code>. Claude 초안에 Jeong 이 측정 숫자를 채운다. 알림의 <code>runbook</code> 주석은 레포 상대 경로다. 운영이라면 Alertmanager 템플릿에서 이 주석을 클릭 가능한 URL 로 바꾼다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>증상</b>: 알림이 와서 런북을 열었는데 명령의 이름(정책 이름, 라벨)이 실제 클러스터와 다르다. <b>원인</b>: 대역 기준으로 쓴 런북을 진짜 클러스터에 그대로 쓰는 경우(예: NetworkPolicy <code>default-deny</code> vs 03 의 <code>default-deny-all</code>). <b>고치는 법</b>: 런북의 명령을 이름 대신 셀렉터·<code>get -A</code> 로 쓰거나, 환경별 값을 맨 위에 표로 둔다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>대안 (가) 런북 없이 알림 설명(summary)만: 무엇이 깨졌는지는 알지만 무엇을 할지는 모른다. (나) 자동 조치 스크립트: 판단이 필요한 단계(거짓 롤백인가?)를 자동화하면 오판이 커진다. PoC 는 판단 표 + 명령 목록의 마크다운으로 시작하고, 반복되는 조치만 나중에 자동화한다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://sre.google/sre-book/postmortem-culture/">SRE Book: Postmortem Culture</a> · <a href="https://sre.google/sre-book/managing-incidents/">SRE Book: Managing Incidents</a> · <a href="https://sre.google/workbook/on-call/">SRE Workbook: On-Call</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="break">14. 깨뜨렸다 고치기 3종</h2>
+
+<div class="tier" data-tier="1">
+  <h3>왜 일부러 방어를 망가뜨리나</h3>
+  <p>방어가 "있다" 와 "일한다" 는 다르다. 06 README 는 시나리오마다 방어를 하나 망가뜨려 증상을 보게 한다. 세 실습 모두 공통 교훈은 같다: <b>안전장치 자체도 틀릴 수 있고, 틀린 안전장치는 없는 것보다 나쁠 수 있다.</b></p>
+  <div class="grid">
+    <div class="item"><h4>B12 PDB 너무 세게</h4><p>minAvailable 2 (= replicas) → spot drain 이 끝나지 않아 예고 있는 장애가 예고 없는 장애로.</p></div>
+    <div class="item"><h4>B13 분석이 stable 을 봄</h4><p>분석 주소 한 군데 → 나쁜 버전이 100% 승격, 되돌리는 좋은 버전이 abort.</p></div>
+    <div class="item"><h4>B14 공격자 쪽 정책 삭제</h4><p>tenant-b NetworkPolicy 삭제 → N1·N2 는 여전히 막히고 N3·N4 가 뚫린다.</p></div>
+  </div>
+</div>
+
+<div class="tier" data-tier="2">
+  <h3>실습 1: PDB 를 replicas 와 같게</h3>
+  <pre><code>kubectl -n tenant-a patch pdb hello --type merge -p '{"spec":{"minAvailable":2}}'
+./scripts/s1-node-down.sh spot 1
+kubectl apply -f defenses/pdb.yaml          <span class="c"># 고치기: minAvailable 1</span></code></pre>
+  <p><b>예상</b>: drain 이 Eviction API 를 부를 때마다 429. 110초 timeout 뒤 스크립트는 그대로 노드를 얼린다. 그 노드의 파드는 drain 으로 빠지지 못했으니 hard 와 같은 경로(grace → toleration → 재생성)를 탄다. 게다가 흩어 놓기가 평소대로라면 노드에 파드가 1개뿐이었겠지만, 이 실습에서 측정된 경우처럼 두 파드가 모두 그 노드에 있었다면 피해가 더 크다. <b>교훈</b>: "PDB = replicas" 는 안전해 보이지만 노드 업그레이드·스팟 회수를 영원히 막는다. 공식 문서도 "0 허용 PDB 가 있으면 drain 이 끝나지 않으며 이는 의도된 의미" 라고 적는다. 실제 운영에서 클러스터 업그레이드가 멈추는 흔한 원인이다.</p>
+
+  <h3>실습 2: 분석이 stable 을 보게</h3>
+  <pre><code>sed 's/api-canary.tenant-a.svc/api-stable.tenant-a.svc/' standin/targets.yaml | kubectl apply -f -
+./scripts/s3-bad-deploy.sh kubectl 1
+kubectl apply -f standin/targets.yaml                   <span class="c"># 고치기 1: 분석 주소 원래대로</span>
+kubectl argo rollouts retry rollout api -n tenant-a     <span class="c"># 고치기 2: abort 된 좋은 버전 재시도</span></code></pre>
+  <figure>
+    <pre class="mermaid">
+sequenceDiagram
+  participant S as 스크립트
+  participant R as Rollouts
+  participant A as 분석 Job
+  participant ST as api-stable
+  S->>R: 나쁜 버전 v2-bad
+  R->>A: 분석 시작
+  A->>ST: curl (안정 버전 v1)
+  ST-->>A: 200 성공
+  A-->>R: Successful
+  R->>R: 50 퍼센트, pause, 100 퍼센트 승격
+  Note over R: stable 이 이제 v2-bad (promoted-bad)
+  S->>R: 좋은 버전 v1 으로 되돌림
+  R->>A: 분석 시작
+  A->>ST: curl (안정 버전 = v2-bad)
+  ST-->>A: 500 실패
+  A-->>R: Failed
+  R->>R: 좋은 버전을 abort
+    </pre>
+    <figcaption><b>그림 8-32.</b> 분석이 엉뚱한 곳을 볼 때의 두 단계 피해. 첫 배포에서 나쁜 버전이 승격되고, 되돌리는 배포에서는 좋은 버전이 거절된다. RolloutAborted 알림은 첫 단계에서 울리지 않는다(abort 가 없었으므로). 이런 장애는 5xx 비율 같은 지표 쪽 알림이 있어야 잡힌다.</figcaption>
+  </figure>
+  <p><b>교훈</b>: 자동 롤백은 "분석이 맞는 것을 본다" 는 전제 위에 있다. 분석을 만들면 <b>일부러 나쁜 버전을 한 번 넣어 실제로 abort 되는지</b> 확인한다. 이 시나리오 자체가 그 확인이다. 주의: <code>kubectl get -o yaml | sed | kubectl apply</code> 로 하면 resourceVersion 이 딸려 들어가 다음 apply 가 실패한다(README 의 경고). 원본 파일에 sed 를 거는 이유다.</p>
+
+  <h3>실습 3: 공격자 쪽 NetworkPolicy 삭제</h3>
+  <pre><code>kubectl -n tenant-b delete networkpolicy default-deny
+./scripts/s4-tenant-breach.sh            <span class="c"># 어느 줄이 FAIL 로 바뀌나</span>
+kubectl apply -f standin/targets.yaml    <span class="c"># 고치기</span></code></pre>
+  <div class="table-wrap"><table><thead><tr><th>시도</th><th>tenant-b 정책 있음</th><th>tenant-b 정책 삭제</th><th>이유</th></tr></thead><tbody>
+  <tr><td>N1, N2</td><td>PASS</td><td>PASS</td><td>tenant-a 의 <b>ingress</b> 정책이 "같은 ns 만" 을 계속 강제한다. 방어가 양쪽에 있다</td></tr>
+  <tr><td>N3 API 서버</td><td>PASS</td><td>FAIL (http 코드가 찍힘)</td><td>tenant-b egress 제한이 사라져 연결은 됐다. 숫자(예: 403)는 그 뒤에서 인증·인가가 거절한 것</td></tr>
+  <tr><td>N4 메타데이터</td><td>PASS</td><td>FAIL</td><td>같은 이유. kind 에선 아무것도 없지만 EC2 에선 IAM 자격 증명. 07 에서 IMDSv2 hop limit 1 을 같이 거는 근거</td></tr>
+  <tr><td>R, P, Q</td><td>PASS</td><td>PASS</td><td>네트워크와 무관한 API 서버 안의 벽</td></tr>
+  </tbody></table></div>
+  <p>진짜 클러스터(A)라면 03 의 정책 이름(<code>default-deny-all</code> 등 4장)으로 지워야 하고, Argo CD selfHeal 이 곧 되살린다. 되살아나는 시간이 "격리 벽 복구 시간" 이다.</p>
+</div>
+
+<div class="tier" data-tier="3">
+  <h3>세 실습을 하나의 표로: 예상 → 실행 → 관찰 → 고치기</h3>
+  <div class="table-wrap"><table><thead><tr><th>실습</th><th>예상을 적을 칸</th><th>관찰할 곳</th><th>CSV 에서 볼 열</th><th>고친 뒤 확인</th></tr></thead><tbody>
+  <tr><td>PDB 과다</td><td>drain 이 끝나나, 에러 수가 hard 보다 많을까</td><td><code>kubectl get pdb</code>, drain 출력, <code>kubectl get pods -o wide -w</code></td><td><code>drain_s</code>=timeout, <code>errors</code>, <code>t_replaced_s</code></td><td>ALLOWED DISRUPTIONS 1, spot 재실행 시 drain 시간이 숫자로</td></tr>
+  <tr><td>분석이 stable</td><td>abort 될까, 알림이 올까</td><td><code>kubectl argo rollouts get rollout api</code>, AnalysisRun 의 Job 로그</td><td><code>t_stable_s</code>=promoted-bad, <code>t_failed_s</code>=missed, <code>errors</code></td><td>retry 뒤 Healthy, 다시 나쁜 버전을 넣어 abort 확인</td></tr>
+  <tr><td>공격자 정책 삭제</td><td>어느 줄이 FAIL 로 바뀔까</td><td>s4 표, (Cilium) hubble DROPPED</td><td><code>verdict</code>, <code>actual</code></td><td>8/8 PASS</td></tr>
+  </tbody></table></div>
+  <pre class="pseudo"><code><span class="k">각</span> 실습:
+  예상을 먼저 한 줄 적는다          <span class="c">// ANALYSIS.md 원칙: 예상 → 실행 → 관찰 → 고치기 → 한 줄 정리</span>
+  방어 하나를 망가뜨린다
+  같은 시나리오 스크립트를 1회 돌린다
+  CSV 의 해당 열과 예상을 비교한다
+  방어를 되돌리고 1회 더 돌려 원래 결과가 나오는지 본다
+  "무엇이 일하고 있었나" 를 한 줄로</code></pre>
+</div>
+
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>ANALYSIS.md 3절의 B12·B13·B14 가 이 세 실습이다. 05 단계의 알려진 한계 1(빌드 중 컨트롤 플레인이 죽으면 Job 은 끝나도 Knative Service 가 안 생김, B10)은 05 README 가 "6단계에서 재현해 보면 좋은 장애" 라고 적었지만 06 에는 스크립트가 없다. 같은 뼈대로 만들 수 있다: t0 = 빌드 시작 후 <code>kubectl -n faas-system delete pod -l app=control-plane</code>, 감지 = 함수 상태가 BUILDING 에서 안 넘어감, 복구 = (현재 설계로는) 없음. 이 실험이 "오퍼레이터(reconcile 루프)로 바꾸자" 는 결정의 근거가 된다(가이드 7장).</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p>실습 뒤 원래대로 안 돌아올 때: PDB 는 <code>kubectl apply -f defenses/pdb.yaml</code>, 분석·정책은 <code>kubectl apply -f standin/targets.yaml</code>(지운 것만 다시 생기고 나머지는 그대로), Rollout 이 Degraded 로 남으면 <code>kubectl argo rollouts retry rollout api -n tenant-a</code>.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>ANALYSIS.md 결정 2: 단계당 2~3개, "증상이 다른 곳에서 나는 것" 위주. 세 실습 모두 겉보기 정상(분석 Successful, N1·N2 PASS) 뒤에 숨은 문제를 보여 준다. 심사 Q&amp;A 에서 자주 나오는 종류다.</p></aside>
+<aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://kubernetes.io/docs/tasks/run-application/configure-pdb/">Specifying a Disruption Budget (0 허용의 의미)</a> · <a href="https://argo-rollouts.readthedocs.io/en/stable/features/analysis/">Argo Rollouts Analysis</a> · <a href="https://argo-rollouts.readthedocs.io/en/stable/generated/kubectl-argo-rollouts/kubectl-argo-rollouts_retry/">kubectl argo rollouts retry</a> · <a href="https://kubernetes.io/docs/concepts/services-networking/network-policies/">Network Policies (ingress·egress 양쪽)</a></p></aside>
+
+<!-- ============================================================ -->
+<h2 id="recap">정리</h2>
+
+<h3>핵심 개념 체크리스트</h3>
+<ul class="checklist">
+  <li>카오스 실험의 다섯 원칙(평소 상태 가설, 실제 사건, 운영 환경, 자동화, 영향 범위 최소화)을 말하고, 06 이 운영 환경 원칙을 일부러 어긴 이유를 댈 수 있다.</li>
+  <li>t0, 감지, 완화, 복구를 구분하고, MTTD/MTTR 이 어느 CSV 열인지 짚을 수 있다.</li>
+  <li>감지 세 겹(프로브·알림·상태)이 장애를 아는 순서와 각각이 놓치는 것을 설명할 수 있다.</li>
+  <li>kubelet 의 Lease 갱신(기본 10초) → node lifecycle controller 검사(5초) → grace period(50초) → Ready=Unknown → unreachable taint → 파드 Ready=False → EndpointSlice 제외 → tolerationSeconds 뒤 축출 → 재생성의 순서를 그릴 수 있다.</li>
+  <li>DefaultTolerationSeconds 가 300초를 넣는 방식과, 우리 20초가 덮어쓰는 조건을 안다.</li>
+  <li>tolerationSeconds 가 줄이는 것은 "파드 수 복구" 이지 "사용자 장애" 가 아님을 타임라인으로 설명할 수 있다.</li>
+  <li>topology spread 의 skew 계산을 손으로 하고, nodeTaintsPolicy Ignore 에서 노드 다운 후 Pending 이 나는 이유와 Honor 가 고치는 이유를 말할 수 있다.</li>
+  <li>matchLabelKeys(pod-template-hash)가 배포 중 쏠림을 막는 원리를 안다.</li>
+  <li>PDB 가 자발적 중단(Eviction API)에만 작동하고, 429 와 drain 재시도의 관계, "PDB = replicas" 의 함정을 안다.</li>
+  <li>requests·limits·ResourceQuota·LimitRange 가 각각 누가(스케줄러, 커널, 어드미션) 언제 집행하는지 구분한다.</li>
+  <li>Rollouts 의 abort 는 클러스터 안의 롤백일 뿐, Git 정리(revert)가 따로 필요함을 안다. selfHeal 이 kubectl 실험을 무의미하게 만드는 이유도.</li>
+  <li>침범 8시도와 막는 벽을 짝지을 수 있고, "정책이 있다" 와 "집행된다" 를 구분한다.</li>
+  <li>알림의 inactive → pending → firing, for, labels/annotations(runbook), 지연의 구성(scrape + eval + for)을 설명할 수 있다.</li>
+  <li>Helm <code>-f</code> 두 번의 덮어쓰기 순서와 configmapReload 의 역할을 안다.</li>
+  <li>런북의 뼈대(언제 여나 → 확인 → 판단 → 조치 → 복구 확인 → 재발 방지 → 기록)를 안다.</li>
+</ul>
+
+<h3>이 장의 핵심 결정</h3>
+<div class="table-wrap"><table><thead><tr><th>결정</th><th>선택</th><th>대안</th><th>버린 이유</th></tr></thead><tbody>
+<tr><td>장애 주입 도구</td><td>kubectl + docker 스크립트</td><td>Chaos Mesh / LitmusChaos / AWS FIS</td><td>Chaos Mesh: 노드 단위 장애가 기본 기능이 아니고 특권 DaemonSet(chaos-daemon)이 모든 노드에 깔려 gVisor 격리 이야기와 충돌, 메모리 추가. Litmus: ChaosCenter 가 MongoDB 까지 달고 와서 무겁다. FIS: AWS 에서만 → 07 에서 진짜 스팟 회수용 후보. 스크립트는 설치 0, 한 줄씩 보이고 측정까지 한 파일. 대가: 장애 종류마다 직접 짜야 하고 일정 실행·UI 가 없다</td></tr>
+<tr><td>감지 기준</td><td>프로브 + Prometheus 알림 + K8s 상태, 세 겹을 같은 t0 로</td><td>알림만 / K8s 상태만</td><td>알림만: 늦거나 틀려도 모른다(s3 깨뜨리기에서 안 울림). 상태만: 판정 전 사용자 실패 구간을 놓친다</td></tr>
+<tr><td>노드 다운: 축출 대기</td><td>tolerationSeconds 20</td><td>기본 300 / 5</td><td>300: 파드 수 복구가 너무 늦다. 5: 잠깐의 흔들림에 파드를 버린다</td></tr>
+<tr><td>노드 다운: 흩어 놓기</td><td>DoNotSchedule + nodeTaintsPolicy Honor + matchLabelKeys [pod-template-hash]</td><td>ScheduleAnyway / DoNotSchedule+Ignore / podAntiAffinity required</td><td>ScheduleAnyway: 평소 쏠림. Ignore: 죽은 노드를 자리로 세어 Pending. matchLabelKeys 없음: 배포 중 쏠림. antiAffinity: replicas &gt; 노드 수면 Pending</td></tr>
+<tr><td>노드 다운: 판정 시간</td><td>컨트롤 플레인 기본값 유지 (grace 50초)</td><td><code>--node-monitor-grace-period</code> 단축</td><td>관리형(EKS)에선 못 바꾸고, 줄이면 네트워크 흔들림에 노드를 오판</td></tr>
+<tr><td>PDB</td><td>minAvailable 1</td><td>= replicas / 없음 / 50%</td><td>= replicas: drain 이 영원히 막힘. 없음: drain 이 둘 다 뺄 수 있다. 50%: 2개에선 같은 값</td></tr>
+<tr><td>알림 for</td><td>노드·쿼터·abort·PSA 0s, 파드 부족 30s</td><td>전부 0s / 1m / 5m</td><td>이미 다른 곳에서 지속 판정을 거친 신호는 0s, 배포 중 자연스럽게 흔들리는 신호만 for</td></tr>
+<tr><td>실험장</td><td>대역 클러스터 chaos (exec 2대)</td><td>진짜 faas</td><td>라벨 불일치(Knative), 망가지면 재구축, exec 1대로는 이동을 못 잰다</td></tr>
+<tr><td>나쁜 배포 주입</td><td>kubectl 모드(대역) / git 모드(진짜)</td><td>항상 kubectl</td><td>selfHeal 이 kubectl 변경을 되돌려 "Argo CD 가 되돌림" 을 재게 된다</td></tr>
+</tbody></table></div>
+
+<h3>본선에서 떠올릴 패턴</h3>
+<div class="grid">
+  <div class="item"><h4>"측정 가능한 가설" 로 말하기</h4><p>어떤 주제든 "X 가 고장 나도 Y 는 유지된다" 를 평소 상태 지표 하나로 정의하고, 방어 전/후를 같은 스크립트로 잰다. 결정 표의 "측정값" 칸이 이것으로 채워진다.</p></div>
+  <div class="item"><h4>시간 분해</h4><p>장애 시간을 "판정 대기 + 견디는 시간 + 재생성" 처럼 구간으로 쪼개고, 각 구간을 누가 소유하는지(컨트롤 플레인, 파드 설정, 앞단) 적는다. 손댈 수 있는 구간만 고친다. DB 장애 조치(failover), 캐시 만료, DNS TTL 에도 같은 분해가 된다.</p></div>
+  <div class="item"><h4>예고가 있으면 미리 비운다</h4><p>스팟 회수, 배포, 노드 업그레이드처럼 예고가 있는 사건은 "그때 대응" 보다 "미리 비우기" 가 훨씬 싸다. 큐 소비자 graceful shutdown, 커넥션 드레인도 같은 원리.</p></div>
+  <div class="item"><h4>안전장치도 시험한다</h4><p>PDB, 분석, NetworkPolicy 처럼 "막아 주는 것" 은 일부러 나쁜 입력을 넣어 실제로 막는지 확인한다. 틀린 안전장치는 없는 것보다 나쁠 수 있다.</p></div>
+  <div class="item"><h4>사용자 시점이 기준</h4><p>내부 상태가 정상이어도 합성 프로브가 실패하면 장애다. AI 에이전트·MCP 같은 새 주제에서도 "에이전트가 실제로 성공했나" 를 바깥에서 재는 프로브를 먼저 둔다.</p></div>
+  <div class="item"><h4>알림 = 런북 링크</h4><p>알림 하나마다 열 문서를 정한다. 문서 없는 알림은 사람을 깨우기만 한다.</p></div>
+</div>
+
+<h3>스스로 답해 볼 질문</h3>
+<ol>
+  <li>tolerationSeconds 를 300 에서 20 으로 줄였는데 사용자가 본 장애 시간은 거의 그대로였다. 왜인가? 그 구간을 줄이려면 누가 무엇을 해야 하나?</li>
+  <li>노드가 NotReady 로 판정되는 순간 프로브 에러가 멈춘다. 그 사이에 어떤 컨트롤러가 무엇을 바꾸나?</li>
+  <li>maxSkew 1, DoNotSchedule, exec 노드 2대에 파드 2개. 한 노드가 죽었을 때 nodeTaintsPolicy 가 Ignore 와 Honor 일 때 각각 skew 를 계산해 보라.</li>
+  <li>우리 toleration 에서 <code>effect: NoExecute</code> 를 지우면 Honor 계산이 어떻게 바뀔 수 있나?</li>
+  <li>PDB minAvailable 을 replicas 와 같게 두면 spot 회수가 왜 예고 없는 장애보다 나빠질 수 있나?</li>
+  <li>hard 노드 다운에서 PDB 는 왜 아무 효과가 없나? 공식 문서의 자발적/비자발적 구분으로 답하라.</li>
+  <li><code>for: 0s</code> 와 <code>for: 1m</code> 의 차이는 "늦게 온다" 말고 무엇을 얻고 잃나?</li>
+  <li>쿼터 알림(TenantQuotaNearLimit)이 울리지 않는데 옆 테넌트 지연이 오르는 경우는 어떤 경우인가? 무엇으로 감지해야 하나?</li>
+  <li>Rollouts 가 abort 했는데 Argo CD 는 왜 Degraded 로 남나? 정리 순서는?</li>
+  <li>분석이 api-stable 을 보면 첫 배포와 되돌리는 배포에서 각각 무슨 일이 생기나? RolloutAborted 알림은 왜 안 울리나?</li>
+  <li>tenant-b 의 NetworkPolicy 를 지웠는데 N1·N2 는 여전히 막힌다. 누구의 정책 덕인가? N3 에 http 코드가 찍힌다는 것은 무엇을 뜻하나?</li>
+  <li>05 의 "빌드 중 컨트롤 플레인이 죽으면" 을 06 스크립트 뼈대로 만든다면 t0, 감지, 복구는 각각 무엇인가?</li>
+</ol>
+
+<nav class="pager" aria-label="이전 다음 장"></nav>
+</article>
+</main>
+</div>
+</body>
+</html>
