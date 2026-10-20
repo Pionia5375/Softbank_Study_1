@@ -1,0 +1,36 @@
+# AWS Node Termination Handler(NTH). Jeong 작성.
+# 스팟 노드마다 하나씩 떠서(DaemonSet) EC2 메타데이터를 지켜보다가 "2분 뒤 회수" 경고가 오면
+# 그 노드를 cordon(새 파드 금지) + drain(파드를 다른 노드로 내보냄) 한다.
+# 이게 없으면: 2분 뒤 노드가 그냥 꺼지고, k8s 는 몇 분 동안 "노드가 응답이 없네" 만 기다린다.
+# 문서: https://github.com/aws/aws-node-termination-handler (IMDS 모드)
+#       values 목록: helm show values eks/aws-node-termination-handler
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: node-termination-handler
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://aws.github.io/eks-charts
+    chart: aws-node-termination-handler
+    # 【미확인】 최신 차트 버전. 10/27 아침 helm search repo eks/aws-node-termination-handler --versions | head -3 으로 보고
+    # 정확한 버전으로 고정하는 게 원칙이다. "0.*" 는 0.x 중 최신을 고르는 임시값.
+    targetRevision: "0.*"
+    helm:
+      valuesObject:
+        enableSpotInterruptionDraining: ___    # TODO(human): true / false    # 회수 경고 → drain
+        enableScheduledEventDraining: true      # AWS 정기 점검 예고 → drain
+        enableRebalanceMonitoring: false        # "회수 위험 높아짐" 신호는 ASG(capacity_rebalance)가 처리
+        # 스팟 노드에만 띄운다. 온디맨드(시스템·빌드)에는 회수 경고가 없으니 필요 없다
+        # 【추정】 키 이름은 차트 values.yaml 에서 확인 (daemonsetNodeSelector)
+        # TODO(human): 스팟 노드 라벨 키: 값
+        daemonsetNodeSelector:
+          ___: ___
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

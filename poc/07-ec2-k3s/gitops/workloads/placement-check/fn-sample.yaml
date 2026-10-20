@@ -1,0 +1,80 @@
+# 함수 역할 샘플: 실행 풀(스팟)에만 뜨는 Deployment + Service + Ingress + PDB. Jeong 작성.
+# 문서: nodeSelector https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#nodeselector
+#       PDB https://kubernetes.io/docs/tasks/run-application/configure-pdb/
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fn-sample
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fn-sample
+  template:
+    metadata:
+      labels:
+        app: fn-sample
+    spec:
+      # 실행 풀에만. 실행 풀엔 taint 가 없어서 toleration 은 필요 없다
+      # TODO(human): 실행 풀 라벨
+      nodeSelector:
+        ___: ___
+      # 두 파드를 서로 다른 노드에 흩는다. 한 노드가 회수돼도 나머지 하나가 응답한다
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: fn-sample
+      containers:
+        - name: whoami
+          image: traefik/whoami:v1.10.1   # 요청이 오면 자기 파드 이름·IP 를 돌려준다
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fn-sample
+spec:
+  selector:
+    app: fn-sample
+  ports:
+    - port: 80
+      targetPort: 80
+---
+# k3s 기본 인그레스 컨트롤러 Traefik 이 받는다. 맥에서 curl http://<노드 퍼블릭 IP>/fn
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fn-sample
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /fn
+            pathType: Prefix
+            backend:
+              service:
+                name: fn-sample
+                port:
+                  number: 80
+---
+# drain 할 때 "최소 1개는 살아 있어야 한다". NTH 가 drain 하면 이 약속을 지키면서 하나씩 내보낸다
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: fn-sample
+spec:
+  minAvailable: ___    # TODO(human): replicas 2 중 drain 중에도 최소 몇 개를 살려 둘지
+  selector:
+    matchLabels:
+      app: fn-sample

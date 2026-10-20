@@ -1,0 +1,23 @@
+# EC2 클러스터용 App of Apps 뿌리. Jeong 작성, 정답본.
+# 1단계 root 와 이름·경로만 다르다. 이것 하나만 kubectl apply 하면 apps/ 안의 Application 들이 따라온다.
+# 문서: https://argo-cd.readthedocs.io/en/stable/operator-manual/cluster-bootstrapping/
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root-ec2
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1
+    targetRevision: main
+    path: poc/07-ec2-k3s/solution/gitops/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

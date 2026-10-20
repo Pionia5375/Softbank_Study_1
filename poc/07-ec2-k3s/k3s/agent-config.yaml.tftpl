@@ -1,0 +1,32 @@
+# k3s agent(워커 노드) 설정. 실행 풀과 빌드 풀이 같은 파일을 쓰고, pool 값으로 갈린다. Jeong 작성.
+# Terraform 이 넘겨 주는 값: server_url, token, pool("exec"|"build"), capacity_type("spot"|"on-demand")
+# 문서: https://docs.k3s.io/cli/agent
+#       템플릿 조건문(if 지시문): https://developer.hashicorp.com/terraform/language/expressions/strings#directives
+#
+# 빈칸은 밑줄 세 개.
+
+# 어느 서버에 붙을지 + 비밀번호
+# TODO(human): 두 줄 다 Terraform 값의 자리표시자
+server: "___"
+token: "___"
+
+# TODO(human): 라벨 두 개. 서버 설정과 같은 키, 값은 pool / capacity_type 자리표시자로
+node-label:
+  - "___"
+  - "___"
+
+# TODO(human): 핵심 결정. 빌드 풀에만 taint 를 건다.
+#   아래 if 지시문과 endif 지시문 사이에 node-taint 블록을 넣으면 조건이 참일 때만 그 줄이 들어간다.
+#   (~ 는 지시문 뒤 줄바꿈을 지워서 빈 줄이 안 생기게 하는 표시. 주석 안에서도 퍼센트+중괄호를 쓰면 Terraform 이 읽으니 주의)
+#   실행 풀에도 taint 를 걸지 말지 정하고 README 결정 3 에 이유를 쓴다.
+%{ if ___ ~}
+node-taint:
+  - "___"
+%{ endif ~}
+
+# 노드가 꺼질 때(스팟 회수 포함) kubelet 이 파드를 먼저 정상 종료시키고 내려가게 하는 설정.
+# TODO(human): 문서(https://kubernetes.io/docs/concepts/cluster-administration/node-shutdown/#graceful-node-shutdown)에서
+#   kubelet 옵션 이름 두 개를 찾아 넣는다. 전체 대기 60초, 그중 핵심 파드 몫 10초.
+kubelet-arg:
+  - "___=60s"
+  - "___=10s"

@@ -1,0 +1,26 @@
+# k3s agent(워커 노드) 설정. 실행 풀과 빌드 풀이 같은 파일을 쓰고, pool 값으로 갈린다. Jeong 작성, 정답본.
+# Terraform 이 넘겨 주는 값: server_url, token, pool("exec"|"build"), capacity_type("spot"|"on-demand")
+# 문서: https://docs.k3s.io/cli/agent
+#       템플릿 조건문(if 지시문): https://developer.hashicorp.com/terraform/language/expressions/strings#directives
+
+# 어느 서버에 붙을지. 서버의 사설 IP:6443
+server: "${server_url}"
+token: "${token}"
+
+node-label:
+  - "pool=${pool}"
+  - "capacity-type=${capacity_type}"
+
+%{ if pool == "build" ~}
+# 빌드 노드: 빌드 Job 만 오게 taint. 빌드는 CPU 를 오래 다 써서, 함수 파드랑 같이 있으면 함수 응답이 느려진다.
+node-taint:
+  - "pool=build:NoSchedule"
+%{ endif ~}
+# (실행 노드에는 taint 를 안 건다 = 아무 설정 없는 파드의 기본 착지점. README 결정 3)
+
+# 노드가 꺼질 때(스팟 회수 포함) kubelet 이 파드를 먼저 정상 종료시키고 내려가게.
+# 60초 중 마지막 10초는 시스템 핵심 파드 몫.
+# 문서: https://kubernetes.io/docs/concepts/cluster-administration/node-shutdown/#graceful-node-shutdown
+kubelet-arg:
+  - "shutdown-grace-period=60s"
+  - "shutdown-grace-period-critical-pods=10s"

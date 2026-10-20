@@ -1,0 +1,21 @@
+# 로컬 kind 에서 만든 앞 단계 앱들을 EC2 에도 그대로 올린다. Jeong 작성.
+# 1단계 App of Apps 폴더를 그대로 가리킨다 → 그 폴더에 앱을 추가하면 로컬과 EC2 둘 다 따라온다.
+# "같은 Git, 다른 클러스터" = 이 단계의 핵심 장면.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: local-stage-apps
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1
+    targetRevision: main
+    path: ___     # TODO(human): 1단계 App of Apps 가 보는 폴더
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

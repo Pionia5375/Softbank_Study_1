@@ -1,0 +1,21 @@
+# 노드 풀 배치 확인용 워크로드. Jeong 작성, 정답본.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: placement-check
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1
+    targetRevision: main
+    path: poc/07-ec2-k3s/solution/gitops/workloads/placement-check
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: placement-check
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

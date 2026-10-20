@@ -1,0 +1,28 @@
+# 빌드 역할 샘플: 빌드 풀에만 뜨는 Job. 진짜 이미지 빌드(Kaniko)는 4단계 것을 여기로 옮긴다. Jeong 작성, 정답본.
+# 문서: taint/toleration https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: fake-build
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        pool: build
+      # 빌드 노드의 taint(pool=build:NoSchedule)를 견딘다. 이게 없으면 nodeSelector 가 맞아도 Pending
+      tolerations:
+        - key: pool
+          operator: Equal
+          value: build
+          effect: NoSchedule
+      containers:
+        - name: build
+          image: busybox:1.36
+          command: ["sh", "-c", "echo building on $NODE_NAME; sleep 20; echo done"]
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName   # 이 파드가 뜬 노드 이름을 환경변수로

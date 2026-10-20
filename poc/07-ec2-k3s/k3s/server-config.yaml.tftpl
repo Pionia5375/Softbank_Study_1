@@ -1,0 +1,29 @@
+# k3s server(시스템 노드) 설정. Jeong 작성.
+# Terraform 이 넘겨 주는 값: token
+# 문서: https://docs.k3s.io/cli/server  (여기 있는 --옵션 이름에서 -- 를 뺀 것이 YAML 키)
+#
+# 빈칸은 밑줄 세 개.
+
+# 노드들이 이 서버에 붙을 때 내야 하는 비밀번호. agent 쪽 token 과 같아야 한다
+# TODO(human): Terraform 이 넘겨 준 token 값의 자리표시자
+token: "___"
+
+# kubeconfig(/etc/rancher/k3s/k3s.yaml) 파일 권한. 스크립트는 sudo 로 읽으니 root 만 읽게 해도 된다
+write-kubeconfig-mode: "___"    # TODO(human): 0600 / 0644 중 골라서. 고른 이유를 README 결정 표에 한 줄
+
+# 노드 라벨: 파드가 nodeSelector 로 "시스템 노드" 를 고를 수 있게.
+# TODO(human): 키=값 두 개. 풀 이름(키 pool)과 구매 방식(키 capacity-type). 3·4단계 로컬 kind 노드 라벨과 같은 키를 쓴다
+node-label:
+  - "___"
+  - "___"
+
+# 노드 taint: 함수 파드가 시스템 노드에 오지 못하게.
+# TODO(human): 핵심 결정. 키·값·효과(effect)를 고른다.
+#   힌트 1) k3s 기본 부품(coredns·traefik·metrics-server)이 이미 견디는 키가 하나 있다.
+#           문서에서 "CriticalAddonsOnly" 를 검색. 그 키를 쓰면 기본 부품은 그대로 여기 뜬다.
+#   힌트 2) effect 후보: NoSchedule(새로 못 옴) / NoExecute(새로 못 옴 + 있던 것도 쫓아냄)
+#   형식: "키=값:effect"
+node-taint:
+  - "___"
+
+# 끄는 기본 부품 없음. traefik(인그레스), servicelb, local-storage, metrics-server 그대로 쓴다.

@@ -1,0 +1,10 @@
+# cp terraform.tfvars.example terraform.tfvars (gitignore 됨)
+
+# 함수 URL 을 맥에서 curl 하려면 내 IP 를 /32 로. 확인: curl -s https://checkip.amazonaws.com
+ingress_cidrs = ["203.0.113.10/32"]
+
+# 막혀서 정답본으로 띄울 때만 주석 해제
+# k3s_template_dir = "../../solution/k3s"
+
+# 빌드 안 하는 시간엔 0
+# build_desired = 0

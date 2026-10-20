@@ -1,0 +1,15 @@
+# Terraform 로컬 파일 (state 에는 k3s 토큰 같은 비밀값이 들어간다. 절대 커밋 금지)
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfvars
+.terraform.tfstate.lock.info
+crash.log
+
+# 클러스터 접속 파일
+kubeconfig
+*.kubeconfig
+
+# render-k3s.sh 결과 (가짜 토큰이라 비밀은 아니지만 매번 바뀌어서 뺀다)
+results/rendered/
