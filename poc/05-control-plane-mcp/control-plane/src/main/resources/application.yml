@@ -1,0 +1,26 @@
+# 컨트롤 플레인 설정 (Claude 작성). 클러스터마다 다른 값은 환경 변수로 덮어쓴다
+#   예: FAAS_REGISTRY_PUSH=... ./mvnw spring-boot:run   (Spring 이 FAAS_REGISTRY_PUSH → faas.registry-push 로 바꿔 읽는다)
+server:
+  port: 8080
+spring:
+  application:
+    name: control-plane
+  threads:
+    virtual:
+      enabled: true
+faas:
+  # 빌드 Job 이 뜨는 namespace (k8s/control-plane/ 에서 Jeong 이 만든다)
+  build-namespace: faas-build
+  # 클러스터 안(kaniko)에서 본 레지스트리 주소. 4단계 값과 맞춘다
+  registry-push: kind-registry:5000
+  # 노드(kubelet)가 이미지를 받을 때 쓰는 주소. kind 로컬 레지스트리 관례
+  registry-pull: localhost:5001
+  # 3단계 tenant 차트가 namespace 에 붙인 라벨 키 (값 = namespace 이름, 예: tenant=tenant-a)
+  tenant-label: tenant
+  build-timeout: 5m
+  max-code-bytes: 262144
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health

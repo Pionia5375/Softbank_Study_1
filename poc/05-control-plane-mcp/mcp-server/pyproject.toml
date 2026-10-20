@@ -1,0 +1,23 @@
+# 운영 에이전트용 MCP 서버 (Claude 작성). 설치: python3 -m venv .venv && .venv/bin/pip install -e '.[test]'
+[project]
+name = "ops-mcp"
+version = "0.1.0"
+description = "FaaS PoC: 테넌트 하나에 묶인 운영 도구 3개 (get_metrics, scale, rollback) + 가드레일"
+requires-python = ">=3.11"
+dependencies = [
+  # MCP 공식 파이썬 SDK. FastMCP = 함수에 @tool 만 붙이면 도구가 되는 간단한 서버
+  "mcp>=1.20,<2",
+  # 쿠버네티스 공식 파이썬 클라이언트
+  "kubernetes>=31",
+  # get_metrics 의 합성 요청(probe)용. mcp 가 이미 쓰는 라이브러리
+  "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.setuptools]
+packages = ["ops_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

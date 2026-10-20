@@ -1,0 +1,56 @@
+# 운영 에이전트(MCP 서버) 전용 ServiceAccount. tenant-a 안에서만, 읽기 + Knative Service patch 만. Jeong 작성, 빈칸 7개.
+# 이게 가드레일의 "진짜 벽" 이다 (README 1.6 의 2층). MCP 서버 코드(파이썬)의 검사가 뚫려도,
+# 이 권한 밖의 일(다른 테넌트, 파드 삭제, Secret 읽기)은 API 서버가 403 으로 막는다.
+# 원칙: ops_mcp/knative.py 가 부르는 API 만 연다. 메서드 하나에 verb 하나씩 대응시켜 보자
+# 3단계 tenant 차트에 이미 deployer ServiceAccount 가 있는데 왜 따로 만드나:
+#   deployer 는 pods·deployments 를 delete 까지 할 수 있고 Knative 권한은 없다. 에이전트에게는 넓고, 동시에 모자라다.
+#   "사람·CI 용 계정" 과 "AI 용 계정" 을 나누면 감사 로그에서 누가 했는지도 갈린다
+# 문서: https://kubernetes.io/docs/reference/access-authn-authz/rbac/
+#       https://kubernetes.io/docs/concepts/security/rbac-good-practices/
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ops-agent
+  namespace: tenant-a
+---
+apiVersion: rbac.authorization.k8s.io/v1
+# 한 테넌트 안에서만 쓰니까 Role (ClusterRole 이 아니라)
+kind: ___
+metadata:
+  name: ops-agent
+  namespace: tenant-a
+rules:
+  - apiGroups: ["serving.knative.dev"]
+    resources: ["services"]
+    # get_service → get, patch_service(scale·rollback) → patch. create·delete 는 없다: 에이전트는 함수를 만들거나 지우지 못한다
+    verbs: [___]
+  - apiGroups: ["serving.knative.dev"]
+    resources: ["revisions"]
+    # list_revisions → list (rollback 이 되돌아갈 곳을 찾을 때)
+    verbs: [___]
+  - apiGroups: [___]
+    resources: ["podautoscalers"]
+    # get_podautoscaler → get
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    # list_pods → list. 일부러 빼는 것: pods/exec(셸 접속), pods/log(로그에 비밀이 섞일 수 있음), delete
+    verbs: [___]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    # pod_metrics → list (metrics-server 가 없으면 이 줄은 있어도 쓸 일이 없다)
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: ops-agent
+  namespace: tenant-a
+subjects:
+  - kind: ___
+    name: ops-agent
+    namespace: tenant-a
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: ___

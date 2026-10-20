@@ -1,0 +1,68 @@
+# Knative Service 템플릿 (Jeong 작성, 빈칸 8개). 빌드가 끝나면 컨트롤 플레인이 채워서 테넌트 namespace 에 server-side apply 한다.
+#
+# 컨트롤 플레인이 넣어 주는 값 (FunctionDeployer.finishDeploy)
+#   ${TENANT}   테넌트 namespace                     예) tenant-a
+#   ${NAME}     함수 이름 = Knative Service 이름       예) hello
+#   ${BUILD_ID} 빌드 ID                              예) hello-3f2a9c01be
+#   ${IMAGE}    digest 로 고정한 이미지 주소           예) localhost:5001/tenant-a/hello@sha256:0123...
+#
+# 문서: Service 스펙     https://knative.dev/docs/serving/reference/serving-api/#serving.knative.dev/v1.Service
+#       스케일 한도      https://knative.dev/docs/serving/autoscaling/scale-bounds/
+#       동시 요청 수     https://knative.dev/docs/serving/autoscaling/concurrency/
+#       트래픽 나누기    https://knative.dev/docs/serving/traffic-management/
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  # 컨트롤 플레인이 이 이름으로 찾는다. 함수 이름 그대로
+  name: ${NAME}
+  namespace: ${TENANT}
+  labels:
+    faas.poc/tenant: ${TENANT}
+    faas.poc/function: ${NAME}
+    app.kubernetes.io/managed-by: faas-control-plane
+spec:
+  # template 이 바뀔 때마다 Knative 는 새 Revision(바뀌지 않는 스냅샷)을 하나 만든다
+  template:
+    metadata:
+      annotations:
+        # 상태 조회가 "지금 서비스 중인 게 몇 번째 빌드인가" 를 이걸로 안다. 키 이름은 FunctionDeployer.ANNOTATION_BUILD_ID
+        faas.poc/build-id: ${BUILD_ID}
+        # TODO(human) 결정 2: 파드를 최대 몇 개까지 늘릴까? (문자열이라 따옴표)
+        #   3단계 ResourceQuota 안에 들어가야 한다: max-scale × limits.memory ≤ 테넌트 메모리 한도
+        #   MCP scale 도구의 min-scale 상한(5)도 이 값을 넘지 않는다
+        autoscaling.knative.dev/max-scale: "5"
+        # min-scale 은 일부러 안 쓴다. 운영 에이전트(MCP scale)의 몫이다.
+        #   여기 쓰면 server-side apply 에서 컨트롤 플레인이 그 필드의 주인이 되어, 다음 배포 때 에이전트 값을 덮어쓴다
+    spec:
+      # 파드 하나가 동시에 받는 요청 수 상한. 넘으면 Knative 가 파드를 늘린다. 0 = 무제한
+      containerConcurrency: 10
+      # 요청 하나 최대 30초. 넘으면 504
+      timeoutSeconds: 30
+      # 4단계 gVisor 를 끝냈으면 아래 주석을 풀어 사용자 코드를 gVisor 샌드박스 안에서 돌린다
+      #   (Knative 설정 config-features 의 kubernetes.podspec-runtimeclassname: enabled 필요)
+      # runtimeClassName: gvisor
+      containers:
+        # 태그(:latest) 대신 digest(@sha256:...) → 같은 Revision 은 언제 다시 떠도 똑같은 이미지
+        - image: ${IMAGE}
+          ports:
+            # 함수 런타임(server.py)이 듣는 포트. Knative 가 PORT 환경 변수로도 넣어 준다
+            - containerPort: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          # 3단계 테넌트 namespace 의 Pod Security "restricted" 를 통과하는 최소 설정
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+  # 트래픽을 어디로 보낼까. 새 배포는 항상 "가장 최근 Ready Revision" 으로 100%
+  #   에이전트가 rollback 하면 이 목록이 특정 Revision 고정으로 바뀌고, 다음 배포의 apply(force)가 다시 이걸로 되돌린다
+  traffic:
+    - latestRevision: true
+      percent: 100

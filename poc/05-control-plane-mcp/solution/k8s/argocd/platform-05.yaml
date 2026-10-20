@@ -1,0 +1,28 @@
+# 5단계 플랫폼(컨트롤 플레인 + 에이전트 권한)을 Argo CD 가 관리하게 하는 Application. Jeong 작성, 빈칸 5개.
+# 다 채운 뒤 poc/01-argocd/gitops/apps/ 에 복사해서 push 하면 root(App of Apps)가 알아서 만든다.
+# 주의: k8s/platform/ 의 빈칸(___)을 다 채우고 push 한 뒤에 복사한다. 빈칸이 남은 YAML 은 sync 에서 에러가 난다
+# 문서: https://argo-cd.readthedocs.io/en/stable/user-guide/directory/
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: platform-05
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1
+    targetRevision: main
+    # 레포 루트 기준. control-plane/ 과 ops-agent/ 를 둘 다 담은 상위 폴더
+    path: poc/05-control-plane-mcp/k8s/platform
+    # 평범한 YAML 폴더(Helm 차트 아님). 하위 폴더까지 읽으려면?
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    # namespace 를 비워 둔다: 파일마다 metadata.namespace 가 다르다 (faas-system, faas-build, tenant-a)
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

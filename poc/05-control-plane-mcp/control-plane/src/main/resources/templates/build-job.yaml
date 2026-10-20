@@ -1,0 +1,99 @@
+# 빌드 Job 템플릿 (Jeong 작성, 빈칸 12개). 컨트롤 플레인이 ${...} 를 채워서 faas-build namespace 에 만든다.
+#
+# 컨트롤 플레인이 넣어 주는 값 (FunctionDeployer.startDeploy)
+#   ${TENANT}          테넌트 = namespace 이름        예) tenant-a
+#   ${NAME}            함수 이름                       예) hello
+#   ${BUILD_ID}        이름 + 코드 해시 10자           예) hello-3f2a9c01be
+#   ${BUILD_NAMESPACE} 빌드가 뜨는 namespace           예) faas-build
+#   ${PUSH_IMAGE}      kaniko 가 올릴 이미지 주소      예) kind-registry:5000/tenant-a/hello:hello-3f2a9c01be
+#
+# 빈칸(___)을 다 채우고 control-plane 폴더에서 ./mvnw test 가 통과하면 끝. 테스트가 이 파일을 실제로 읽어서 검사한다.
+# 문서: Job        https://kubernetes.io/docs/concepts/workloads/controllers/job/
+#       kaniko 옵션 https://github.com/GoogleContainerTools/kaniko#additional-flags
+#       taint      https://kubernetes.io/docs/concepts/scheduling-eviction/taint-and-toleration/
+apiVersion: batch/v1
+kind: Job
+metadata:
+  # 컨트롤 플레인이 이 이름으로 Job 을 찾는다. "build-" + 빌드 ID 여야 한다 (아니면 FunctionDeployer 가 에러를 낸다)
+  name: build-___
+  namespace: ${BUILD_NAMESPACE}
+  # 상태 조회(GET)가 "이 테넌트의 이 함수의 빌드" 를 라벨로 찾는다. 키 이름은 FunctionDeployer.LABEL_* 와 같아야 한다
+  labels:
+    faas.poc/tenant: ___
+    faas.poc/function: ___
+    faas.poc/build-id: ${BUILD_ID}
+spec:
+  # TODO(human) 결정 1: 빌드가 실패하면 몇 번 다시 시도할까?
+  #   코드 문법 오류 같은 실패는 다시 해도 또 실패한다 → 0 이면 빨리 실패를 알려 준다
+  #   레지스트리 일시 장애 같은 실패는 다시 하면 성공한다 → 1~2 면 덜 실패한다
+  backoffLimit: ___
+  # 빌드가 10분을 넘으면 강제로 끝낸다 (무한 루프 코드 등). 컨트롤 플레인 build-timeout(5m)보다 길게
+  activeDeadlineSeconds: 600
+  # 끝난 Job 은 1시간 뒤 자동 삭제. 소스 ConfigMap 도 이 Job 이 주인(ownerReference)이라 같이 지워진다
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        faas.poc/tenant: ${TENANT}
+        faas.poc/function: ${NAME}
+        faas.poc/build-id: ${BUILD_ID}
+    spec:
+      # Job 파드는 Always 를 못 쓴다. 실패한 컨테이너를 같은 파드에서 다시 띄우지 않게 Never (재시도는 backoffLimit 이 맡음)
+      restartPolicy: ___
+      # ---- 빌드 노드 풀 (4단계에서 만든 노드 라벨·taint 와 맞춘다) ----
+      # nodeSelector = "이 라벨이 붙은 노드에만 가라". 빌드는 CPU 를 많이 먹으니 함수가 도는 노드와 떼어 놓는다
+      nodeSelector:
+        ___: ___
+      # toleration = "그 노드에 붙은 taint(출입 금지 표시)를 나는 견딘다". 빌드 노드에는 일반 파드가 못 오게 taint 가 있다
+      tolerations:
+        - key: pool
+          operator: Equal
+          value: build
+          effect: ___
+      # ---- 1) 소스 복사 ----
+      # ConfigMap 을 볼륨으로 붙이면 파일이 심볼릭 링크로 보인다. kaniko 가 링크를 그대로 복사하면 빌드가 깨질 수 있어서
+      # 먼저 진짜 파일로 복사(cp -L = 링크를 따라가서 내용 복사)해 둔다
+      initContainers:
+        - name: copy-source
+          image: busybox:1.36
+          command: ["sh", "-c", "cp -L /src/* /workspace/"]
+          volumeMounts:
+            - name: src
+              mountPath: /src
+              readOnly: true
+            - name: workspace
+              mountPath: /workspace
+      # ---- 2) 이미지 빌드 + 푸시 ----
+      containers:
+        # 컨테이너 이름은 kaniko 여야 한다. 컨트롤 플레인이 이 이름의 종료 메시지에서 digest 를 읽는다
+        - name: kaniko
+          # Docker 데몬 없이 컨테이너 안에서 Dockerfile 을 빌드하는 도구. 4단계와 같은 이미지·버전을 쓴다
+          image: gcr.io/kaniko-project/executor:v1.23.2
+          args:
+            # 빌드 재료가 있는 폴더 (initContainer 가 복사해 둔 곳)
+            - --context=dir:///workspace
+            - --dockerfile=/workspace/Dockerfile
+            # 다 만든 이미지를 올릴 주소. 컨트롤 플레인이 채워 주는 값 중 무엇일까?
+            - --destination=___
+            # 올린 이미지의 digest(sha256:...)를 이 파일에 써라. 쿠버네티스는 이 파일 내용을 컨테이너 "종료 메시지" 로 보관한다
+            #   → 컨트롤 플레인이 파드 상태에서 digest 를 읽어 Knative Service 에 "태그 대신 digest" 로 넣는다 (README 결정 3)
+            - --digest-file=___
+            # 로컬 레지스트리는 https 가 아니라 http 라서 필요하다. 운영 레지스트리면 빼야 한다
+            - --insecure
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+            limits:
+              memory: 1Gi
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      volumes:
+        # 컨트롤 플레인이 만든 소스 ConfigMap. 이름 규칙은 FunctionDeployer 에서 "src-" + 빌드 ID
+        - name: src
+          configMap:
+            name: ___
+        # 파드가 살아 있는 동안만 쓰는 빈 폴더
+        - name: workspace
+          emptyDir: {}

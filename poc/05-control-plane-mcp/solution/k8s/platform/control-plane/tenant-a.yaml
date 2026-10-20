@@ -1,0 +1,17 @@
+# 테넌트 하나에 "컨트롤 플레인이 함수를 배포해도 된다" 는 허가. 테넌트가 늘면 이 파일을 복사해 namespace 만 바꾼다. Jeong 작성, 빈칸 2개.
+# 3단계는 테넌트를 ApplicationSet + tenant 차트로 찍어 낸다. 이 RoleBinding 을 그 차트(templates/rbac.yaml)로 옮기면 테넌트가 늘 때 손댈 곳이 없다 (셀프 연습)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: faas-control-plane-functions
+  # 권한이 적용되는 곳 = 테넌트 namespace
+  namespace: tenant-a
+subjects:
+  - kind: ServiceAccount
+    name: control-plane
+    namespace: faas-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  # RoleBinding 이 ClusterRole 을 가리키면: "그 ClusterRole 의 권한을, 이 RoleBinding 의 namespace 안에서만" 준다
+  kind: ClusterRole
+  name: faas-control-plane-functions

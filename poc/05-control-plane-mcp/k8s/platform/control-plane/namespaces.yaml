@@ -1,0 +1,21 @@
+# 컨트롤 플레인이 사는 곳(faas-system)과 빌드 Job 이 뜨는 곳(faas-build). Jeong 작성, 빈칸 2개.
+# Pod Security Admission = namespace 라벨 하나로 "이 namespace 에 어떤 파드까지 허용할지" 정하는 내장 기능.
+#   privileged(제한 없음) / baseline(위험한 것만 금지: 특권 컨테이너, 호스트 네트워크 등) / restricted(root 금지까지)
+# 문서: https://kubernetes.io/docs/concepts/security/pod-security-admission/
+#       https://kubernetes.io/docs/concepts/security/pod-security-standards/
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: faas-system
+  labels:
+    # 컨트롤 플레인 Dockerfile 은 USER 10001 (root 아님) → 가장 엄격한 단계도 통과한다
+    pod-security.kubernetes.io/enforce: ___
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: faas-build
+  labels:
+    # TODO(human) 결정: kaniko 는 컨테이너 안에서 root 로 이미지 파일시스템을 만든다 (root 가 아니면 빌드가 안 된다).
+    #   그럼 이 namespace 에 허용할 수 있는 가장 엄격한 단계는? 왜 빌드를 테넌트 namespace 가 아니라 여기서 돌리는지도 README 2절에 있다
+    pod-security.kubernetes.io/enforce: ___

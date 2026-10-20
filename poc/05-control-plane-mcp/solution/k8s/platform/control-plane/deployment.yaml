@@ -1,0 +1,77 @@
+# 컨트롤 플레인 Deployment + Service. Jeong 작성, 빈칸 4개.
+# 이미지는 레지스트리가 아니라 kind 노드에 직접 넣는다 (README 4단계):
+#   docker build -t faas-control-plane:0.1 poc/05-control-plane-mcp/control-plane
+#   kind load docker-image faas-control-plane:0.1 --name faas
+# 문서: https://kubernetes.io/docs/concepts/workloads/controllers/deployment/
+#       https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-plane
+  namespace: faas-system
+  labels:
+    app: control-plane
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: control-plane
+  template:
+    metadata:
+      labels:
+        app: control-plane
+    spec:
+      # 이 파드가 API 서버에 말할 때 쓰는 신분. rbac.yaml 에서 만든 것. 안 쓰면 default SA 로 떠서 전부 403
+      serviceAccountName: control-plane
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: control-plane
+          image: faas-control-plane:0.1
+          # kind load 로 넣은 이미지는 레지스트리에 없다. Always 면 레지스트리에서 받으려다 ErrImagePull
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          # application.yml 의 faas.* 를 환경 변수로 덮어쓴다 (FAAS_REGISTRY_PUSH → faas.registry-push)
+          env:
+            - name: FAAS_REGISTRY_PUSH
+              value: kind-registry:5000
+            - name: FAAS_REGISTRY_PULL
+              value: localhost:5001
+          # Spring Boot actuator 의 health 주소 (pom.xml 에 actuator 가 있다)
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8080
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-plane
+  namespace: faas-system
+spec:
+  selector:
+    app: control-plane
+  ports:
+    - port: 80
+      targetPort: 8080
