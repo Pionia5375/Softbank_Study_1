@@ -382,6 +382,10 @@ kubectl apply -f poc/01-argocd/gitops/root.yaml
 
 두 번째 함수 `bye-fn` 을 만든다. 차트는 hello-fn 을 그대로 쓰고 `message` 만 다르게. 힌트: Application 의 `source.helm.valuesObject` 로 값만 덮어쓸 수 있다 (https://argo-cd.readthedocs.io/en/stable/user-guide/helm/). `gitops/apps/bye-fn.yaml` 하나 추가 + push 만으로 뜨면 통과. kubectl apply 는 치지 않는다.
 
+## 아직 확인 못 한 것
+
+- 【미검증】 실제 kind 클러스터에서의 동작 전체. Claude 쪽 컨테이너에선 kind 로 파드를 띄울 수 없어서, `helm lint`·`helm template`(차트 10.10.5 렌더)·YAML 문법까지만 확인했다. 첫 실행에서 에러가 나면 출력 그대로 스레드에 붙여 줘.
+
 ## 검증 명령과 기대 출력
 
 ```bash

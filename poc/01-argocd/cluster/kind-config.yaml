@@ -16,5 +16,7 @@ nodes:
   - role: worker
     image: kindest/node:v1.37.0
 networking:
-  # false = kind 기본 CNI(kindnet)를 쓴다. kindnet 은 NetworkPolicy 를 강제하지 않는다 → 10/23 에 바꿀 이유
+  # false = kind 기본 CNI(kindnet)를 쓴다. 최신 kindnet 은 표준 NetworkPolicy 도 강제한다
+  #   (https://kindnet.sigs.k8s.io/docs/user/network-policies/).
+  #   10/23 에 Cilium 으로 바꾸는 이유는 차단 여부가 아니라 Hubble 관측("왜 막혔나" 증거)과 L7(HTTP) 정책이다 (poc/03 README 1.5절)
   disableDefaultCNI: false
