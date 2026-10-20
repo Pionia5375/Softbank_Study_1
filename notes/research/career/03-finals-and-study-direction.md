@@ -230,7 +230,7 @@
 - CKA 공부와 거의 그대로 겹친다. 격리(RBAC·NetworkPolicy·ResourceQuota), 스케줄링(taint·affinity·노드 풀), 클러스터 구축(kubeadm), 트러블슈팅은 CKA 출제 범위이면서 본선 FaaS 플랫폼의 부품이다 【사실: CKA 커리큘럼 https://github.com/cncf/curriculum 】.
 
 **고칠 사실 1: 작년 우승팀은 멀티 클러스터가 아니었다** 【사실: Blue 레포 직접 확인】
-- **클러스터 1개**(`sfbank-blue.k8s.local`)를 EC2 위에 kOps로 직접 구축, **멀티 AZ**로 이중화.
+- **클러스터 1개**(`sfbank-blue.k8s.local`)를 EC2 위에 kOps로 직접 구축. 도표는 2a·2c 멀티 AZ로 그렸지만 **실제 `cluster.yaml`에서 두 AZ에 다 있는 건 일반 워커뿐**이고, 컨트롤 플레인(etcd 1멤버)·스팟·빌드·모니터링 노드는 모두 2c에만 있다 【사실: https://github.com/sh-final-blue/kops-repo/blob/main/cluster.yaml 】. 2c 장애 시 클러스터 전체가 멈추는 구성 【추정】. 제대로 된 HA는 컨트롤 플레인 3대·3 AZ (etcd 과반수).
 - 격리는 클러스터나 Namespace가 아니라 **WASM 샌드박스**(메모리 샌드박싱, 시스템 콜 제한)로 했다.
 - 스팟은 **상태 없는 함수 실행 노드에만**, 컨트롤 플레인은 온디맨드.
 - **빌드 노드와 실행 노드를 분리**해서 API 병목을 없애고 실행 노드만 Cluster Autoscaler로 독립 스케일.
