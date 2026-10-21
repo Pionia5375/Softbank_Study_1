@@ -54,3 +54,25 @@ EOF
 ```
 - 결과: unclosed/mismatch/dup ids 비어 있음, 리터럴 색 없음.
 - 마지막 보고: 파일 경로, 절 목록, SVG 개수, mermaid 개수, 【확인 필요】 표시한 곳, 레포에서 발견한 이상한 점(코드와 README 가 다른 곳 등).
+
+## 용어 주석 형식 (3판부터, 2026-10-21)
+본문 문장 안에 "용어(설명)" 를 끼워 넣지 않는다. 용어는 `<span class="t">`, 설명은 그 블록 바로 뒤 `aside.notes` 로 뺀다. 번호는 CSS 카운터가 자동으로 붙이고(장 안에서 1부터), 넓은 화면(≥1260px)에서는 guide.js 가 주석을 단락 옆 여백으로 띄우고, 좁은 화면에서는 단락 아래 상자로 보인다. 책의 각주와 같다.
+
+```html
+<p>무대는 맥 위의 <span class="t">kind</span> 클러스터다. 맥의 <code>localhost:8081</code> 로 들어온 요청은
+control-plane 노드의 <span class="t">NodePort</span> 31080 을 지나 Kourier 로 간다. … 없으면 <span class="t">activator</span>로 간다.</p>
+<aside class="notes"><dl>
+<div><dt>kind</dt><dd>Kubernetes in Docker. Docker 컨테이너 하나를 쿠버네티스 노드 하나로 쓰는 로컬 클러스터 도구. 여기서는 control-plane 1대와 워커 3대.</dd></div>
+<div><dt>NodePort</dt><dd>모든 노드의 같은 포트를 열어 클러스터 안 Service 로 넘겨 주는 방식.</dd></div>
+<div><dt>activator</dt><dd>파드가 없을 때 요청을 대신 받아 두었다가 파드가 뜨면 넘기는 Knative 부품.</dd></div>
+</dl></aside>
+```
+
+규칙:
+- `aside.notes` 는 `.t` 가 든 블록 **바로 뒤 형제**: `</p>`, `</ul>`/`</ol>`(li 안의 용어는 목록 전체 뒤), `.table-wrap` 의 `</div>`, `</figure>`(figcaption 의 용어), `</dl>`, `</blockquote>` 다음. `.callout` 안의 용어는 그 callout 의 **마지막 자식**으로 aside 를 넣는다. `.grid > .item` 안은 item 안 p 뒤.
+- aside 의 `dt` 순서 = 그 블록 안 `.t` 순서. dt 수 = .t 수. 한 블록에 aside 하나.
+- `dt` 는 본문에 쓴 말 그대로 + 필요하면 원어 `파드(pod)`, `KPA(Knative Pod Autoscaler)`. `<code>` 가능. `dd` 는 한두 문장(대개 120자 이내), `<code>`·`<a>` 가능.
+- 한 장에서 같은 용어는 처음 나올 때 한 번만 `.t`. 뒤에서는 그냥 쓴다.
+- `.t` 를 두지 않는 곳: h1~h4, nav, chip, pre, svg, mermaid, `dl.terms`(용어집), aside.notes 안, `.t` 안.
+- guide.css / guide.js 는 고치지 않는다.
+- 검사: `python3 -I docs/guide/_check_notes.py docs/guide/chNN.html` → 오류 0 (레포 루트에서).

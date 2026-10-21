@@ -44,7 +44,7 @@
     nav.innerHTML = html;
 
     var btn = document.getElementById("toggle-deep");
-    function apply(on) { document.body.classList.toggle("shallow", on); btn.setAttribute("aria-pressed", on ? "true" : "false"); btn.textContent = on ? "3단계 보이기" : "3단계 숨기기"; }
+    function apply(on) { document.body.classList.toggle("shallow", on); btn.setAttribute("aria-pressed", on ? "true" : "false"); btn.textContent = on ? "3단계 보이기" : "3단계 숨기기"; scheduleNotes(); }
     apply(store("guide-shallow") === "1");
     btn.addEventListener("click", function () { var on = !document.body.classList.contains("shallow"); apply(on); store("guide-shallow", on ? "1" : "0"); });
 
@@ -111,9 +111,76 @@
       flowchart: { htmlLabels: true, curve: "basis" },
       sequence: { mirrorActors: false, showSequenceNumbers: true }
     });
-    try { window.mermaid.run({ querySelector: "pre.mermaid:not([data-processed])" }); } catch (e) { /* 다이어그램 문법 오류는 원문 그대로 보인다 */ }
+    try { var r = window.mermaid.run({ querySelector: "pre.mermaid:not([data-processed])" }); if (r && r.then) r.then(scheduleNotes, scheduleNotes); } catch (e) { /* 다이어그램 문법 오류는 원문 그대로 보인다 */ }
   }
 
-  function init() { buildNav(); renderMermaid(); }
+  // ---------- 용어 주석 배치 ----------
+  // 본문 .t(용어) 와 aside.notes 안의 dt/dd 를 순서대로 짝지어 hover 하이라이트와 title 을 붙이고,
+  // 넓은 화면(≥1260px)에서는 aside 를 그 단락 옆 여백으로 띄운다. 겹치면 아래로 밀고, 다음 그림·표·제목과 겹칠 자리면 단락 아래에 둔다.
+  var LIMIT = "figure, .table-wrap, pre, .grid, .wide, .pager, h2, .tier, .fig";
+  function pairNotes() {
+    var main = document.querySelector("main"); if (!main) return;
+    var terms = main.querySelectorAll(".t");
+    var items = main.querySelectorAll("aside.notes dl > div");
+    terms.forEach(function (t, i) {
+      var it = items[i]; if (!it) return;
+      t.setAttribute("data-n", i + 1); it.setAttribute("data-n", i + 1);
+      var dd = it.querySelector("dd"); if (dd) t.title = dd.textContent.trim();
+      t.addEventListener("mouseenter", function () { it.classList.add("hl"); });
+      t.addEventListener("mouseleave", function () { it.classList.remove("hl"); });
+      it.addEventListener("mouseenter", function () { t.classList.add("hl"); });
+      it.addEventListener("mouseleave", function () { t.classList.remove("hl"); });
+    });
+  }
+  function topIn(el, page) { return el.getBoundingClientRect().top - page.getBoundingClientRect().top; }
+  function nextLimitTop(a, page) {
+    var el = a;
+    while (el && el !== page) {
+      var n = el.nextElementSibling;
+      if (n) {
+        if (n.matches(LIMIT)) return topIn(n, page);
+        var d = n.querySelector(LIMIT); if (d) return topIn(d, page);
+        el = n; continue;
+      }
+      var p = el.parentElement;
+      if (!p || p === page) return null;
+      if (p.matches(".tier, .callout")) return topIn(p, page) + p.offsetHeight;
+      el = p;
+    }
+    return null;
+  }
+  function layoutNotes() {
+    var page = document.querySelector(".page"); if (!page) return;
+    var wide = matchMedia("(min-width: 1260px)").matches;
+    var notes = page.querySelectorAll("aside.notes");
+    var last = -1e9, gap = 14;
+    notes.forEach(function (a) {
+      a.classList.remove("side"); a.style.top = "";
+      if (!wide || a.offsetParent === null) return;
+      var prev = a.previousElementSibling;
+      if (!prev || a.closest(".callout, .grid, .table-wrap, figure, .item, li, dd")) return;
+      // 앞 블록이 그림·표·코드처럼 폭이 넓은 것이면 여백이 비어 있지 않으므로 그 아래 상자로 둔다
+      if (prev.matches("figure, .table-wrap, .grid, pre, .wide, .fig")) return;
+      var top = Math.max(topIn(prev, page), last + gap);
+      a.classList.add("side");
+      // top 은 .page 기준으로 계산했지만, 실제 기준점(offsetParent)은 position: relative 인 .tier 일 수 있다
+      a.style.top = (top - topIn(a.offsetParent || page, page)) + "px";
+      var h = a.offsetHeight, lim = nextLimitTop(a, page);
+      if (lim !== null && top + h > lim - gap) { a.classList.remove("side"); a.style.top = ""; return; }
+      last = top + h;
+    });
+  }
+  var notesTimer = null;
+  function scheduleNotes() { clearTimeout(notesTimer); notesTimer = setTimeout(layoutNotes, 60); }
+  function initNotes() {
+    pairNotes(); layoutNotes();
+    window.addEventListener("resize", scheduleNotes);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleNotes);
+    window.addEventListener("load", scheduleNotes);
+    var page = document.querySelector(".page");
+    if (page && window.ResizeObserver) new ResizeObserver(scheduleNotes).observe(page);
+  }
+
+  function init() { buildNav(); initNotes(); renderMermaid(); }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init); else init();
 })();

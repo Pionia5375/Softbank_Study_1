@@ -25,7 +25,13 @@
 <header class="chapter-head">
   <p class="eyebrow">01장 · 관련 폴더 poc/01-argocd (그리고 03~07 의 gitops/)</p>
   <h1>GitOps와 Argo CD</h1>
-  <p class="lede"><code>git push</code> 한 번이 어떻게 클러스터(cluster, 쿠버네티스가 하나로 묶어 관리하는 서버들) 안의 파드(Pod, 쿠버네티스가 컨테이너를 띄우는 가장 작은 단위. 컨테이너는 프로그램과 그 실행 환경을 하나로 묶어 격리해 띄우는 단위다)가 되는지, Argo CD(Git 을 읽어 클러스터를 그대로 맞추는 GitOps 도구. Argo 프로젝트의 CD, 즉 지속적 배포 부품)의 부품 일곱 개가 그 사이에서 각각 무엇을 하는지, 그리고 그 길이 끊겼을 때 어디를 보고 어떻게 고치는지를 말로 설명할 수 있게 된다. GitOps 는 "운영 상태의 정답을 Git 에 두고, 클러스터 안의 에이전트(agent, 사람 대신 일하는 프로그램)가 그 정답에 실제를 계속 맞추는 방식" 이다. 처음 보는 주제에서도 "원하는 상태를 적어 두고, 에이전트가 계속 맞춘다" 는 틀을 꺼내 쓸 수 있게 하는 것이 이 장의 목표다.</p>
+  <p class="lede"><code>git push</code> 한 번이 어떻게 <span class="t">클러스터</span> 안의 <span class="t">파드</span>가 되는지, <span class="t">Argo CD</span> 의 부품 일곱 개가 그 사이에서 각각 무엇을 하는지, 그리고 그 길이 끊겼을 때 어디를 보고 어떻게 고치는지를 말로 설명할 수 있게 된다. GitOps 는 "운영 상태의 정답을 Git 에 두고, 클러스터 안의 <span class="t">에이전트</span>가 그 정답에 실제를 계속 맞추는 방식" 이다. 처음 보는 주제에서도 "원하는 상태를 적어 두고, 에이전트가 계속 맞춘다" 는 틀을 꺼내 쓸 수 있게 하는 것이 이 장의 목표다.</p>
+  <aside class="notes"><dl>
+  <div><dt>클러스터(cluster)</dt><dd>쿠버네티스가 하나로 묶어 관리하는 서버들.</dd></div>
+  <div><dt>파드(Pod)</dt><dd>쿠버네티스가 컨테이너를 띄우는 가장 작은 단위. 컨테이너는 프로그램과 그 실행 환경을 하나로 묶어 격리해 띄우는 단위다.</dd></div>
+  <div><dt>Argo CD</dt><dd>Git 을 읽어 클러스터를 그대로 맞추는 GitOps 도구. Argo 프로젝트의 CD, 즉 지속적 배포 부품.</dd></div>
+  <div><dt>에이전트(agent)</dt><dd>사람 대신 일하는 프로그램.</dd></div>
+  </dl></aside>
   <div class="chapter-meta">
     <span class="chip">PoC 폴더 <b>poc/01-argocd</b></span>
     <span class="chip">핵심 기술 <b>GitOps · Argo CD · Helm · App of Apps · ApplicationSet · AppProject</b></span>
@@ -34,7 +40,22 @@
 </header>
 
 <h2 id="map">이 장의 지도</h2>
-<p>전체 PoC 는 kind(Kubernetes in Docker, 도커 컨테이너 하나하나를 노드로 삼아 노트북 안에 쿠버네티스 클러스터를 만드는 도구) 클러스터 <code>faas</code> 위에 플랫폼을 쌓고, 그 위에서 테넌트(tenant, 플랫폼을 나눠 쓰는 사용자 조직)의 함수를 돌린다. 플랫폼은 Argo CD, Argo Rollouts(파드를 조금씩 바꿔 가며 배포하는 점진 배포 도구, <a href="ch02-rollouts.html#map">2장</a>), Knative(쿠버네티스 위에서 HTTP 서비스를 요청이 없으면 0개까지 줄여 주는 서버리스 계층, <a href="ch05-knative.html#map">5장</a>), 테넌트 울타리(<a href="ch03-tenancy.html#map">3장</a>), 컨트롤 플레인(함수를 HTTP 로 받아 빌드하고 배포하는 우리 PoC 의 전용 API 서비스. 쿠버네티스 자체의 컨트롤 플레인(API 서버 등)과는 다른 말이다, <a href="ch07-control-plane.html#map">7장</a>)으로 이루어진다. 클러스터 안은 namespace(네임스페이스, 리소스를 묶어 나누는 논리적 칸막이. 그림의 fn-demo, tenant-a 같은 이름이 그것이다)로 나뉘고, 리소스(resource)는 쿠버네티스가 관리하는 오브젝트 하나하나를 말한다. 예를 들어 Deployment 는 "같은 파드 N개를 유지하라" 는 리소스이고, Service 는 그 파드들 앞에 고정된 이름과 IP 를 두는 리소스다. 이 장은 그중 <strong>플랫폼이 Git 에서 클러스터로 들어오는 길</strong>을 다룬다. 01 단계에서 세운 Argo CD 와 App of Apps(root Application 하나가 나머지 Application 을 Git 에서 만들어 내는 구조, <a href="#app-of-apps">12절</a>)는 이후 02~07 단계가 전부 그 위에 올라가는 바닥이다.</p>
+<p>전체 PoC 는 <span class="t">kind</span> 클러스터 <code>faas</code> 위에 플랫폼을 쌓고, 그 위에서 <span class="t">테넌트</span>의 함수를 돌린다. 플랫폼은 Argo CD, <span class="t">Argo Rollouts</span>(<a href="ch02-rollouts.html#map">2장</a>), <span class="t">Knative</span>(<a href="ch05-knative.html#map">5장</a>), 테넌트 울타리(<a href="ch03-tenancy.html#map">3장</a>), <span class="t">컨트롤 플레인</span>(<a href="ch07-control-plane.html#map">7장</a>)으로 이루어진다.</p>
+<aside class="notes"><dl>
+<div><dt>kind</dt><dd>Kubernetes in Docker. 도커 컨테이너 하나하나를 노드로 삼아 노트북 안에 쿠버네티스 클러스터를 만드는 도구.</dd></div>
+<div><dt>테넌트(tenant)</dt><dd>플랫폼을 나눠 쓰는 사용자 조직.</dd></div>
+<div><dt>Argo Rollouts</dt><dd>파드를 조금씩 바꿔 가며 배포하는 점진 배포 도구.</dd></div>
+<div><dt>Knative</dt><dd>쿠버네티스 위에서 HTTP 서비스를 요청이 없으면 0개까지 줄여 주는 서버리스 계층.</dd></div>
+<div><dt>컨트롤 플레인</dt><dd>함수를 HTTP 로 받아 빌드하고 배포하는 우리 PoC 의 전용 API 서비스. 쿠버네티스 자체의 컨트롤 플레인(API 서버 등)과는 다른 말이다.</dd></div>
+</dl></aside>
+<p>클러스터 안은 <span class="t">namespace</span> 로 나뉘고, 각 namespace 안에 <span class="t">Deployment</span>·<span class="t">Service</span> 같은 <span class="t">리소스</span>가 들어 있다. 이 장은 그중 <strong>플랫폼이 Git 에서 클러스터로 들어오는 길</strong>을 다룬다. 01 단계에서 세운 Argo CD 와 <span class="t">App of Apps</span>(<a href="#app-of-apps">12절</a>)는 이후 02~07 단계가 전부 그 위에 올라가는 바닥이다.</p>
+<aside class="notes"><dl>
+<div><dt>namespace(네임스페이스)</dt><dd>리소스를 묶어 나누는 논리적 칸막이. 그림의 fn-demo, tenant-a 같은 이름이 그것이다.</dd></div>
+<div><dt>Deployment</dt><dd>"같은 파드 N개를 유지하라" 는 리소스.</dd></div>
+<div><dt>Service</dt><dd>파드들 앞에 고정된 이름과 IP 를 두는 리소스.</dd></div>
+<div><dt>리소스(resource)</dt><dd>쿠버네티스가 관리하는 오브젝트 하나하나.</dd></div>
+<div><dt>App of Apps</dt><dd>root Application 하나가 나머지 Application 을 Git 에서 만들어 내는 구조.</dd></div>
+</dl></aside>
 <figure>
 <div class="fig scroll">
 <svg viewBox="0 0 960 430" role="img" aria-labelledby="map-t">
@@ -94,7 +115,7 @@
 <path d="M530 362 L597 362" class="d-e-api" marker-end="url(#map-m-api)"/>
 </svg>
 </div>
-<figcaption><b>그림 1-1.</b> 이 장이 다루는 부분은 초록 선(Git → Argo CD)과 주황 선(Argo CD → 각 namespace)이다. 회색 선(컨트롤 플레인이 쿠버네티스 API 로 직접 함수를 만드는 길)은 7장에서 다룬다. 플랫폼은 GitOps, 사용자 함수는 API 직접이라는 두 갈래를 처음부터 구분해 둔다.</figcaption>
+<figcaption><b>그림 1-1.</b> 이 장이 다루는 부분은 초록 선(Git → Argo CD)과 주황 선(Argo CD → 각 namespace)이다. 회색 선은 컨트롤 플레인이 쿠버네티스 API 로 직접 함수를 만드는 길이고, 7장에서 다룬다. 플랫폼은 GitOps, 사용자 함수는 API 직접이라는 두 갈래를 처음부터 구분해 둔다.</figcaption>
 </figure>
 <ol><li><a href="#push-pull">push 배포와 pull 배포</a>: 밖에서 미는 배포와 안에서 끌어오는 배포의 차이, 그리고 우리 PoC 가 두 방식을 어디에 나눠 쓰는지</li><li><a href="#principles">OpenGitOps 4원칙</a>: 선언적, 버전·불변, 자동 pull, 계속 조정. 각 원칙이 Argo CD 의 어느 부품에 해당하나</li><li><a href="#architecture">Argo CD 구조와 부품</a>: server, repo-server, application-controller, applicationset-controller, redis, dex, notifications 의 안쪽</li><li><a href="#application">Application 한 장 읽기</a>: source, destination, syncPolicy 와 status 필드를 한 줄씩</li><li><a href="#reconcile">조정 루프와 diff</a>: 원하는 상태와 실제 상태를 어떻게 비교하나: 정규화, 3방향 비교, ignoreDifferences</li><li><a href="#status">Sync 상태와 Health 상태</a>: 두 축이 따로 움직이는 이유와 상태 기계</li><li><a href="#detect">변경 감지: 폴링, refresh, webhook</a>: timeout.reconciliation + jitter, normal/hard refresh, git push 에서 파드 Ready 까지</li><li><a href="#sync">Sync 작업: 단계, 웨이브, 훅, 옵션</a>: 적용 순서 규칙, PreSync/Sync/PostSync/SyncFail, CreateNamespace·ServerSideApply 등</li><li><a href="#auto">자동 동기화, prune, selfHeal, retry</a>: 자동 동기화의 기본 재시도(5회)와, 그 뒤 같은 커밋에서는 왜 다시 안 하나</li><li><a href="#tracking">리소스 추적과 finalizer</a>: Argo CD 가 "내 것" 을 알아보는 방법과 지울 때의 연쇄</li><li><a href="#sources">Helm 차트와 YAML 폴더 렌더링</a>: helm install 이 아니라 helm template. values 우선순위, directory recurse/exclude</li><li><a href="#app-of-apps">App of Apps</a>: root 하나로 나머지를 세우는 구조와 PoC 의 Application 나무</li><li><a href="#appset">ApplicationSet</a>: 틀 하나 + 목록 하나로 테넌트를 찍어 내는 공장 (03)</li><li><a href="#project">AppProject 와 Argo CD RBAC</a>: 테넌트가 남의 namespace 나 울타리를 못 건드리게 하는 Argo CD 쪽 벽 (03)</li><li><a href="#multicluster">여러 클러스터</a>: 로컬 kind 와 EC2 k3s 가 같은 Git 을 보는 방식 (07)</li><li><a href="#drift">드리프트, 롤백, 깨뜨려 보기</a>: README 5단계 세 실험: selfHeal, 라벨 불일치, prune</li><li><a href="#bootstrap">부트스트랩 문제</a>: Argo CD 는 자기 자신을 어떻게 까나. run-all 의 순서</li><li><a href="#recap">정리</a>: 체크리스트, 결정 표, 본선에서 옮겨 쓸 패턴, 스스로 답해 볼 질문</li></ol>
 <p>읽는 법: 절마다 <strong>1단계(개괄)</strong> → <strong>2단계(동작 원리)</strong> → <strong>3단계(세부 로직)</strong> 순서다. 왼쪽 목차 아래 "3단계 숨기기" 버튼으로 세부 로직을 접고 처음엔 1·2단계만 훑어도 된다. 각 절 끝의 색 상자는 우리 PoC 에서 어디인지(초록), 깨지면 어떻게 보이는지(빨강), 왜 이걸 골랐는지(보라), 공식 문서(파랑)다.</p>
@@ -102,7 +123,12 @@
 <h2 id="push-pull">push 배포와 pull 배포</h2>
 <div class="tier" data-tier="1">
 <h3>push 와 pull 은 무엇이 다른가</h3>
-<p>지금까지 실습(Lab 02~04, 07)에서는 맥에서 <code>helm install</code>, <code>kubectl apply</code> 를 직접 쳤다. kubectl 은 클러스터의 API 서버에 명령을 보내는 CLI 이고, <code>apply</code> 는 "이 YAML 대로 만들거나 고쳐라" 다. Helm 은 쿠버네티스 YAML 묶음을 템플릿과 값으로 포장해 설치하는 패키지 도구이고, 그 묶음을 차트(chart)라고 부른다. 두 명령 모두 결국 API 서버(kube-apiserver, 클러스터의 모든 리소스를 읽고 쓰는 유일한 창구. 뒤에는 그 리소스를 저장하는 키-값 DB etcd 가 있고, kubectl 도 Argo CD 도 여기에 요청한다)에 요청을 보낸다. 클러스터 <strong>밖</strong>에서 클러스터 <strong>안</strong>으로 밀어 넣으니 <strong>push 방식</strong>이다. GitOps 는 방향을 뒤집는다. 클러스터 안에서 도는 프로그램(에이전트)이 Git 을 읽어 와서 스스로 맞춘다. 그래서 <strong>pull 방식</strong>이다.</p>
+<p>지금까지 실습(Lab 02~04, 07)에서는 맥에서 <code>helm install</code>, <code>kubectl apply</code> 를 직접 쳤다. <span class="t">kubectl</span> 도 <span class="t">Helm</span> 도 결국 <span class="t">API 서버</span>에 요청을 보낸다. 클러스터 <strong>밖</strong>에서 클러스터 <strong>안</strong>으로 밀어 넣으니 <strong>push 방식</strong>이다. GitOps 는 방향을 뒤집는다. 클러스터 안에서 도는 프로그램, 즉 에이전트가 Git 을 읽어 와서 스스로 맞춘다. 그래서 <strong>pull 방식</strong>이다.</p>
+<aside class="notes"><dl>
+<div><dt>kubectl</dt><dd>클러스터의 API 서버에 명령을 보내는 CLI. <code>apply</code> 는 "이 YAML 대로 만들거나 고쳐라" 다.</dd></div>
+<div><dt>Helm</dt><dd>쿠버네티스 YAML 묶음을 템플릿과 값으로 포장해 설치하는 패키지 도구. 그 묶음을 차트(chart)라고 부른다.</dd></div>
+<div><dt>API 서버(kube-apiserver)</dt><dd>클러스터의 모든 리소스를 읽고 쓰는 유일한 창구. 뒤에는 그 리소스를 저장하는 키-값 DB etcd 가 있고, kubectl 도 Argo CD 도 여기에 요청한다.</dd></div>
+</dl></aside>
 <figure>
 <div class="fig scroll">
 <svg viewBox="0 0 960 400" role="img" aria-labelledby="pp-t">
@@ -160,13 +186,21 @@
 </div>
 <figcaption><b>그림 1-2.</b> 왼쪽 push: 밖(맥, CI)에 클러스터 관리자 열쇠가 있고, 명령이 끝나면 아무도 클러스터를 지켜보지 않는다. 오른쪽 pull: 클러스터 안의 Argo CD 가 Git 을 읽어 와(초록) 적용하고(주황), 실제 상태를 계속 지켜본다(청록 점선).</figcaption>
 </figure>
-<p>Java/Spring 에 비유하면, push 는 운영 서버에 SSH 로 들어가 jar 를 바꿔 끼우는 것이고, pull 은 서버마다 "설정 저장소의 최신 버전을 계속 보고 다르면 스스로 재배포하는 데몬" 을 두는 것이다. Spring Cloud Config 의 설정 새로고침을 클러스터 전체로 넓힌 모양이다.</p>
-<p>핵심 차이는 세 가지다. (1) 정답이 어디 있나: push 는 사람의 기억과 터미널 기록, pull 은 Git. (2) 열쇠가 어디 있나: push 는 CI(Continuous Integration 서버, 빌드·테스트를 자동으로 돌리는 서버. GitHub Actions, Jenkins 등)·사람이 클러스터 관리자 kubeconfig(클러스터 주소와 자격 증명이 든 파일. kubectl 이 이 파일로 접속한다)를 가진다, pull 은 클러스터 안 에이전트만 가진다. (3) 끝나고도 지켜보나: push 는 명령이 끝나면 끝, pull 은 계속 비교한다.</p>
+<p>달리 말하면 push 는 운영 서버에 SSH 로 들어가 실행 파일을 바꿔 끼우는 것이고, pull 은 서버 안에 "저장소의 최신 버전을 계속 보고 다르면 스스로 재배포하는 데몬" 을 두는 것이다. GitOps 는 그 데몬을 클러스터 전체에 하나 두는 모양이다.</p>
+<p>핵심 차이는 세 가지다. (1) 정답이 어디 있나: push 는 사람의 기억과 터미널 기록, pull 은 Git. (2) 열쇠가 어디 있나: push 는 <span class="t">CI</span> 나 사람이 클러스터 관리자 <span class="t">kubeconfig</span> 를 가진다, pull 은 클러스터 안 에이전트만 가진다. (3) 끝나고도 지켜보나: push 는 명령이 끝나면 끝, pull 은 계속 비교한다.</p>
+<aside class="notes"><dl>
+<div><dt>CI(Continuous Integration)</dt><dd>빌드·테스트를 자동으로 돌리는 서버. GitHub Actions, Jenkins 등.</dd></div>
+<div><dt>kubeconfig</dt><dd>클러스터 주소와 자격 증명이 든 파일. kubectl 이 이 파일로 접속한다.</dd></div>
+</dl></aside>
 
 </div>
 <div class="tier" data-tier="2">
 <h3>시간 순서와 비교 축</h3>
-<p>두 방식의 동작을 시간 순서로 놓으면 차이가 더 분명하다. push 는 "한 번 실행되는 절차" 이고 pull 은 "끝나지 않는 반복" 이다. 그림의 watch 는 쿠버네티스 API 서버에 "이 리소스가 바뀌면 바로 알려 달라" 고 걸어 두는 구독 연결이고, Argo CD 는 그렇게 받은 실제 상태를 메모리에 모아 둔다(watch 캐시). jitter 는 주기에 무작위로 더하는 흔들림 시간이다.</p>
+<p>두 방식의 동작을 시간 순서로 놓으면 차이가 더 분명하다. push 는 "한 번 실행되는 절차" 이고 pull 은 "끝나지 않는 반복" 이다. pull 쪽의 Argo CD 는 <span class="t">watch</span> 로 받은 실제 상태를 메모리에 모아 두고, 주기마다 <span class="t">jitter</span> 를 더해 Git 을 다시 본다.</p>
+<aside class="notes"><dl>
+<div><dt>watch</dt><dd>쿠버네티스 API 서버에 "이 리소스가 바뀌면 바로 알려 달라" 고 걸어 두는 구독 연결. 그렇게 모은 메모리 사본이 watch 캐시다.</dd></div>
+<div><dt>jitter</dt><dd>주기에 무작위로 더하는 흔들림 시간.</dd></div>
+</dl></aside>
 <figure>
 <pre class="mermaid">
 sequenceDiagram
@@ -191,14 +225,30 @@ sequenceDiagram
 </pre>
 <figcaption><b>그림 1-3.</b> push 는 CI 가 명령을 한 번 내리고 끝난다. pull 은 Argo CD 가 Git 과 클러스터를 계속 번갈아 보며 맞춘다. pull 쪽에는 "끝" 이 없다.</figcaption>
 </figure>
-<div class="table-wrap"><table><thead><tr><th>축</th><th>push (CI 가 kubectl/helm)</th><th>pull (Argo CD)</th></tr></thead><tbody><tr><td>클러스터 열쇠</td><td>CI·사람에게 관리자 kubeconfig</td><td>Argo CD 의 ServiceAccount(파드가 API 서버에 자기 신원을 증명하는 계정)만. 사람은 Git 쓰기 권한만</td></tr><tr><td>방화벽 방향</td><td>CI → 클러스터 API 로 <b>들어오는</b> 연결 필요</td><td>클러스터 → Git 으로 <b>나가는</b> 연결만. 클러스터 API 를 밖에 안 열어도 된다</td></tr><tr><td>드리프트</td><td>감지 못 함</td><td>계속 비교해서 OutOfSync(Git 과 다르다는 Argo CD 의 상태. 같으면 Synced) 표시, 자동 치유(selfHeal)면 되돌림</td></tr><tr><td>감사 기록</td><td>CI 로그 (흩어짐)</td><td>git log + Argo CD 의 sync(동기화, Git 의 상태를 클러스터에 적용하는 작업 한 번) 이력</td></tr><tr><td>롤백</td><td>이전 명령을 다시 재구성</td><td><code>git revert</code> 후 push</td></tr><tr><td>반영 속도</td><td>즉시</td><td>폴링 주기만큼 늦음 (webhook, 즉 GitHub 가 push 순간 보내는 HTTP 알림으로 줄임)</td></tr><tr><td>명령형 단계 (DB 마이그레이션 등)</td><td>자연스럽다</td><td>훅(hook, sync 앞뒤에 끼워 넣는 일회성 작업 리소스. PreSync 등)이나 별도 컨트롤러(controller, 원하는 상태와 실제 상태를 끝없이 비교해 맞추는 프로그램)로 바꿔야 한다</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>축</th><th>push (CI 가 kubectl/helm)</th><th>pull (Argo CD)</th></tr></thead><tbody><tr><td>클러스터 열쇠</td><td>CI·사람에게 관리자 kubeconfig</td><td>Argo CD 의 <span class="t">ServiceAccount</span> 만. 사람은 Git 쓰기 권한만</td></tr><tr><td>방화벽 방향</td><td>CI → 클러스터 API 로 <b>들어오는</b> 연결 필요</td><td>클러스터 → Git 으로 <b>나가는</b> 연결만. 클러스터 API 를 밖에 안 열어도 된다</td></tr><tr><td>드리프트</td><td>감지 못 함</td><td>계속 비교해서 <span class="t">OutOfSync</span> 표시, 자동 치유(selfHeal)면 되돌림</td></tr><tr><td>감사 기록</td><td>CI 로그 (흩어짐)</td><td>git log + Argo CD 의 <span class="t">sync</span> 이력</td></tr><tr><td>롤백</td><td>이전 명령을 다시 재구성</td><td><code>git revert</code> 후 push</td></tr><tr><td>반영 속도</td><td>즉시</td><td>폴링 주기만큼 늦음. <span class="t">webhook</span> 으로 줄임</td></tr><tr><td>명령형 단계 (DB 마이그레이션 등)</td><td>자연스럽다</td><td><span class="t">훅</span>이나 별도 <span class="t">컨트롤러</span>로 바꿔야 한다</td></tr></tbody></table></div>
+<aside class="notes"><dl>
+<div><dt>ServiceAccount</dt><dd>파드가 API 서버에 자기 신원을 증명하는 계정.</dd></div>
+<div><dt>OutOfSync</dt><dd>Git 과 다르다는 Argo CD 의 상태. 같으면 Synced.</dd></div>
+<div><dt>sync(동기화)</dt><dd>Git 의 상태를 클러스터에 적용하는 작업 한 번.</dd></div>
+<div><dt>webhook</dt><dd>GitHub 가 push 순간 보내는 HTTP 알림.</dd></div>
+<div><dt>훅(hook)</dt><dd>sync 앞뒤에 끼워 넣는 일회성 작업 리소스. PreSync 등.</dd></div>
+<div><dt>컨트롤러(controller)</dt><dd>원하는 상태와 실제 상태를 끝없이 비교해 맞추는 프로그램.</dd></div>
+</dl></aside>
 
 </div>
 <div class="tier" data-tier="3">
 <h3>pull 의 대가와 우리 PoC 의 경계</h3>
 <p>pull 이 공짜는 아니다. 세부적으로 따져야 할 대가와 경계는 다음과 같다.</p>
-<ul><li><strong>반영 지연</strong>: Argo CD 기본값은 120초 + 최대 60초 jitter 로 Git 을 본다. 데모 중에 push 하고 최악 3분을 기다릴 수 있다. 줄이는 법은 <a href="#detect">변경 감지</a> 절에서 다룬다.</li><li><strong>비밀값</strong>: Git 에 Secret(쿠버네티스가 비밀번호·토큰을 담는 리소스. 기본은 base64 인코딩일 뿐 암호화가 아니다) 평문을 넣을 수 없다. 실무에서는 Sealed Secrets, External Secrets, SOPS 같은 도구를 붙인다. 우리 PoC 의 레포는 public 이라 비밀값을 Git 에 두지 않는 구조로 짰다 (Argo CD 의 admin 비밀번호는 설치 때 생긴 Secret, 05 의 토큰은 클러스터 안에서 만든다).</li><li><strong>명령형 작업</strong>: 이미지 빌드, DB 마이그레이션, 일회성 Job(한 번 돌고 끝나는 파드를 관리하는 쿠버네티스 리소스)은 "원하는 상태" 로 표현하기 어렵다. Argo CD 는 훅(PreSync/PostSync)으로 일부를 품고, 나머지는 CI 나 별도 컨트롤러가 맡는다.</li><li><strong>부트스트랩</strong>: Argo CD 자신은 누가 까나. 결국 첫 한두 줄은 push 다 (<a href="#bootstrap">부트스트랩</a> 절).</li><li><strong>혼합형</strong>: 흔한 실무 모양은 "CI 가 이미지를 빌드하고 Git 의 이미지 태그만 바꾸는 커밋을 만든다 → Argo CD 가 pull" 이다. CI 는 레지스트리(컨테이너 이미지 저장소)와 Git 쓰기 권한만 갖고 클러스터 권한은 없다.</li></ul>
-<p>우리 PoC 는 의도적으로 두 방식을 섞는다. <strong>플랫폼</strong>(Argo CD 가 관리하는 모든 것)은 pull, <strong>사용자 함수</strong>는 컨트롤 플레인(05)이 쿠버네티스 API 로 직접 만든다. 함수는 사용자가 HTTP 로 올리는 데이터이고 초 단위로 바뀌며, 버전 이력은 Knative Revision(Knative 가 배포할 때마다 남기는, 바꿀 수 없는 스냅샷)과 감사 로그가 들고 있기 때문이다. 이 선택의 근거와 대가는 7장에서 자세히 본다 (<a href="ch07-control-plane.html#deployer">7장 배포기</a>).</p>
+<ul><li><strong>반영 지연</strong>: Argo CD 기본값은 120초 + 최대 60초 jitter 로 Git 을 본다. 데모 중에 push 하고 최악 3분을 기다릴 수 있다. 줄이는 법은 <a href="#detect">변경 감지</a> 절에서 다룬다.</li><li><strong>비밀값</strong>: Git 에 <span class="t">Secret</span> 평문을 넣을 수 없다. 실무에서는 Sealed Secrets, External Secrets, SOPS 같은 도구를 붙인다. 우리 PoC 의 레포는 public 이라 비밀값을 Git 에 두지 않는 구조로 짰다. Argo CD 의 admin 비밀번호는 설치 때 생긴 Secret 이고, 05 의 토큰은 클러스터 안에서 만든다.</li><li><strong>명령형 작업</strong>: 이미지 빌드, DB 마이그레이션, 일회성 <span class="t">Job</span> 은 "원하는 상태" 로 표현하기 어렵다. Argo CD 는 훅(PreSync/PostSync)으로 일부를 품고, 나머지는 CI 나 별도 컨트롤러가 맡는다.</li><li><strong>부트스트랩</strong>: Argo CD 자신은 누가 까나. 결국 첫 한두 줄은 push 다 (<a href="#bootstrap">부트스트랩</a> 절).</li><li><strong>혼합형</strong>: 흔한 실무 모양은 "CI 가 이미지를 빌드하고 Git 의 이미지 태그만 바꾸는 커밋을 만든다 → Argo CD 가 pull" 이다. CI 는 <span class="t">레지스트리</span>와 Git 쓰기 권한만 갖고 클러스터 권한은 없다.</li></ul>
+<aside class="notes"><dl>
+<div><dt>Secret</dt><dd>쿠버네티스가 비밀번호·토큰을 담는 리소스. 기본은 base64 인코딩일 뿐 암호화가 아니다.</dd></div>
+<div><dt>Job</dt><dd>한 번 돌고 끝나는 파드를 관리하는 쿠버네티스 리소스.</dd></div>
+<div><dt>레지스트리(registry)</dt><dd>컨테이너 이미지 저장소.</dd></div>
+</dl></aside>
+<p>우리 PoC 는 의도적으로 두 방식을 섞는다. <strong>플랫폼</strong>(Argo CD 가 관리하는 모든 것)은 pull, <strong>사용자 함수</strong>는 컨트롤 플레인(05)이 쿠버네티스 API 로 직접 만든다. 함수는 사용자가 HTTP 로 올리는 데이터이고 초 단위로 바뀌며, 버전 이력은 <span class="t">Knative Revision</span> 과 감사 로그가 들고 있기 때문이다. 이 선택의 근거와 대가는 7장에서 자세히 본다 (<a href="ch07-control-plane.html#deployer">7장 배포기</a>).</p>
+<aside class="notes"><dl>
+<div><dt>Knative Revision</dt><dd>Knative 가 배포할 때마다 남기는, 바꿀 수 없는 스냅샷.</dd></div>
+</dl></aside>
 <pre class="pseudo"><code><span class="k">판단</span> 이 변경을 GitOps 로 할까, API 직접으로 할까:
   <span class="k">만약</span> 바꾸는 사람이 플랫폼 운영자이고, 변경이 드물고, 검토(PR)가 필요하다
     → Git 에 쓰고 Argo CD 가 pull   <span class="c">// 01~06 의 플랫폼 전부</span>
@@ -208,15 +258,26 @@ sequenceDiagram
     → API 가 Git 에 커밋을 만들게 하고 Argo CD 가 pull   <span class="c">// 반영이 폴링만큼 늦어진다</span></code></pre>
 
 </div>
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>poc/01-argocd/README.md</code> 1.1~1.2 절이 이 이야기를 한다. 01 단계 이후 <code>kubectl apply</code> 를 손으로 치는 것은 각 단계의 Application(Argo CD 에 "이 Git 경로를 이 namespace 에 맞춰라" 라고 적는 리소스 한 장, <a href="#application">4절</a>) 또는 ApplicationSet(같은 틀로 Application 을 여러 장 찍어 내는 리소스, <a href="#appset">13절</a>) 한 장씩뿐이고, 그 안의 워크로드는 전부 Argo CD 가 Git 에서 가져온다. 사용자 함수(<code>tenant-a/hello</code>)만 예외로 컨트롤 플레인이 직접 만든다 (<code>poc/ANALYSIS.md</code> 1절 "두 갈래").</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: "push 했는데 아무 일도 없다"</p><p><b>증상</b>: 파일을 고쳤는데 클러스터가 그대로다. <b>볼 곳</b>: <code>kubectl -n argocd get application hello-fn -o jsonpath='{.status.sync.revision}'</code>(<code>-o jsonpath</code> 는 출력에서 원하는 필드만 뽑는 kubectl 옵션) 와 <code>git rev-parse origin/main</code> 를 비교한다. 같지 않으면 아직 폴링 전이거나, 애초에 push 를 안 했다 (Argo CD 는 맥의 작업 폴더가 아니라 GitHub 를 읽는다). <b>고치는 법</b>: push 했는지 확인 → <code>kubectl -n argocd annotate application hello-fn argocd.argoproj.io/refresh=normal --overwrite</code> 로 지금 다시 보게 한다. annotate 는 리소스에 어노테이션(annotation, 키=값 메모. 라벨(label, 리소스를 고르는 조건으로 쓰는 키=값 꼬리표)과 달리 선택 조건이 아니라 도구가 읽는 메모로 쓴다)을 다는 명령이다. 이 장에서 "주석" 이라고 쓴 것은 모두 이 어노테이션이다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>poc/01-argocd/README.md</code> 1.1~1.2 절이 이 이야기를 한다. 01 단계 이후 <code>kubectl apply</code> 를 손으로 치는 것은 각 단계의 <span class="t">Application</span>(<a href="#application">4절</a>) 또는 <span class="t">ApplicationSet</span>(<a href="#appset">13절</a>) 한 장씩뿐이고, 그 안의 워크로드는 전부 Argo CD 가 Git 에서 가져온다. 사용자 함수(<code>tenant-a/hello</code>)만 예외로 컨트롤 플레인이 직접 만든다 (<code>poc/ANALYSIS.md</code> 1절 "두 갈래").</p>
+<aside class="notes"><dl>
+<div><dt>Application</dt><dd>Argo CD 에 "이 Git 경로를 이 namespace 에 맞춰라" 라고 적는 리소스 한 장.</dd></div>
+<div><dt>ApplicationSet</dt><dd>같은 틀로 Application 을 여러 장 찍어 내는 리소스.</dd></div>
+</dl></aside></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: "push 했는데 아무 일도 없다"</p><p><b>증상</b>: 파일을 고쳤는데 클러스터가 그대로다. <b>볼 곳</b>: <code>kubectl -n argocd get application hello-fn -o jsonpath='{.status.sync.revision}'</code> 와 <code>git rev-parse origin/main</code> 을 비교한다. 앞 명령의 <span class="t"><code>-o jsonpath</code></span> 는 Argo CD 가 마지막으로 적용한 커밋만 뽑는다. 같지 않으면 아직 폴링 전이거나, 애초에 push 를 안 했다. Argo CD 는 맥의 작업 폴더가 아니라 GitHub 를 읽는다. <b>고치는 법</b>: push 했는지 확인 → <code>kubectl -n argocd annotate application hello-fn argocd.argoproj.io/refresh=normal --overwrite</code> 로 지금 다시 보게 한다. <code>annotate</code> 는 리소스에 <span class="t">어노테이션</span>을 다는 명령이다. 이 장에서 리소스에 "주석을 단다" 고 쓴 것은 모두 이 어노테이션이다.</p>
+<aside class="notes"><dl>
+<div><dt><code>-o jsonpath</code></dt><dd>출력에서 원하는 필드만 뽑는 kubectl 옵션.</dd></div>
+<div><dt>어노테이션(annotation)</dt><dd>리소스에 붙이는 키=값 메모. 라벨(label)이 리소스를 고르는 조건으로 쓰는 꼬리표라면, 어노테이션은 선택 조건이 아니라 도구가 읽는 메모다.</dd></div>
+</dl></aside></aside>
 <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p><b>선택</b>: pull 방식 GitOps (Argo CD). <b>대안 (가)</b> CI 에서 <code>kubectl apply</code>/<code>helm upgrade</code>: CI 에 클러스터 관리자 권한을 줘야 하고 드리프트를 못 잡는다. <b>대안 (나)</b> Flux: 같은 pull 방식이고 기능도 비슷하지만 기본 웹 UI 가 없어서 2분 데모에서 "지금 동기화 중" 장면을 보여 주기 어렵다 (<code>poc/01-argocd/README.md</code> 핵심 결정 1).</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><ul><li><a href="https://opengitops.dev/">OpenGitOps 원칙</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/core_concepts/">Argo CD 핵심 개념</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/">Argo CD 자동 동기화 (CI 가 API 서버 접근이 필요 없다는 설명)</a></li></ul></aside>
 
 <h2 id="principles">OpenGitOps 4원칙</h2>
 <div class="tier" data-tier="1">
 <h3>네 가지 원칙</h3>
-<p>"GitOps" 는 도구 이름이 아니라 원칙 묶음이다. CNCF(Cloud Native Computing Foundation, 쿠버네티스를 맡아 관리하는 재단) 산하 OpenGitOps 프로젝트가 네 가지로 정리했다. 원문은 "GitOps 로 관리되는 시스템의 <em>원하는 상태</em>(desired state)는 다음을 만족해야 한다" 로 시작한다.</p>
+<p>"GitOps" 는 도구 이름이 아니라 원칙 묶음이다. <span class="t">CNCF</span> 산하 OpenGitOps 프로젝트가 네 가지로 정리했다. 원문은 "GitOps 로 관리되는 시스템의 <em>원하는 상태</em>(desired state)는 다음을 만족해야 한다" 로 시작한다.</p>
+<aside class="notes"><dl>
+<div><dt>CNCF(Cloud Native Computing Foundation)</dt><dd>쿠버네티스를 맡아 관리하는 재단.</dd></div>
+</dl></aside>
 <figure>
 <div class="fig scroll">
 <svg viewBox="0 0 960 320" role="img" aria-labelledby="gp-t">
@@ -275,13 +336,20 @@ flowchart LR
 <figcaption><b>그림 1-5.</b> 4원칙이 이어진 루프. 2번(커밋) 이후는 사람 손을 타지 않는다.</figcaption>
 </figure>
 <p>아래 표의 부품 이름(repo-server, application-controller)은 다음 절에서 하나씩 설명한다. 여기서는 "원칙마다 맡는 부품이 따로 있다" 만 보면 된다.</p>
-<div class="table-wrap"><table><thead><tr><th>원칙</th><th>Argo CD 에서 맡는 것</th><th>빠지면 생기는 일</th></tr></thead><tbody><tr><td>1 선언적</td><td>Application 의 source 가 가리키는 YAML·Helm 차트·Kustomize(YAML 을 템플릿 없이 덧씌우기(overlay)로 고치는 도구)</td><td>절차(스크립트)는 "지금 상태" 와 비교할 기준이 없다. 두 번 돌리면 결과가 달라질 수 있다</td></tr><tr><td>2 버전·불변</td><td>targetRevision 을 커밋 SHA(커밋 하나를 가리키는 40자리 해시 ID)로 바꿔 해석, status.sync.revision 에 기록</td><td>어느 버전이 깔렸는지 모른다. 롤백 대상이 없다</td></tr><tr><td>3 자동 pull</td><td>repo-server(Git 읽기·렌더링), 폴링·webhook</td><td>사람이 잊으면 반영이 안 된다. CI 에 클러스터 열쇠가 필요하다</td></tr><tr><td>4 계속 조정</td><td>application-controller 의 비교 루프, automated sync, selfHeal</td><td>한 번 맞춘 뒤 누가 바꾸면 끝. 드리프트가 쌓인다</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>원칙</th><th>Argo CD 에서 맡는 것</th><th>빠지면 생기는 일</th></tr></thead><tbody><tr><td>1 선언적</td><td>Application 의 source 가 가리키는 YAML·Helm 차트·<span class="t">Kustomize</span></td><td>절차(스크립트)는 "지금 상태" 와 비교할 기준이 없다. 두 번 돌리면 결과가 달라질 수 있다</td></tr><tr><td>2 버전·불변</td><td>targetRevision 을 <span class="t">커밋 SHA</span> 로 바꿔 해석, status.sync.revision 에 기록</td><td>어느 버전이 깔렸는지 모른다. 롤백 대상이 없다</td></tr><tr><td>3 자동 pull</td><td>repo-server(Git 읽기·렌더링), 폴링·webhook</td><td>사람이 잊으면 반영이 안 된다. CI 에 클러스터 열쇠가 필요하다</td></tr><tr><td>4 계속 조정</td><td>application-controller 의 비교 루프, automated sync, selfHeal</td><td>한 번 맞춘 뒤 누가 바꾸면 끝. 드리프트가 쌓인다</td></tr></tbody></table></div>
+<aside class="notes"><dl>
+<div><dt>Kustomize</dt><dd>YAML 을 템플릿 없이 덧씌우기(overlay)로 고치는 도구.</dd></div>
+<div><dt>커밋 SHA</dt><dd>커밋 하나를 가리키는 40자리 해시 ID.</dd></div>
+</dl></aside>
 
 </div>
 <div class="tier" data-tier="3">
 <h3>원칙의 경계와 PoC 에서 어긋나는 곳</h3>
 <p>원칙을 문자 그대로 적용하면 우리 PoC 에서 걸리는 지점이 몇 군데 있다. 심사에서 "그럼 이건 GitOps 가 아니지 않나" 라는 질문을 받을 수 있는 곳이다.</p>
-<ul><li><strong>브랜치는 움직이는 포인터다</strong>. <code>targetRevision: main</code> 은 매번 다른 커밋을 가리킨다. 원칙 2 의 "불변" 은 커밋 하나하나가 불변이라는 뜻이고, Argo CD 는 비교할 때마다 main 을 SHA 로 풀어서 <code>status.sync.revision</code> 에 적는다. 운영에서 더 엄격하게 하려면 태그나 SHA 를 고정한다.</li><li><strong>차트 버전 범위는 불변을 깬다</strong>. 예를 들어 <code>targetRevision: "0.*"</code> 처럼 범위를 적으면 Git 커밋은 그대로인데 차트 저장소에 새 0.x 차트가 올라오는 순간 다른 매니페스트가 렌더링된다. 07 의 <code>node-termination-handler.yaml</code> 은 처음 임시값 <code>"0.*"</code> 이었다가 OCI 레지스트리(<code>oci://public.ecr.aws/aws-ec2/helm/aws-node-termination-handler</code>)의 <code>0.27.6</code> 으로 고정했다.</li><li><strong>사용자 함수(05)는 원칙 2·3 을 일부러 포기한다</strong>. 함수 코드는 HTTP 로 들어오고 Git 에 커밋되지 않는다. 대신 이미지를 digest(이미지 내용의 해시. <code>@sha256:...</code> 모양이라 태그와 달리 내용이 바뀌면 값도 바뀐다)로 고정해서 "같은 Revision 은 같은 바이트" 라는 불변성은 지킨다. 이력은 Knative Revision 과 감사 로그에 남는다.</li><li><strong>Secret 과 일회성 Job</strong>은 원칙 1 로 표현하기 어렵다. 01 의 Argo CD admin 비밀번호(<code>argocd-initial-admin-secret</code>)는 Helm 설치 때 생기고 Git 에 없다.</li></ul>
+<ul><li><strong>브랜치는 움직이는 포인터다</strong>. <code>targetRevision: main</code> 은 매번 다른 커밋을 가리킨다. 원칙 2 의 "불변" 은 커밋 하나하나가 불변이라는 뜻이고, Argo CD 는 비교할 때마다 main 을 SHA 로 풀어서 <code>status.sync.revision</code> 에 적는다. 운영에서 더 엄격하게 하려면 태그나 SHA 를 고정한다.</li><li><strong>차트 버전 범위는 불변을 깬다</strong>. 예를 들어 <code>targetRevision: "0.*"</code> 처럼 범위를 적으면 Git 커밋은 그대로인데 차트 저장소에 새 0.x 차트가 올라오는 순간 다른 매니페스트가 렌더링된다. 07 의 <code>node-termination-handler.yaml</code> 은 처음 임시값 <code>"0.*"</code> 이었다가 OCI 레지스트리(<code>oci://public.ecr.aws/aws-ec2/helm/aws-node-termination-handler</code>)의 <code>0.27.6</code> 으로 고정했다.</li><li><strong>사용자 함수(05)는 원칙 2·3 을 일부러 포기한다</strong>. 함수 코드는 HTTP 로 들어오고 Git 에 커밋되지 않는다. 대신 이미지를 <span class="t">digest</span> 로 고정해서 "같은 Revision 은 같은 바이트" 라는 불변성은 지킨다. 이력은 Knative Revision 과 감사 로그에 남는다.</li><li><strong>Secret 과 일회성 Job</strong>은 원칙 1 로 표현하기 어렵다. 01 의 Argo CD admin 비밀번호(<code>argocd-initial-admin-secret</code>)는 Helm 설치 때 생기고 Git 에 없다.</li></ul>
+<aside class="notes"><dl>
+<div><dt>digest</dt><dd>이미지 내용의 해시. <code>@sha256:...</code> 모양이라 태그와 달리 내용이 바뀌면 값도 바뀐다.</dd></div>
+</dl></aside>
 <pre class="pseudo"><code><span class="k">검사</span> 어떤 리소스 R 이 GitOps 원칙을 지키는가:
   선언적     = R 이 Git 의 YAML 로부터 렌더링되는가            <span class="c">// helm template, directory</span>
   불변       = 같은 커밋 SHA 로 렌더링하면 항상 같은 결과인가    <span class="c">// 버전 범위, randAlphaNum 이면 아님</span>
@@ -289,15 +357,25 @@ flowchart LR
   계속 조정  = R 이 바뀌면 에이전트가 알아채고 되돌리는가      <span class="c">// selfHeal: true</span></code></pre>
 
 </div>
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>01~06 의 플랫폼 Application 은 전부 <code>targetRevision: main</code> + <code>automated: {prune: true, selfHeal: true}</code> 다. 즉 원칙 4 를 가장 강하게 켠 상태다. 예외는 05 의 사용자 함수(API 직접)뿐이다. 07 의 NTH(aws-node-termination-handler, 스팟 인스턴스 회수 예고를 받아 노드를 비우는 도구) 차트도 처음엔 버전 범위였다가 <code>0.27.6</code> 으로 고정해 원칙 2 를 지킨다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>01~06 의 플랫폼 Application 은 전부 <code>targetRevision: main</code> + <code>automated: {prune: true, selfHeal: true}</code> 다. 즉 원칙 4 를 가장 강하게 켠 상태다. 예외는 05 의 사용자 함수(API 직접)뿐이다. 07 의 <span class="t">NTH</span> 차트도 처음엔 버전 범위였다가 <code>0.27.6</code> 으로 고정해 원칙 2 를 지킨다.</p>
+<aside class="notes"><dl>
+<div><dt>NTH(aws-node-termination-handler)</dt><dd>스팟 인스턴스 회수 예고를 받아 노드를 비우는 도구.</dd></div>
+</dl></aside></aside>
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: 같은 커밋인데 결과가 다르다</p><p><b>증상</b>: Git 은 안 바뀌었는데 어느 날 Application 이 OutOfSync 가 되거나 다른 버전이 깔린다. <b>볼 곳</b>: <code>kubectl -n argocd get application &lt;이름&gt; -o yaml</code> 의 <code>spec.source.targetRevision</code> 이 범위(<code>0.*</code>)나 <code>HEAD</code> 인지, 차트 템플릿에 <code>randAlphaNum</code>, <code>now</code> 같은 함수가 있는지. <b>고치는 법</b>: 버전을 정확한 숫자로 고정하고, 무작위 값은 Secret 으로 미리 만들어 참조한다.</p></aside>
-<aside class="callout why"><p class="callout-title">왜 이 원칙을 기준으로 삼나</p><p>도구(Argo CD, Flux)는 바뀌어도 원칙은 남는다. 본선에서 처음 보는 도구가 나오면 "이 도구는 원칙 3·4 를 하나?" 로 바로 분류할 수 있다. 예: Terraform(클라우드 자원을 코드로 적어 만드는 도구)은 원칙 1·2 는 지키지만 3·4 는 사람이 <code>apply</code> 해야 하는 push 다 (07 단계가 Terraform 을 손으로 apply 하는 이유).</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이 원칙을 기준으로 삼나</p><p>도구(Argo CD, Flux)는 바뀌어도 원칙은 남는다. 본선에서 처음 보는 도구가 나오면 "이 도구는 원칙 3·4 를 하나?" 로 바로 분류할 수 있다. 예: <span class="t">Terraform</span> 은 원칙 1·2 는 지키지만 3·4 는 사람이 <code>apply</code> 해야 하는 push 다 (07 단계가 Terraform 을 손으로 apply 하는 이유).</p>
+<aside class="notes"><dl>
+<div><dt>Terraform</dt><dd>클라우드 자원을 코드로 적어 만드는 도구.</dd></div>
+</dl></aside></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><ul><li><a href="https://opengitops.dev/">OpenGitOps Principles v1.0.0</a></li><li><a href="https://github.com/open-gitops/documents">OpenGitOps 문서 저장소 (PRINCIPLES.md, GLOSSARY.md)</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/">Argo CD 개요</a></li></ul></aside>
 
 <h2 id="architecture">Argo CD 구조와 부품</h2>
 <div class="tier" data-tier="1">
 <h3>부품 일곱 개, 한 장 그림</h3>
-<p>앞 절까지는 "무엇을 지키나" 였다. 이제 그걸 실제로 하는 소프트웨어의 안을 연다. Argo CD 는 프로그램 하나가 아니라 <strong>역할이 나뉜 부품 여러 개</strong>다. 우리 PoC 에서는 Helm 차트 <code>argo/argo-cd</code> 10.10.5 로 <code>argocd</code> namespace 에 깔고, dex 와 notifications 를 꺼서 파드 5개가 뜬다 (Deployment 4개 + StatefulSet 1개. StatefulSet 은 파드마다 고정된 번호와 이름을 주는 Deployment 의 변형이다). 아래 그림과 글에서 매니페스트(manifest)는 쿠버네티스 리소스 하나를 적은 YAML 문서를 뜻한다.</p>
+<p>앞 절까지는 "무엇을 지키나" 였다. 이제 그걸 실제로 하는 소프트웨어의 안을 연다. Argo CD 는 프로그램 하나가 아니라 <strong>역할이 나뉜 부품 여러 개</strong>다. 우리 PoC 에서는 Helm 차트 <code>argo/argo-cd</code> 10.10.5 로 <code>argocd</code> namespace 에 깔고, dex 와 notifications 를 꺼서 파드 5개가 뜬다 (Deployment 4개 + <span class="t">StatefulSet</span> 1개). 부품들이 주고받는 것은 Git 에서 렌더링한 <span class="t">매니페스트</span>다.</p>
+<aside class="notes"><dl>
+<div><dt>StatefulSet</dt><dd>파드마다 고정된 번호와 이름을 주는 Deployment 의 변형.</dd></div>
+<div><dt>매니페스트(manifest)</dt><dd>쿠버네티스 리소스 하나를 적은 YAML 문서.</dd></div>
+</dl></aside>
 <figure>
 <div class="fig scroll-l">
 <svg viewBox="0 0 1100 600" role="img" aria-labelledby="arch-t">
@@ -378,15 +456,39 @@ flowchart LR
 <text x="383" y="319" class="d-num-t" text-anchor="middle">9</text>
 </svg>
 </div>
-<figcaption><b>그림 1-6.</b> Argo CD 부품과 연결. ① 사람이 UI·CLI 로 server 에 접속 ② server 는 직접 배포하지 않고 Application 오브젝트(operation 칸)에 "동기화하라" 를 적는다 ③ controller 가 API 서버를 watch 해서 Application 과 실제 리소스의 변화를 안다 ④ controller 가 repo-server 에 "이 커밋의 매니페스트를 달라" 요청(gRPC, 구글이 만든 바이너리 RPC 프로토콜) ⑤ repo-server 가 Git 에서 받아 렌더링 ⑥ controller 가 API 서버에 apply ⑦ applicationset-controller 는 Application 오브젝트를 만들고 지운다 ⑧ 그때 Git 파일 목록은 repo-server 에 묻는다 ⑨ server·controller 가 redis(Redis, 메모리 키-값 저장소)를 캐시로 같이 쓴다. 흐리게 그린 dex·notifications 는 PoC 에서 껐다.</figcaption>
+<figcaption><b>그림 1-6.</b> Argo CD 부품과 연결. ① 사람이 UI·CLI 로 server 에 접속 ② server 는 직접 배포하지 않고 Application 오브젝트(operation 칸)에 "동기화하라" 를 적는다 ③ controller 가 API 서버를 watch 해서 Application 과 실제 리소스의 변화를 안다 ④ controller 가 repo-server 에 "이 커밋의 매니페스트를 달라" 요청(<span class="t">gRPC</span>) ⑤ repo-server 가 Git 에서 받아 렌더링 ⑥ controller 가 API 서버에 apply ⑦ applicationset-controller 는 Application 오브젝트를 만들고 지운다 ⑧ 그때 Git 파일 목록은 repo-server 에 묻는다 ⑨ server·controller 가 <span class="t">redis</span> 를 캐시로 같이 쓴다. 흐리게 그린 dex·notifications 는 PoC 에서 껐다.</figcaption>
 </figure>
+<aside class="notes"><dl>
+<div><dt>gRPC</dt><dd>구글이 만든 바이너리 RPC 프로토콜.</dd></div>
+<div><dt>redis(Redis)</dt><dd>메모리 키-값 저장소.</dd></div>
+</dl></aside>
 <p>한 줄 요약: <strong>repo-server 는 "Git → YAML", application-controller 는 "YAML ↔ 클러스터", server 는 "사람 ↔ Argo CD"</strong>. 이 셋만 기억하면 나머지(redis, applicationset-controller, dex, notifications)는 곁가지다. 특히 server 는 직접 배포하지 않는다. UI 의 Sync 버튼도 결국 Application 오브젝트에 "동기화 요청" 을 적을 뿐이고 실제 일은 controller 가 한다.</p>
 
 </div>
 <div class="tier" data-tier="2">
 <h3>각 부품의 안쪽과 Sync 버튼의 흐름</h3>
 <p>각 부품이 안에서 하는 일을 조금 더 들어가 본다.</p>
-<div class="grid"><div class="item"><h4>argocd-server</h4><p>gRPC 와 REST 를 같은 포트로 여는 API 서버 + 웹 UI 정적 파일. 로그인(admin, SSO 토큰 발급. SSO 는 Single Sign-On, GitHub·Google 같은 외부 계정으로 한 번에 로그인하는 것), RBAC(Role-Based Access Control, 역할 기반 권한 검사) 검사, Git webhook 수신(<code>/api/webhook</code>), 저장소·클러스터 자격 증명 관리(쿠버네티스 Secret 으로 저장). 상태가 없어서 여러 개로 늘릴 수 있다.</p></div><div class="item"><h4>argocd-repo-server</h4><p>Git 저장소를 로컬 폴더에 받아 두고(캐시), 입력(저장소 URL, 커밋, 경로, Helm values 등)을 받아 평범한 쿠버네티스 매니페스트 목록을 돌려준다. Helm, Kustomize, 평범한 YAML 폴더, 플러그인(CMP, Config Management Plugin: Helm·Kustomize 가 아닌 렌더링 도구를 붙이는 확장)을 여기서 돌린다. <strong>클러스터 자격 증명이 없다</strong>. 남이 만든 차트 템플릿이 여기서 실행되기 때문에 일부러 격리한 것이다.</p></div><div class="item"><h4>argocd-application-controller</h4><p>쿠버네티스 컨트롤러 (Deployment 컨트롤러가 파드 수를 맞추듯, 원하는 상태와 실제를 계속 맞추는 프로그램). 관리 대상 클러스터의 리소스를 전부 watch 해서 메모리 캐시를 만들고, Application 마다 원하는 상태(repo-server 결과)와 비교해 Sync/Health 상태를 쓰고, 필요하면 sync 작업(apply, prune, 훅)을 한다. StatefulSet 인 이유는 클러스터 단위 샤딩(replica, 즉 같은 부품의 복제본마다 맡을 클러스터를 나눔) 때문이다.</p></div><div class="item"><h4>argocd-applicationset-controller</h4><p>ApplicationSet 을 보고 generator(목록)를 계산해 Application 을 만들고 고치고 지운다. 워크로드에는 손대지 않는다. 만든 Application 의 실제 배포는 application-controller 몫이다. Git generator 는 기본 3분마다 다시 계산한다.</p></div><div class="item"><h4>argocd-redis</h4><p>캐시 전용 Redis. 렌더링된 매니페스트, 앱 리소스 트리, 클러스터 정보 등을 둔다. 공식 문서 표현으로 "언제 버려도 되는 캐시" 라서 지워져도 다시 계산할 뿐 상태를 잃지 않는다. 진짜 상태는 전부 쿠버네티스 오브젝트(Application, Secret, ConfigMap. ConfigMap 은 설정 값을 키=값으로 담는 리소스다)에 있다.</p></div><div class="item"><h4>argocd-dex-server</h4><p>GitHub·Google·LDAP 같은 외부 로그인(SSO)을 OIDC(OpenID Connect, 외부 로그인 결과를 표준 토큰으로 받는 규약)로 바꿔 주는 중개 서버. 로컬에서는 admin 하나로 충분해서 <code>dex.enabled: false</code>.</p></div><div class="item"><h4>argocd-notifications-controller</h4><p>Application 상태 변화를 보고 트리거·템플릿에 맞춰 Slack·메일·webhook 으로 알린다. PoC 에선 <code>notifications.enabled: false</code>. 06 의 알림은 Prometheus(지표 수집기)의 Alertmanager(알림 발송기) 쪽에서 한다.</p></div></div>
+<div class="grid"><div class="item"><h4>argocd-server</h4><p>gRPC 와 REST 를 같은 포트로 여는 API 서버 + 웹 UI 정적 파일. 로그인(admin, <span class="t">SSO</span> 토큰 발급), <span class="t">RBAC</span> 검사, Git webhook 수신(<code>/api/webhook</code>), 저장소·클러스터 자격 증명 관리(쿠버네티스 Secret 으로 저장). 상태가 없어서 여러 개로 늘릴 수 있다.</p>
+<aside class="notes"><dl>
+<div><dt>SSO(Single Sign-On)</dt><dd>GitHub·Google 같은 외부 계정으로 한 번에 로그인하는 것.</dd></div>
+<div><dt>RBAC(Role-Based Access Control)</dt><dd>역할 기반 권한 검사.</dd></div>
+</dl></aside></div><div class="item"><h4>argocd-repo-server</h4><p>Git 저장소를 로컬 폴더에 받아 두고(캐시), 입력(저장소 URL, 커밋, 경로, Helm values 등)을 받아 평범한 쿠버네티스 매니페스트 목록을 돌려준다. Helm, Kustomize, 평범한 YAML 폴더, <span class="t">플러그인</span>을 여기서 돌린다. <strong>클러스터 자격 증명이 없다</strong>. 남이 만든 차트 템플릿이 여기서 실행되기 때문에 일부러 격리한 것이다.</p>
+<aside class="notes"><dl>
+<div><dt>플러그인(CMP, Config Management Plugin)</dt><dd>Helm·Kustomize 가 아닌 렌더링 도구를 붙이는 확장.</dd></div>
+</dl></aside></div><div class="item"><h4>argocd-application-controller</h4><p>쿠버네티스 컨트롤러다. Deployment 컨트롤러가 파드 수를 맞추듯, 원하는 상태와 실제를 계속 맞춘다. 관리 대상 클러스터의 리소스를 전부 watch 해서 메모리 캐시를 만들고, Application 마다 원하는 상태(repo-server 결과)와 비교해 Sync/Health 상태를 쓰고, 필요하면 sync 작업(apply, prune, 훅)을 한다. StatefulSet 인 이유는 클러스터 단위 <span class="t">샤딩</span> 때문이다.</p>
+<aside class="notes"><dl>
+<div><dt>샤딩(sharding)</dt><dd>같은 부품의 복제본(replica)마다 맡을 클러스터를 나누는 것.</dd></div>
+</dl></aside></div><div class="item"><h4>argocd-applicationset-controller</h4><p>ApplicationSet 을 보고 generator(목록)를 계산해 Application 을 만들고 고치고 지운다. 워크로드에는 손대지 않는다. 만든 Application 의 실제 배포는 application-controller 몫이다. Git generator 는 기본 3분마다 다시 계산한다.</p></div><div class="item"><h4>argocd-redis</h4><p>캐시 전용 Redis. 렌더링된 매니페스트, 앱 리소스 트리, 클러스터 정보 등을 둔다. 공식 문서 표현으로 "언제 버려도 되는 캐시" 라서 지워져도 다시 계산할 뿐 상태를 잃지 않는다. 진짜 상태는 전부 쿠버네티스 오브젝트(Application, Secret, <span class="t">ConfigMap</span>)에 있다.</p>
+<aside class="notes"><dl>
+<div><dt>ConfigMap</dt><dd>설정 값을 키=값으로 담는 리소스.</dd></div>
+</dl></aside></div><div class="item"><h4>argocd-dex-server</h4><p>GitHub·Google·LDAP 같은 외부 로그인(SSO)을 <span class="t">OIDC</span> 로 바꿔 주는 중개 서버. 로컬에서는 admin 하나로 충분해서 <code>dex.enabled: false</code>.</p>
+<aside class="notes"><dl>
+<div><dt>OIDC(OpenID Connect)</dt><dd>외부 로그인 결과를 표준 토큰으로 받는 규약.</dd></div>
+</dl></aside></div><div class="item"><h4>argocd-notifications-controller</h4><p>Application 상태 변화를 보고 트리거·템플릿에 맞춰 Slack·메일·webhook 으로 알린다. PoC 에선 <code>notifications.enabled: false</code>. 06 의 알림은 <span class="t">Prometheus</span> 의 <span class="t">Alertmanager</span> 쪽에서 한다.</p>
+<aside class="notes"><dl>
+<div><dt>Prometheus</dt><dd>지표 수집기.</dd></div>
+<div><dt>Alertmanager</dt><dd>Prometheus 의 알림 발송기.</dd></div>
+</dl></aside></div></div>
 <p>UI 에서 Sync 버튼을 누르면 어떤 순서로 흐르는지 보면 역할 분담이 분명해진다.</p>
 <figure>
 <pre class="mermaid">
@@ -450,7 +552,10 @@ sequenceDiagram
     <span class="c"># 값을 고르고, 고른 이유를 이 단계 README 8절 결정 표에 한 줄 적는다.</span>
     <span class="k">timeout.reconciliation</span>: 120s          <span class="c"># 단위(s)를 꼭 붙인다. 숫자만 쓰면 Argo CD 가 못 읽고 차트 기본값(120s)으로 돈다 【추정】</span>
     <span class="k">timeout.reconciliation.jitter</span>: 60s   <span class="c"># 실제 간격 = 120s + 0~60s 무작위</span></code></pre>
-<div class="table-wrap"><table><thead><tr><th>줄</th><th>뜻</th></tr></thead><tbody><tr><td><code>dex.enabled: false</code></td><td>dex 파드를 안 띄운다. SSO 가 없으니 로그인은 admin + 설치 때 만든 무작위 비밀번호(<code>argocd-initial-admin-secret</code>)</td></tr><tr><td><code>notifications.enabled: false</code></td><td>알림 컨트롤러를 안 띄운다</td></tr><tr><td><code>configs.params</code></td><td><code>argocd-cmd-params-cm</code> ConfigMap 이 된다. 각 부품의 실행 옵션(명령줄 플래그)을 담는다</td></tr><tr><td><code>server.insecure: true</code></td><td>server 가 TLS 를 끄고 평문 HTTP 로 응답한다. 맥의 port-forward(kubectl 이 로컬 포트를 클러스터 안 서비스로 터널처럼 이어 주는 기능)로 <code>http://localhost:8080</code> 을 쓰기 위해서다. 07(EC2)에서도 앞단이 TLS 를 맡는 구조라 같은 값</td></tr><tr><td><code>configs.cm</code></td><td><code>argocd-cm</code> ConfigMap 이 된다. Argo CD 의 동작 설정(폴링 주기, 추적 방식, 리소스 커스터마이즈 등)</td></tr><tr><td><code>timeout.reconciliation: 120s</code></td><td>Git 을 다시 보는 주기. 차트 기본값과 같은 값을 골랐다 (단위 이야기는 아래 주의 참고)</td></tr><tr><td><code>timeout.reconciliation.jitter: 60s</code></td><td>주기에 0~60초 무작위를 더한다. 수백 개 앱이 동시에 Git 을 두드리지 않게 흩는 용도</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>줄</th><th>뜻</th></tr></thead><tbody><tr><td><code>dex.enabled: false</code></td><td>dex 파드를 안 띄운다. SSO 가 없으니 로그인은 admin + 설치 때 만든 무작위 비밀번호(<code>argocd-initial-admin-secret</code>)</td></tr><tr><td><code>notifications.enabled: false</code></td><td>알림 컨트롤러를 안 띄운다</td></tr><tr><td><code>configs.params</code></td><td><code>argocd-cmd-params-cm</code> ConfigMap 이 된다. 각 부품의 실행 옵션(명령줄 플래그)을 담는다</td></tr><tr><td><code>server.insecure: true</code></td><td>server 가 TLS 를 끄고 평문 HTTP 로 응답한다. 맥의 <span class="t">port-forward</span> 로 <code>http://localhost:8080</code> 을 쓰기 위해서다. 07(EC2)에서도 앞단이 TLS 를 맡는 구조라 같은 값</td></tr><tr><td><code>configs.cm</code></td><td><code>argocd-cm</code> ConfigMap 이 된다. Argo CD 의 동작 설정(폴링 주기, 추적 방식, 리소스 커스터마이즈 등)</td></tr><tr><td><code>timeout.reconciliation: 120s</code></td><td>Git 을 다시 보는 주기. 차트 기본값과 같은 값을 골랐다 (단위 이야기는 아래 주의 참고)</td></tr><tr><td><code>timeout.reconciliation.jitter: 60s</code></td><td>주기에 0~60초 무작위를 더한다. 수백 개 앱이 동시에 Git 을 두드리지 않게 흩는 용도</td></tr></tbody></table></div>
+<aside class="notes"><dl>
+<div><dt>port-forward</dt><dd>kubectl 이 로컬 포트를 클러스터 안 서비스로 터널처럼 이어 주는 기능.</dd></div>
+</dl></aside>
 <aside class="callout warn"><p class="callout-title">주의: 이 두 값은 단위가 붙은 문자열이다</p><p>공식 문서(<code>argocd-cm.yaml</code>)와 차트 기본값은 이 두 값을 <code>120s</code>, <code>60s</code> 같은 Go duration 문자열(숫자 + 단위)로 적는다. 이 파일도 처음엔 <code>120</code>, <code>60</code> 으로 단위 없이 적었다가 지금처럼 <code>120s</code>, <code>60s</code> 로 고쳤다. 단위가 없으면 어떻게 되나: controller 는 이 값을 환경 변수 <code>ARGOCD_RECONCILIATION_TIMEOUT</code> 으로 받아 Go 의 duration 파서로 읽는데, 단위 없는 숫자(0 제외)는 파싱 오류라서 경고 로그를 남기고 <strong>기본값 120초</strong>로 돈다 (v3.5.5 소스 <code>util/env</code> 의 <code>ParseDurationFromEnv</code>). 파일 주석이 말하는 "차트 기본값(120s)" 이 바로 이것이다 (주석의 【추정】 표시는 소스로 확인된 셈이다). 180초는 기본 주기 120초에 jitter 최대 60초를 더한 최악 대기이지 기본 주기가 아니다. 정답본(<code>solution/</code>)은 <code>60s</code>, <code>0s</code> 다. 그리고 이 값을 바꾼 뒤에는 application-controller 와 repo-server 를 재시작해야 반영된다 (<code>kubectl -n argocd rollout restart statefulset argocd-application-controller</code>, <code>deploy argocd-repo-server</code>). 두 프로그램이 시작할 때 환경 변수로 한 번 읽기 때문이다.</p></aside>
 <p>controller 안쪽을 의사코드로 쓰면 이렇다. 실제 구현은 <code>argoproj/gitops-engine</code> 라이브러리의 클러스터 캐시와 sync 엔진을 쓴다.</p>
 <pre class="pseudo"><code><span class="c">// application-controller 의 큰 틀 (부품 관점)</span>
@@ -472,15 +577,28 @@ sequenceDiagram
 <p>부품별 숫자 기본값 중 알아 둘 것: controller 의 <code>controller.status.processors</code> 20, <code>controller.operation.processors</code> 10, repo-server 호출 제한 시간 <code>controller.repo.server.timeout.seconds</code> 60, sync 전체 제한 시간 <code>controller.sync.timeout.seconds</code> 0(무제한). 앱이 수백 개가 되면 processors 를 늘리고 repo-server 를 여러 개로 늘린다 (공식 고가용성 문서 기준).</p>
 
 </div>
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>설치: <code>helm install argocd argo/argo-cd --version 10.10.5 -n argocd --create-namespace -f poc/01-argocd/platform/argocd/values.yaml --wait</code> (README 2단계, 그리고 03·04 의 <code>rebuild-cluster.sh</code> 가 같은 줄을 쓴다). 04 이후 클러스터에서는 Argo CD 파드에 toleration(taint 가 걸린 노드에 올라가도 된다는 허용 표시)이 없어서 taint(노드에 붙이는 "허용된 파드만 오라" 는 표식)가 걸린 build·exec 노드를 피해 자동으로 system 노드에 모인다. 07(AWS 의 가상 서버 EC2 위에 세운 k3s(바이너리 하나로 깔리는 경량 쿠버네티스 배포판) 클러스터)은 <code>gitops/bootstrap/argocd-values-k3s.yaml</code> 의 <code>global.nodeSelector</code>(파드를 특정 라벨의 노드에만 두는 조건)·<code>global.tolerations</code> 로 시스템 노드에 고정한다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>설치: <code>helm install argocd argo/argo-cd --version 10.10.5 -n argocd --create-namespace -f poc/01-argocd/platform/argocd/values.yaml --wait</code> (README 2단계, 그리고 03·04 의 <code>rebuild-cluster.sh</code> 가 같은 줄을 쓴다). 04 이후 클러스터에서는 build·exec 노드에 <span class="t">taint</span> 가 걸려 있고 Argo CD 파드에는 <span class="t">toleration</span> 이 없어서, 그 노드를 피해 자동으로 system 노드에 모인다. 07(<span class="t">EC2</span> 위에 세운 <span class="t">k3s</span> 클러스터)은 <code>gitops/bootstrap/argocd-values-k3s.yaml</code> 의 <span class="t"><code>global.nodeSelector</code></span>·<code>global.tolerations</code> 로 시스템 노드에 고정한다.</p>
+<aside class="notes"><dl>
+<div><dt>taint</dt><dd>노드에 붙이는 "허용된 파드만 오라" 는 표식.</dd></div>
+<div><dt>toleration</dt><dd>taint 가 걸린 노드에 올라가도 된다는 허용 표시. 파드 쪽에 적는다.</dd></div>
+<div><dt>EC2</dt><dd>AWS 의 가상 서버.</dd></div>
+<div><dt>k3s</dt><dd>바이너리 하나로 깔리는 경량 쿠버네티스 배포판.</dd></div>
+<div><dt><code>global.nodeSelector</code></dt><dd>파드를 특정 라벨의 노드에만 두는 조건.</dd></div>
+</dl></aside></aside>
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>(1) UI 가 안 열린다</b>: <code>server.insecure</code> 를 false 로 두면 server 는 TLS 를 켠 채 평문 HTTP 요청을 받으면 같은 주소의 <code>https://</code> 로 307 리다이렉트한다. 그래서 <code>http://localhost:8080</code> 은 <code>https://localhost:8080</code> 으로 넘어가고, 자체 서명 인증서라 브라우저가 "안전하지 않음" 경고를 띄운다 (연결 오류가 아니라 리다이렉트 + 인증서 경고. v3.5.5 server 소스의 HTTP→HTTPS 리다이렉트 처리). 볼 곳: <code>kubectl -n argocd logs deploy/argocd-server | head</code>. <b>(2) Application 이 Unknown + ComparisonError</b>: repo-server 가 Git 을 못 읽거나 렌더링이 실패한 것. 볼 곳: <code>kubectl -n argocd get application X -o jsonpath='{.status.conditions}'</code>, <code>kubectl -n argocd logs deploy/argocd-repo-server</code>. <b>(3) 07 에서 Argo CD 파드 Pending</b>: 시스템 노드의 <code>CriticalAddonsOnly</code> taint 를 견디는 toleration 이 빠짐 (07 README 문제 해결 표).</p></aside>
-<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p><b>dex·notifications 끔</b>: 로컬 실습에 필요 없는 파드 2개와 메모리를 아낀다. 04 이후 system 노드 하나에 Argo CD, Knative, Prometheus, 컨트롤 플레인이 다 몰리기 때문에 의미가 있다. <b>HA(High Availability, 고가용성) 설치(redis-ha, 여러 replica) 안 함</b>: 노드 1개짜리 system 풀에선 replica 를 늘려도 같은 노드라 가용성이 안 오른다. <b>차트 버전 고정 10.10.5</b>: 안 적으면 그날의 최신이 깔려 팀원마다 달라진다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p><b>dex·notifications 끔</b>: 로컬 실습에 필요 없는 파드 2개와 메모리를 아낀다. 04 이후 system 노드 하나에 Argo CD, Knative, Prometheus, 컨트롤 플레인이 다 몰리기 때문에 의미가 있다. <b><span class="t">HA</span> 설치(redis-ha, 여러 replica) 안 함</b>: 노드 1개짜리 system 풀에선 replica 를 늘려도 같은 노드라 가용성이 안 오른다. <b>차트 버전 고정 10.10.5</b>: 안 적으면 그날의 최신이 깔려 팀원마다 달라진다.</p>
+<aside class="notes"><dl>
+<div><dt>HA(High Availability)</dt><dd>고가용성. 부품 하나가 죽어도 계속 돌게 복제본을 여러 노드에 두는 구성.</dd></div>
+</dl></aside></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><ul><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/architecture/">Architectural Overview</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/high_availability/">High Availability (processors, 샤딩, redis)</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/argocd-cm-yaml/">argocd-cm.yaml (timeout.reconciliation 설명)</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/argocd-cmd-params-cm-yaml/">argocd-cmd-params-cm.yaml</a></li><li><a href="https://github.com/argoproj/argo-helm/tree/main/charts/argo-cd">argo-helm argo-cd 차트</a></li></ul></aside>
 
 <h2 id="application">Application 한 장 읽기</h2>
 <div class="tier" data-tier="1">
 <h3>Application 은 세 질문의 답이다</h3>
-<p><strong>Application</strong> 은 Argo CD 가 쿠버네티스에 추가한 리소스 종류(CRD, CustomResourceDefinition: 쿠버네티스에 새 리소스 종류를 등록하는 확장 기능. 등록하면 kubectl 과 API 서버가 기본 리소스처럼 다룬다)다. <code>apiVersion: argoproj.io/v1alpha1</code>, <code>kind: Application</code>. Spring 으로 치면 "배포 설정 빈(bean) 하나" 다. 한 장에 세 질문의 답을 적는다.</p>
+<p><strong>Application</strong> 은 Argo CD 가 쿠버네티스에 추가한 리소스 종류, 즉 <span class="t">CRD</span> 다. <code>apiVersion: argoproj.io/v1alpha1</code>, <code>kind: Application</code>. 배포 하나의 설정을 담은 문서 한 장이고, 거기에 세 질문의 답을 적는다.</p>
+<aside class="notes"><dl>
+<div><dt>CRD(CustomResourceDefinition)</dt><dd>쿠버네티스에 새 리소스 종류를 등록하는 확장 기능. 등록하면 kubectl 과 API 서버가 기본 리소스처럼 다룬다.</dd></div>
+</dl></aside>
 <figure>
 <div class="fig scroll">
 <svg viewBox="0 0 960 420" role="img" aria-labelledby="appx-t">
@@ -526,7 +644,10 @@ sequenceDiagram
 </div>
 <figcaption><b>그림 1-8.</b> Application 은 "어디서(source) 무엇을 어디에(destination) 어떻게(syncPolicy)" 를 적은 한 장이다. 오브젝트 자체는 argocd namespace 에 살고, 만드는 리소스는 destination namespace 에 생긴다.</figcaption>
 </figure>
-<ul><li><strong>project</strong>: 이 Application 이 속한 AppProject(Application 묶음 + 허용 범위. 어느 저장소에서 어느 namespace 로 무엇을 배포해도 되는지 적은 울타리, <a href="#project">14절</a>)</li><li><strong>source</strong>: 어느 Git 저장소의, 어느 커밋(브랜치·태그·SHA)의, 어느 폴더를 렌더링하나</li><li><strong>destination</strong>: 어느 클러스터의, 어느 namespace 에 까나</li><li><strong>syncPolicy</strong>: 다르면 자동으로 맞추나, 지우는 것까지 하나, 손으로 바꾼 것도 되돌리나</li></ul>
+<ul><li><strong>project</strong>: 이 Application 이 속한 <span class="t">AppProject</span>(<a href="#project">14절</a>)</li><li><strong>source</strong>: 어느 Git 저장소의, 어느 커밋(브랜치·태그·SHA)의, 어느 폴더를 렌더링하나</li><li><strong>destination</strong>: 어느 클러스터의, 어느 namespace 에 까나</li><li><strong>syncPolicy</strong>: 다르면 자동으로 맞추나, 지우는 것까지 하나, 손으로 바꾼 것도 되돌리나</li></ul>
+<aside class="notes"><dl>
+<div><dt>AppProject</dt><dd>Application 묶음 + 허용 범위. 어느 저장소에서 어느 namespace 로 무엇을 배포해도 되는지 적은 울타리.</dd></div>
+</dl></aside>
 
 </div>
 <div class="tier" data-tier="2">
@@ -613,7 +734,12 @@ classDiagram
 <div class="table-wrap"><table><thead><tr><th>줄</th><th>뜻과 주의점</th></tr></thead><tbody><tr><td><code>metadata.namespace: argocd</code></td><td>Application 오브젝트는 Argo CD 가 사는 namespace 에 둔다. 기본 설정에서 다른 namespace 에 두면 controller 가 보지 않는다 (v2.5 부터 "apps in any namespace" 기능으로 넓힐 수 있지만 PoC 는 안 쓴다)</td></tr><tr><td><code>finalizers: resources-finalizer...</code></td><td>이 Application 을 지우면 만든 리소스도 지운다 (<a href="#tracking">리소스 추적과 finalizer</a>)</td></tr><tr><td><code>project: default</code></td><td>허용 범위 묶음. default 는 "아무 저장소, 아무 목적지, 아무 종류" 다. 03 에서 테넌트용 Project 를 따로 만든다</td></tr><tr><td><code>source.repoURL</code></td><td>Git 저장소 주소. public 이라 자격 증명 없이 읽는다. private 이면 저장소 Secret(<code>argocd.argoproj.io/secret-type: repository</code>)을 등록해야 한다</td></tr><tr><td><code>source.targetRevision: main</code></td><td>브랜치, 태그, 커밋 SHA, <code>HEAD</code> 중 하나. Helm 저장소 차트면 차트 버전(범위 가능)</td></tr><tr><td><code>source.path</code></td><td>저장소 루트 기준 경로. 그 폴더에 <code>Chart.yaml</code> 이 있으면 Helm, <code>kustomization.yaml</code> 이면 Kustomize, 둘 다 없으면 YAML 폴더로 읽는다</td></tr><tr><td><code>destination.server</code></td><td><code>https://kubernetes.default.svc</code> = Argo CD 자신이 사는 클러스터(in-cluster). 다른 클러스터면 등록된 주소나 <code>name</code></td></tr><tr><td><code>destination.namespace</code></td><td>namespace 를 안 적은 리소스가 들어갈 기본 namespace. Helm 의 <code>.Release.Namespace</code> 도 이 값</td></tr><tr><td><code>syncPolicy.automated</code></td><td>있으면 자동 동기화. 안의 <code>prune</code>, <code>selfHeal</code> 은 <a href="#auto">자동 동기화</a> 절</td></tr><tr><td><code>syncOptions: CreateNamespace=true</code></td><td>destination namespace 가 없으면 sync 때 만든다</td></tr></tbody></table></div>
 <p>그 밖에 우리 파일엔 없지만 알아 둘 spec 필드: <code>sources</code>(여러 소스를 합침, 예: 차트는 Helm 저장소에서, values 는 Git 에서), <code>source.helm</code>/<code>directory</code>/<code>kustomize</code>/<code>plugin</code>(렌더링 옵션), <code>ignoreDifferences</code>(비교에서 뺄 필드), <code>syncPolicy.retry</code>(실패 시 재시도), <code>syncPolicy.managedNamespaceMetadata</code>(CreateNamespace 로 만드는 namespace 에 붙일 라벨), <code>info</code>(UI 에 보일 메모), <code>revisionHistoryLimit</code>.</p>
 <p>PoC 의 Application 들을 나란히 놓으면 "같은 틀, 다른 칸" 이 보인다.</p>
-<div class="table-wrap"><table><thead><tr><th>Application (파일)</th><th>source</th><th>destination.namespace</th><th>특이점</th></tr></thead><tbody><tr><td>hello-fn (<code>01/gitops/apps/hello-fn.yaml</code>)</td><td>Helm 차트 <code>01/functions/hello-fn</code></td><td>fn-demo</td><td>CreateNamespace</td></tr><tr><td>bye-fn (<code>01/gitops/apps/bye-fn.yaml</code>)</td><td>같은 차트 + <code>helm.valuesObject.message</code></td><td>fn-demo</td><td>차트 재사용, <code>.Release.Name</code> 이 bye-fn 이라 이름이 안 겹친다</td></tr><tr><td>root (<code>01/gitops/root.yaml</code>)</td><td>YAML 폴더 <code>01/gitops/apps</code></td><td>argocd</td><td>만드는 것이 Application 들 (App of Apps)</td></tr><tr><td>podinfo (<code>02/gitops/podinfo.yaml</code>)</td><td>YAML 폴더 <code>02/app</code></td><td>fn-canary</td><td>Rollout(Argo Rollouts 의 Deployment 대체 리소스. 카나리(새 버전을 일부 트래픽에만 먼저 내보내는 배포)·블루그린(새 버전을 통째로 띄운 뒤 한 번에 전환) 용), AnalysisTemplate(배포 중 지표를 검사하는 규칙). <a href="ch02-rollouts.html#argocd">2장</a></td></tr><tr><td>tenant-a, b (ApplicationSet 이 생성)</td><td>Helm 차트 <code>03/charts/tenant</code> + <code>valueFiles</code></td><td>tenant-a, b</td><td>AppProject 를 argocd ns 에 만든다</td></tr><tr><td>tenant-a-hello (<code>03/gitops/</code>)</td><td>01 의 hello-fn 차트</td><td>tenant-a</td><td><code>project: tenant-a</code>, CreateNamespace 안 씀</td></tr><tr><td>faas-functions (<code>04/gitops/</code>)</td><td>YAML 폴더 <code>04/functions/ksvc</code></td><td>fn-runtime</td><td>Knative Service(ksvc, Knative 의 서버리스 서비스 리소스. 안에서 Deployment 와 Revision 을 만들어 준다, <a href="ch05-knative.html#resource-model">5장</a>) 3개</td></tr><tr><td>platform-05 (<code>05/k8s/argocd/</code>)</td><td>YAML 폴더 + <code>directory.recurse: true</code></td><td>(비움)</td><td>파일마다 namespace 가 다름</td></tr><tr><td>fault-defenses (<code>06/gitops/</code>)</td><td>YAML 폴더 + <code>directory.exclude</code></td><td>tenant-a</td><td>리소스가 아닌 파일 2개 제외</td></tr><tr><td>root-ec2 (<code>07/gitops/bootstrap/</code>)</td><td>YAML 폴더 <code>07/gitops/apps</code></td><td>argocd</td><td>EC2 용 App of Apps</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>Application (파일)</th><th>source</th><th>destination.namespace</th><th>특이점</th></tr></thead><tbody><tr><td>hello-fn (<code>01/gitops/apps/hello-fn.yaml</code>)</td><td>Helm 차트 <code>01/functions/hello-fn</code></td><td>fn-demo</td><td>CreateNamespace</td></tr><tr><td>bye-fn (<code>01/gitops/apps/bye-fn.yaml</code>)</td><td>같은 차트 + <code>helm.valuesObject.message</code></td><td>fn-demo</td><td>차트 재사용, <code>.Release.Name</code> 이 bye-fn 이라 이름이 안 겹친다</td></tr><tr><td>root (<code>01/gitops/root.yaml</code>)</td><td>YAML 폴더 <code>01/gitops/apps</code></td><td>argocd</td><td>만드는 것이 Application 들 (App of Apps)</td></tr><tr><td>podinfo (<code>02/gitops/podinfo.yaml</code>)</td><td>YAML 폴더 <code>02/app</code></td><td>fn-canary</td><td><span class="t">Rollout</span>, <span class="t">AnalysisTemplate</span>. <a href="ch02-rollouts.html#argocd">2장</a></td></tr><tr><td>tenant-a, b (ApplicationSet 이 생성)</td><td>Helm 차트 <code>03/charts/tenant</code> + <code>valueFiles</code></td><td>tenant-a, b</td><td>AppProject 를 argocd ns 에 만든다</td></tr><tr><td>tenant-a-hello (<code>03/gitops/</code>)</td><td>01 의 hello-fn 차트</td><td>tenant-a</td><td><code>project: tenant-a</code>, CreateNamespace 안 씀</td></tr><tr><td>faas-functions (<code>04/gitops/</code>)</td><td>YAML 폴더 <code>04/functions/ksvc</code></td><td>fn-runtime</td><td><span class="t">Knative Service</span>(<a href="ch05-knative.html#resource-model">5장</a>) 3개</td></tr><tr><td>platform-05 (<code>05/k8s/argocd/</code>)</td><td>YAML 폴더 + <code>directory.recurse: true</code></td><td>(비움)</td><td>파일마다 namespace 가 다름</td></tr><tr><td>fault-defenses (<code>06/gitops/</code>)</td><td>YAML 폴더 + <code>directory.exclude</code></td><td>tenant-a</td><td>리소스가 아닌 파일 2개 제외</td></tr><tr><td>root-ec2 (<code>07/gitops/bootstrap/</code>)</td><td>YAML 폴더 <code>07/gitops/apps</code></td><td>argocd</td><td>EC2 용 App of Apps</td></tr></tbody></table></div>
+<aside class="notes"><dl>
+<div><dt>Rollout</dt><dd>Argo Rollouts 의 Deployment 대체 리소스. 카나리(새 버전을 일부 트래픽에만 먼저 내보내는 배포)·블루그린(새 버전을 통째로 띄운 뒤 한 번에 전환) 용.</dd></div>
+<div><dt>AnalysisTemplate</dt><dd>배포 중 지표를 검사하는 규칙.</dd></div>
+<div><dt>Knative Service(ksvc)</dt><dd>Knative 의 서버리스 서비스 리소스. 안에서 Deployment 와 Revision 을 만들어 준다.</dd></div>
+</dl></aside>
 <pre class="pseudo"><code><span class="c">// Argo CD 가 Application 하나를 받아 들였을 때의 검증 (개념)</span>
 <span class="k">검사</span> app:
   project = AppProject(app.spec.project)                  <span class="c">// 없으면 InvalidSpecError</span>
@@ -679,7 +805,10 @@ classDiagram
 </div>
 <figcaption><b>그림 1-10.</b> 조정(reconcile) 한 바퀴. 위 줄은 Git 쪽(원하는 상태), 아래 줄은 클러스터 쪽(실제 상태)이다. 둘을 같은 모양으로 정규화한 다음에야 비교할 수 있다. 비교 결과 다르면 sync 가 apply 하고, 그 변화가 다시 watch 로 캐시에 들어와 다음 바퀴의 입력이 된다.</figcaption>
 </figure>
-<p>여기서 가장 중요한 단어는 <strong>정규화(normalization)</strong>다. Git 의 YAML 과 클러스터에서 읽은 오브젝트는 그대로 비교하면 거의 항상 다르다. 클러스터 쪽에는 API 서버가 채운 기본값, <code>status</code>, <code>metadata.managedFields</code>(어느 도구가 어느 필드를 썼는지 API 서버가 기록하는 칸), 다른 컨트롤러가 붙인 어노테이션이 있다. 그래서 양쪽을 같은 모양으로 다듬은 뒤에 비교한다.</p>
+<p>여기서 가장 중요한 단어는 <strong>정규화(normalization)</strong>다. Git 의 YAML 과 클러스터에서 읽은 오브젝트는 그대로 비교하면 거의 항상 다르다. 클러스터 쪽에는 API 서버가 채운 기본값, <code>status</code>, <span class="t"><code>metadata.managedFields</code></span>, 다른 컨트롤러가 붙인 어노테이션이 있다. 그래서 양쪽을 같은 모양으로 다듬은 뒤에 비교한다.</p>
+<aside class="notes"><dl>
+<div><dt><code>metadata.managedFields</code></dt><dd>어느 도구가 어느 필드를 썼는지 API 서버가 기록하는 칸.</dd></div>
+</dl></aside>
 
 </div>
 <div class="tier" data-tier="2">
@@ -774,9 +903,12 @@ flowchart TD
 <text x="722" y="345" class="d-subd">지울 대상 (prune)</text>
 </svg>
 </div>
-<figcaption><b>그림 1-12.</b> 3방향 비교(three-way diff)의 직관. "지난번 적용" 은 Argo CD 가 마지막으로 apply 한 값(클라이언트 측 apply 가 지난번에 보낸 내용을 리소스의 <code>last-applied-configuration</code> 어노테이션에 통째로 남겨 둔 것)이다. Git 이 한 번도 말한 적 없는 필드(다른 컨트롤러가 붙인 어노테이션, status)는 차이로 치지 않는다.</figcaption>
+<figcaption><b>그림 1-12.</b> 3방향 비교(three-way diff)의 직관. "지난번 적용" 은 Argo CD 가 마지막으로 apply 한 값이다. 클라이언트 측 apply 는 지난번에 보낸 내용을 리소스의 <code>last-applied-configuration</code> 어노테이션에 통째로 남겨 두는데, 그것을 읽는다. Git 이 한 번도 말한 적 없는 필드(다른 컨트롤러가 붙인 어노테이션, status)는 차이로 치지 않는다.</figcaption>
 </figure>
-<p>위 그림의 요점: Argo CD 는 기본적으로 <code>kubectl apply</code> 와 같은 3방향 비교를 흉내 낸다. 그래서 다른 컨트롤러나 어드미션 웹훅(admission webhook, API 서버가 리소스를 저장하기 전에 외부 서비스에 "고쳐도 되나, 바꿔 줄 것 있나" 를 묻는 장치. 값을 바꾸는 쪽을 변형(mutating) 웹훅이라 한다)이 <em>새 필드를 더하는 것</em>은 보통 차이가 아니지만, Git 이 적은 필드의 <em>값을 바꾸는 것</em>은 차이다. <code>kubectl scale</code> 이 OutOfSync 를 만드는 이유가 이것이다 (replicas 는 Git 이 적은 필드).</p>
+<p>위 그림의 요점: Argo CD 는 기본적으로 <code>kubectl apply</code> 와 같은 3방향 비교를 흉내 낸다. 그래서 다른 컨트롤러나 <span class="t">어드미션 웹훅</span>이 <em>새 필드를 더하는 것</em>은 보통 차이가 아니지만, Git 이 적은 필드의 <em>값을 바꾸는 것</em>은 차이다. <code>kubectl scale</code> 이 OutOfSync 를 만드는 이유가 이것이다 (replicas 는 Git 이 적은 필드).</p>
+<aside class="notes"><dl>
+<div><dt>어드미션 웹훅(admission webhook)</dt><dd>API 서버가 리소스를 저장하기 전에 외부 서비스에 "고쳐도 되나, 바꿔 줄 것 있나" 를 묻는 장치. 값을 바꾸는 쪽을 변형(mutating) 웹훅이라 한다.</dd></div>
+</dl></aside>
 
 </div>
 <div class="tier" data-tier="3">
@@ -808,7 +940,11 @@ flowchart TD
 <h4>정규화가 하는 일</h4>
 <ul><li>항상 빼는 것: <code>metadata.generation</code>, <code>resourceVersion</code>, <code>managedFields</code>, <code>status</code> 대부분 (공식 문서 Reconcile Optimization, Diffing)</li><li>알려진 종류별 변형 정리: 예를 들어 리소스 양(<code>500m</code> 와 <code>0.5</code>), 기본값이 채워지는 필드</li><li>사용자가 지정한 무시: Application 의 <code>spec.ignoreDifferences</code>, 또는 <code>argocd-cm</code> 의 <code>resource.customizations.ignoreDifferences.&lt;group&gt;_&lt;kind&gt;</code> (시스템 전체)</li></ul>
 <h4>ignoreDifferences 의 세 가지 지정 방법</h4>
-<div class="code-head"><span>예: HPA(HorizontalPodAutoscaler, 부하에 따라 replicas 를 바꾸는 쿠버네티스 기본 오토스케일러)가 replicas 를 바꾸는 Deployment (PoC 에는 없음)</span><span>예시</span></div>
+<p>아래 예시는 <span class="t">HPA</span> 가 replicas 를 바꾸는 Deployment 를 가정한다 (PoC 에는 없음).</p>
+<aside class="notes"><dl>
+<div><dt>HPA(HorizontalPodAutoscaler)</dt><dd>부하에 따라 replicas 를 바꾸는 쿠버네티스 기본 오토스케일러.</dd></div>
+</dl></aside>
+<div class="code-head"><span>HPA 가 replicas 를 바꾸는 Deployment 의 ignoreDifferences</span><span>예시</span></div>
 <pre><code><span class="k">spec</span>:
   <span class="k">ignoreDifferences</span>:
     - <span class="k">group</span>: apps
@@ -827,11 +963,18 @@ flowchart TD
     <span class="k">syncOptions</span>:
       - RespectIgnoreDifferences=true   <span class="c"># sync 할 때도 그 필드를 덮어쓰지 않음</span></code></pre>
 <p>중요한 함정: <code>ignoreDifferences</code> 는 기본적으로 <strong>비교에만</strong> 쓰인다. sync 가 일어나면 Git 의 값을 그대로 apply 해서 그 필드도 덮어쓴다. sync 때도 건드리지 않게 하려면 <code>RespectIgnoreDifferences=true</code> 를 같이 켠다 (이미 존재하는 리소스에만 효과).</p>
-<p>비교 방식은 두 가지다. v3.5 의 기본은 위에서 본 클라이언트 측 3방향 비교(공식 문서의 Legacy)이고, Application 에 <code>argocd.argoproj.io/compare-options: ServerSideDiff=true</code> 를 달거나 <code>argocd-cmd-params-cm</code> 의 <code>controller.diff.server.side: "true"</code> 로 전체를 바꾸면 API 서버에 server-side apply(SSA, API 서버가 필드 단위로 소유자를 기록하며 합쳐 주는 apply 방식)의 dry-run(실제로 저장하지 않고 API 서버의 검증·병합만 받아 보는 시험 요청)을 보내 그 결과와 실제를 비교한다(Server-Side Diff). 후자는 v3.1 부터 정식(stable) 기능이지만 v3.5 에서도 여전히 선택 사항(opt-in)이다. 웹훅이 채우는 기본값까지 정확히 반영되는 대신 API 호출이 늘어나고, 변형 웹훅이 바꾸는 값까지 보려면 <code>IncludeMutationWebhook=true</code> 를 더 단다.</p>
-<p>그리고 비교 횟수를 줄이는 장치가 있다. 리소스가 바뀔 때마다 앱 비교가 다시 도는데, 컨트롤러가 status 를 자주 고치는 리소스는 CPU 를 많이 먹는다. <code>resource.ignoreResourceUpdatesEnabled</code>(기본 true)와 <code>resource.customizations.ignoreResourceUpdates.*</code> 로 "이 필드만 바뀐 건 무시" 를 정할 수 있다. 무시는 health 가 안 바뀔 때에만 적용된다. 그리고 v3 부터는 <code>argocd-cm</code> 의 <code>resource.exclusions</code> 기본값으로 Endpoints, EndpointSlice, Lease 같은 자주 바뀌는 종류와 Cilium(우리 클러스터의 CNI, 즉 파드 네트워크 플러그인)의 CiliumIdentity·CiliumEndpoint·CiliumEndpointSlice 등을 아예 watch 대상에서 뺀다 (v3.0 업그레이드 문서. 바꾸거나 지울 수 있다).</p>
+<p>비교 방식은 두 가지다. v3.5 의 기본은 위에서 본 클라이언트 측 3방향 비교(공식 문서의 Legacy)이고, Application 에 <code>argocd.argoproj.io/compare-options: ServerSideDiff=true</code> 를 달거나 <code>argocd-cmd-params-cm</code> 의 <code>controller.diff.server.side: "true"</code> 로 전체를 바꾸면 API 서버에 <span class="t">server-side apply</span> 의 <span class="t">dry-run</span> 을 보내 그 결과와 실제를 비교한다(Server-Side Diff). 후자는 v3.1 부터 정식(stable) 기능이지만 v3.5 에서도 여전히 선택 사항(opt-in)이다. 웹훅이 채우는 기본값까지 정확히 반영되는 대신 API 호출이 늘어나고, 변형 웹훅이 바꾸는 값까지 보려면 <code>IncludeMutationWebhook=true</code> 를 더 단다.</p>
+<aside class="notes"><dl>
+<div><dt>server-side apply(SSA)</dt><dd>API 서버가 필드 단위로 소유자를 기록하며 합쳐 주는 apply 방식.</dd></div>
+<div><dt>dry-run</dt><dd>실제로 저장하지 않고 API 서버의 검증·병합만 받아 보는 시험 요청.</dd></div>
+</dl></aside>
+<p>그리고 비교 횟수를 줄이는 장치가 있다. 리소스가 바뀔 때마다 앱 비교가 다시 도는데, 컨트롤러가 status 를 자주 고치는 리소스는 CPU 를 많이 먹는다. <code>resource.ignoreResourceUpdatesEnabled</code>(기본 true)와 <code>resource.customizations.ignoreResourceUpdates.*</code> 로 "이 필드만 바뀐 건 무시" 를 정할 수 있다. 무시는 health 가 안 바뀔 때에만 적용된다. 그리고 v3 부터는 <code>argocd-cm</code> 의 <code>resource.exclusions</code> 기본값으로 Endpoints, EndpointSlice, Lease 같은 자주 바뀌는 종류와 <span class="t">Cilium</span> 의 CiliumIdentity·CiliumEndpoint·CiliumEndpointSlice 등을 아예 watch 대상에서 뺀다 (v3.0 업그레이드 문서. 바꾸거나 지울 수 있다).</p>
+<aside class="notes"><dl>
+<div><dt>Cilium</dt><dd>우리 클러스터의 CNI, 즉 파드 네트워크 플러그인.</dd></div>
+</dl></aside>
 
 </div>
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>PoC 의 어느 Application 에도 <code>ignoreDifferences</code> 가 없다. HPA 를 안 쓰고(스케일은 Knative autoscaler 가 Deployment 를 직접 다룬다, 그 Deployment 는 Knative 가 만든 것이라 Argo CD 추적 대상이 아니다), 대부분 쿠버네티스 기본 리소스라서 필요가 없었다. 05 의 함수 ksvc 는 애초에 Argo CD 가 아니라 컨트롤 플레인이 만든다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>PoC 의 어느 Application 에도 <code>ignoreDifferences</code> 가 없다. HPA 를 안 쓰고, 대부분 쿠버네티스 기본 리소스라서 필요가 없었다. 스케일은 Knative autoscaler 가 Deployment 를 직접 다루는데, 그 Deployment 는 Knative 가 만든 것이라 Argo CD 추적 대상도 아니다. 05 의 함수 ksvc 는 애초에 Argo CD 가 아니라 컨트롤 플레인이 만든다.</p></aside>
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: sync 직후에도 OutOfSync</p><p><b>증상</b>: Sync 는 Succeeded 인데 상태가 계속 OutOfSync, selfHeal 이면 몇 초마다 다시 sync 한다. <b>원인 후보</b>: 변형 웹훅(mutating webhook)이나 컨트롤러가 Git 이 적은 필드를 고친다, 차트가 <code>randAlphaNum</code> 같은 무작위 값을 쓴다, Git 에 API 서버가 모르는 필드가 있어서 버려진다. <b>볼 곳</b>: UI 의 앱 화면 → APP DIFF, 또는 <code>argocd app diff &lt;앱&gt;</code>. <b>고치는 법</b>: Git 쪽을 실제 모양에 맞추거나(가장 좋음), 그 필드를 <code>ignoreDifferences</code> 로 빼고 필요하면 <code>RespectIgnoreDifferences=true</code>. 04 의 Knative Service 처럼 웹훅이 기본값을 채우는 리소스에서 이런 일이 생길 수 있다. 다만 기본(Legacy) 비교에서는 웹훅이 <em>더한</em> 필드는 차이로 치지 않으므로, Git 에 적은 값을 웹훅이 <em>바꾸는</em> 경우가 아니면 보통 Synced 로 안정된다 【확인 필요: faas-functions 가 sync 직후 Synced 로 안정되는지는 맥에서 <code>argocd app diff faas-functions</code>(또는 UI 의 APP DIFF)가 비어 있는지로 확정된다】.</p></aside>
 <aside class="callout why"><p class="callout-title">왜 "계속 비교" 구조인가 (대안)</p><p>대안은 "Git 이 바뀔 때만 apply" (이벤트 구동, CI 방식)다. 이 방식은 클러스터 쪽 변화를 영원히 모른다. 계속 비교하는 대가는 CPU 와 API 호출인데, Argo CD 는 watch 캐시(클러스터를 다시 LIST 하지 않음)와 매니페스트 캐시(같은 커밋이면 다시 렌더링 안 함)로 그 비용을 줄인다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><ul><li><a href="https://argo-cd.readthedocs.io/en/stable/user-guide/diffing/">Diffing Customization</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/user-guide/diff-strategies/">Diff Strategies (server-side diff)</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/user-guide/compare-options/">Compare Options</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/reconcile/">Reconcile Optimization</a></li><li><a href="https://github.com/argoproj/gitops-engine">gitops-engine (비교·sync 라이브러리)</a></li></ul></aside>
@@ -927,7 +1070,18 @@ stateDiagram-v2
 <div class="tier" data-tier="3">
 <h3>health 판정 규칙과 App of Apps 의 함정</h3>
 <h4>리소스 종류별 health 판정 (공식 문서 기준)</h4>
-<div class="table-wrap"><table><thead><tr><th>종류</th><th>Healthy 조건</th><th>그 밖</th></tr></thead><tbody><tr><td>Deployment, ReplicaSet(Deployment 가 버전마다 만드는 파드 묶음), StatefulSet, DaemonSet(노드마다 파드 하나씩 두는 리소스)</td><td>observedGeneration 이 generation 과 같고, 업데이트된 replica 수가 원하는 수와 같다</td><td>롤아웃 중이면 Progressing, progressDeadline 초과면 Degraded</td></tr><tr><td>Service</td><td>LoadBalancer 타입(클라우드 로드밸런서를 붙여 달라는 Service 종류)이면 <code>status.loadBalancer.ingress</code> 가 비어 있지 않다</td><td>ClusterIP(클러스터 안에서만 쓰는 가상 IP 형 Service) 는 바로 Healthy</td></tr><tr><td>Ingress(바깥 HTTP 요청을 안의 Service 로 보내는 규칙 리소스)</td><td><code>status.loadBalancer.ingress</code> 가 비어 있지 않다</td><td></td></tr><tr><td>PersistentVolumeClaim(디스크를 요청하는 리소스)</td><td><code>status.phase</code> 가 Bound</td><td></td></tr><tr><td>Pod</td><td>restartPolicy Always 면 Ready</td><td>CrashLoopBackOff(컨테이너가 반복해서 죽어 재시작 대기 중)·ImagePullBackOff(이미지를 못 받아 대기 중) 면 Degraded. Never/OnFailure 면 끝날 때까지 Progressing</td></tr><tr><td>Job</td><td>성공</td><td><code>spec.suspend</code> 면 Suspended</td></tr><tr><td>CRD (Rollout, Knative Service 등)</td><td>Argo CD 에 내장된 Lua(Argo CD 가 health 규칙을 적는 데 쓰는 작은 스크립트 언어) 판정이 있으면 그걸 쓴다</td><td>Rollout 과 Knative Service(<code>serving.knative.dev/Service</code>) 둘 다 내장이다. Knative Service 는 ConfigurationsReady·RoutesReady·Ready 조건이 전부 True 면 Healthy, 하나라도 False 면 Degraded, 그 밖에는 Progressing (소스 <code>resource_customizations/serving.knative.dev/Service/health.lua</code>). 내장도 사용자 정의도 없으면 health 를 판정하지 않는다</td></tr><tr><td>Application (App of Apps 의 자식)</td><td><strong>v1.8 부터 판정 안 함</strong></td><td>그래서 root 가 Healthy 여도 자식 앱이 Degraded 일 수 있다</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>종류</th><th>Healthy 조건</th><th>그 밖</th></tr></thead><tbody><tr><td>Deployment, <span class="t">ReplicaSet</span>, StatefulSet, <span class="t">DaemonSet</span></td><td>observedGeneration 이 generation 과 같고, 업데이트된 replica 수가 원하는 수와 같다</td><td>롤아웃 중이면 Progressing, progressDeadline 초과면 Degraded</td></tr><tr><td>Service</td><td><span class="t">LoadBalancer</span> 타입이면 <code>status.loadBalancer.ingress</code> 가 비어 있지 않다</td><td><span class="t">ClusterIP</span> 는 바로 Healthy</td></tr><tr><td><span class="t">Ingress</span></td><td><code>status.loadBalancer.ingress</code> 가 비어 있지 않다</td><td></td></tr><tr><td><span class="t">PersistentVolumeClaim</span></td><td><code>status.phase</code> 가 Bound</td><td></td></tr><tr><td>Pod</td><td>restartPolicy Always 면 Ready</td><td><span class="t">CrashLoopBackOff</span>·<span class="t">ImagePullBackOff</span> 면 Degraded. Never/OnFailure 면 끝날 때까지 Progressing</td></tr><tr><td>Job</td><td>성공</td><td><code>spec.suspend</code> 면 Suspended</td></tr><tr><td>CRD (Rollout, Knative Service 등)</td><td>Argo CD 에 내장된 <span class="t">Lua</span> 판정이 있으면 그걸 쓴다</td><td>Rollout 과 Knative Service(<code>serving.knative.dev/Service</code>) 둘 다 내장이다. Knative Service 는 ConfigurationsReady·RoutesReady·Ready 조건이 전부 True 면 Healthy, 하나라도 False 면 Degraded, 그 밖에는 Progressing (소스 <code>resource_customizations/serving.knative.dev/Service/health.lua</code>). 내장도 사용자 정의도 없으면 health 를 판정하지 않는다</td></tr><tr><td>Application (App of Apps 의 자식)</td><td><strong>v1.8 부터 판정 안 함</strong></td><td>그래서 root 가 Healthy 여도 자식 앱이 Degraded 일 수 있다</td></tr></tbody></table></div>
+<aside class="notes"><dl>
+<div><dt>ReplicaSet</dt><dd>Deployment 가 버전마다 만드는 파드 묶음.</dd></div>
+<div><dt>DaemonSet</dt><dd>노드마다 파드 하나씩 두는 리소스.</dd></div>
+<div><dt>LoadBalancer</dt><dd>클라우드 로드밸런서를 붙여 달라는 Service 종류.</dd></div>
+<div><dt>ClusterIP</dt><dd>클러스터 안에서만 쓰는 가상 IP 형 Service.</dd></div>
+<div><dt>Ingress</dt><dd>바깥 HTTP 요청을 안의 Service 로 보내는 규칙 리소스.</dd></div>
+<div><dt>PersistentVolumeClaim</dt><dd>디스크를 요청하는 리소스.</dd></div>
+<div><dt>CrashLoopBackOff</dt><dd>컨테이너가 반복해서 죽어 재시작 대기 중인 파드 상태.</dd></div>
+<div><dt>ImagePullBackOff</dt><dd>이미지를 못 받아 대기 중인 파드 상태.</dd></div>
+<div><dt>Lua</dt><dd>Argo CD 가 health 규칙을 적는 데 쓰는 작은 스크립트 언어.</dd></div>
+</dl></aside>
 <p>앱의 health 는 <strong>직계 리소스 중 가장 나쁜 값</strong>이고, 좋은 쪽부터 순서는 Healthy, Suspended, Progressing, Missing, Degraded, Unknown 이다 (공식 문서). 상속하지 않는다는 점이 중요하다. Deployment 의 health 는 Deployment 자신의 status 만 보고 정하지, 그 아래 Pod 를 직접 보지 않는다. 한 가지 예외가 v3.4 에서 생겼다: 앱의 health 가 Missing 이 되는 것은 <em>모든</em> 리소스가 Missing 일 때(첫 sync 전)뿐이고, 일부만 없으면 없는 것은 빼고 나머지로 판정한다 (없다는 사실은 이미 OutOfSync 가 말해 주기 때문).</p>
 <pre class="pseudo"><code><span class="k">함수</span> appHealth(app):
   순위 = [Healthy, Suspended, Progressing, Missing, Degraded, Unknown]   <span class="c">// 왼쪽이 좋음</span>
@@ -994,12 +1148,19 @@ stateDiagram-v2
 </div>
 <figcaption><b>그림 1-17.</b> 같은 push 에 대해 세 방식이 감지하는 시점. 점은 Argo CD 가 Git 을 보는 순간, 주황 막대는 sync 와 파드 교체다. 시각은 설명용 예시이고, 폴링의 최악 대기는 설정값(120초 + jitter 최대 60초)으로 정해진다.</figcaption>
 </figure>
-<div class="table-wrap"><table><thead><tr><th>방법</th><th>어떻게</th><th>반영까지</th><th>비용과 조건</th></tr></thead><tbody><tr><td>폴링 (기본)</td><td><code>timeout.reconciliation</code> 마다 앱을 다시 비교하면서 브랜치를 커밋으로 다시 해석</td><td>0 ~ (주기 + jitter). 기본 최대 3분</td><td>주기가 짧을수록 Git 서버·repo-server 부담. GitHub 요청 한도</td></tr><tr><td>refresh 주석</td><td><code>argocd.argoproj.io/refresh: normal</code> 을 Application 에 단다 (UI 의 REFRESH 버튼과 같다)</td><td>몇 초</td><td>사람이나 스크립트가 해야 한다</td></tr><tr><td>webhook</td><td>GitHub 이 push 순간 <code>https://&lt;argocd&gt;/api/webhook</code> 로 알림 → server 가 해당 앱들에 refresh 주석</td><td>몇 초</td><td>GitHub 에서 닿는 공개 주소 필요. 맥 안 kind 는 터널(cloudflared 등, 맥 안의 포트를 공개 URL 로 열어 주는 도구) 필요</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>방법</th><th>어떻게</th><th>반영까지</th><th>비용과 조건</th></tr></thead><tbody><tr><td>폴링 (기본)</td><td><code>timeout.reconciliation</code> 마다 앱을 다시 비교하면서 브랜치를 커밋으로 다시 해석</td><td>0 ~ (주기 + jitter). 기본 최대 3분</td><td>주기가 짧을수록 Git 서버·repo-server 부담. GitHub 요청 한도</td></tr><tr><td>refresh 주석</td><td><code>argocd.argoproj.io/refresh: normal</code> 을 Application 에 단다 (UI 의 REFRESH 버튼과 같다)</td><td>몇 초</td><td>사람이나 스크립트가 해야 한다</td></tr><tr><td>webhook</td><td>GitHub 이 push 순간 <code>https://&lt;argocd&gt;/api/webhook</code> 로 알림 → server 가 해당 앱들에 refresh 주석</td><td>몇 초</td><td>GitHub 에서 닿는 공개 주소 필요. 맥 안 kind 는 <span class="t">터널</span>(cloudflared 등) 필요</td></tr></tbody></table></div>
+<aside class="notes"><dl>
+<div><dt>터널(tunnel)</dt><dd>맥 안의 포트를 공개 URL 로 열어 주는 도구. cloudflared, ngrok 등.</dd></div>
+</dl></aside>
 
 </div>
 <div class="tier" data-tier="2">
 <h3>git push 에서 파드 Ready 까지, normal 과 hard</h3>
-<p><code>git push</code> 부터 새 파드가 Ready 가 될 때까지 전체 순서다. <code>measure-sync.sh</code> 는 이 구간을 둘로 나눠 잰다: <b>t_detect</b>(push → Deployment 의 args 가 바뀜)와 <b>t_ready</b>(→ 새 파드가 전부 Ready). 그림의 kubelet 은 노드마다 하나씩 도는 에이전트로, API 서버가 배정한 파드를 실제 컨테이너로 띄우고 상태를 보고한다. readiness 는 파드가 요청을 받을 준비가 됐는지 kubelet 이 검사하는 프로브다.</p>
+<p><code>git push</code> 부터 새 파드가 Ready 가 될 때까지 전체 순서다. <code>measure-sync.sh</code> 는 이 구간을 둘로 나눠 잰다: <b>t_detect</b>(push → Deployment 의 args 가 바뀜)와 <b>t_ready</b>(→ 새 파드가 전부 Ready). 뒤쪽 절반은 Argo CD 가 아니라 <span class="t">kubelet</span> 이 새 파드를 띄우고 <span class="t">readiness</span> 검사를 통과시키는 시간이다.</p>
+<aside class="notes"><dl>
+<div><dt>kubelet</dt><dd>노드마다 하나씩 도는 에이전트. API 서버가 배정한 파드를 실제 컨테이너로 띄우고 상태를 보고한다.</dd></div>
+<div><dt>readiness</dt><dd>파드가 요청을 받을 준비가 됐는지 kubelet 이 검사하는 프로브.</dd></div>
+</dl></aside>
 <figure>
 <pre class="mermaid">
 sequenceDiagram
@@ -1188,7 +1349,10 @@ flowchart TD
       <span class="k">기다림</span> 이번 의 모든 리소스 Healthy (ignore-healthcheck 주석 리소스는 제외)
       <span class="k">만약</span> 실패: SyncFail 훅 실행, 상태 = Failed, <span class="k">반환</span>
   상태 = Succeeded, history 에 (sha, 시각) 추가</code></pre>
-<p>04 의 깨뜨리기 실험(B6. B 번호는 <code>poc/ANALYSIS.md</code> 의 깨뜨리기 실험 번호다)이 이 흐름의 첫 칸에서 실패하는 예다. dry-run 단계에서 Knative 웹훅이 "must not set the field(s): spec.template.spec.tolerations" 로 거절하므로 아무것도 바뀌지 않고, 이미 떠 있던 Revision 은 그대로 응답한다.</p>
+<p>04 의 깨뜨리기 실험 <span class="t">B6</span> 이 이 흐름의 첫 칸에서 실패하는 예다. dry-run 단계에서 Knative 웹훅이 "must not set the field(s): spec.template.spec.tolerations" 로 거절하므로 아무것도 바뀌지 않고, 이미 떠 있던 Revision 은 그대로 응답한다.</p>
+<aside class="notes"><dl>
+<div><dt>B6</dt><dd><code>poc/ANALYSIS.md</code> 의 깨뜨리기(break) 실험 번호. B1, B2… 로 매겨져 있다.</dd></div>
+</dl></aside>
 <div class="code-head"><span>poc/04-faas-runtime/README.md</span><span>7단계 깨뜨리기 발췌</span></div>
 <pre><code>kubectl -n knative-serving patch configmap config-features --type merge \
   -p '{"data":{"kubernetes.podspec-tolerations":"disabled"}}'
@@ -1246,7 +1410,10 @@ curl -s -H "Host: hello-runc.fn-runtime.faas.local" localhost:8081/ ; echo
 </div>
 <figcaption><b>그림 1-21.</b> 자동 동기화(automated)를 켠 상태에서 두 스위치의 네 조합. prune 은 "Git 에서 사라진 것을 지울까", selfHeal 은 "Git 은 그대로인데 클러스터가 바뀌었을 때 되돌릴까" 다. 둘 다 켠 오른쪽 아래가 "Git 과 정확히 같게" 이고, PoC 는 전부 이 칸이다.</figcaption>
 </figure>
-<ul><li><strong>정리(prune)</strong>: Git 에서 파일을 지우면 클러스터에서도 지울까. 기본은 안 지운다(안전 장치). 끄면 UI 에 "지울 대상" 표시만 하고 남겨 둔다.</li><li><strong>자동 치유(selfHeal)</strong>: 누가 클러스터를 손으로 바꾸면 Git 대로 되돌릴까. 기본은 안 되돌린다. 끄면 OutOfSync 표시만 한다.</li><li><strong>retry</strong>: sync 가 실패했을 때 지수 백오프(exponential backoff, 기다리는 시간을 매번 곱해 늘리는 방식)로 다시 시도하는 규칙. 자동 동기화가 만든 작업은 따로 적지 않아도 <strong>기본 5회</strong>까지 재시도한다 (v3.5.5 소스 <code>controller/appcontroller.go</code> 가 자동 sync 의 operation 에 <code>Retry: {Limit: 5}</code> 를 넣는다). 백오프 기본값은 첫 대기 5초, 2배씩, 상한 3분이다 (<code>pkg/apis/application/v1alpha1/application_defaults.go</code>). 수동 sync 는 적지 않으면 재시도가 없다.</li></ul>
+<ul><li><strong>정리(prune)</strong>: Git 에서 파일을 지우면 클러스터에서도 지울까. 기본은 안 지운다(안전 장치). 끄면 UI 에 "지울 대상" 표시만 하고 남겨 둔다.</li><li><strong>자동 치유(selfHeal)</strong>: 누가 클러스터를 손으로 바꾸면 Git 대로 되돌릴까. 기본은 안 되돌린다. 끄면 OutOfSync 표시만 한다.</li><li><strong>retry</strong>: sync 가 실패했을 때 <span class="t">지수 백오프</span>로 다시 시도하는 규칙. 자동 동기화가 만든 작업은 따로 적지 않아도 <strong>기본 5회</strong>까지 재시도한다 (v3.5.5 소스 <code>controller/appcontroller.go</code> 가 자동 sync 의 operation 에 <code>Retry: {Limit: 5}</code> 를 넣는다). 백오프 기본값은 첫 대기 5초, 2배씩, 상한 3분이다 (<code>pkg/apis/application/v1alpha1/application_defaults.go</code>). 수동 sync 는 적지 않으면 재시도가 없다.</li></ul>
+<aside class="notes"><dl>
+<div><dt>지수 백오프(exponential backoff)</dt><dd>기다리는 시간을 매번 곱해 늘리는 방식.</dd></div>
+</dl></aside>
 <p>둘 다 켜면 "Git 과 정확히 같게" 가 보장되지만, 장애 중에 손으로 급히 고친 것도 되돌려진다. README 1절의 확인 질문이 이것이다: <code>selfHeal: true</code> 인데 장애 대응 중에 누가 <code>kubectl scale --replicas=10</code> 으로 늘리면, 몇 초 뒤 Git 의 값(2)으로 줄어든다. 사람은 늘렸다고 믿고 있는데 실제로는 줄어 있는 상태가 가장 위험하다.</p>
 
 </div>
@@ -1342,7 +1509,10 @@ sequenceDiagram
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>01~07 의 모든 Application 과 ApplicationSet 템플릿이 <code>automated: {prune: true, selfHeal: true}</code> 다. 01 README 8절 결정 표도 prune true / selfHeal true 로 채워져 있고, 정답본도 둘 다 true 다. retry 는 어디에도 적지 않았으니 자동 동기화의 기본값(5회, 5초부터 2배씩, 상한 3분)이 쓰인다. 5회가 지나면 같은 커밋에서는 사람이 다시 시켜야 한다.</p></aside>
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: 고쳤는데 계속 Failed</p><p><b>증상</b>: 원인(권한, 웹훅, CRD 누락)을 고쳤는데 앱은 OutOfSync 에 마지막 작업 Failed 그대로. <b>이유</b>: 같은 커밋으로 실패한 자동 동기화는 기본 재시도 5회를 다 쓴 뒤에는 다시 안 한다. 재시도 중이면 <code>operationState.message</code> 에 "Retrying attempt #N" 류가 보인다. <b>볼 곳</b>: <code>kubectl -n argocd get application X -o jsonpath='{.status.operationState.syncResult.revision}{" "}{.status.operationState.phase}'</code>. <b>고치는 법</b>: UI 의 SYNC 버튼, <code>argocd app sync X</code>, 또는 04 README 처럼 <code>operation</code> 칸 patch. 반복되는 문제라면 <code>syncPolicy.retry</code> 를 둔다.</p></aside>
 <aside class="callout why"><p class="callout-title">왜 prune·selfHeal 을 둘 다 켰나 (대안)</p><p><b>선택</b>: 둘 다 true. 클러스터를 지우고 다시 세우는 드릴(03·04 재생성, run-all)을 자주 하므로 "Git 과 정확히 같다" 가 가장 중요했다. <b>대안 (가)</b> prune 끔: Git 에서 실수로 지운 파일이 운영 리소스를 날리는 걸 막는다. 대신 지울 것이 쌓인다. 테넌트 삭제(namespace 까지 지워짐)처럼 위험한 곳은 <code>Prune=confirm</code> 이 절충안이다. <b>대안 (나)</b> selfHeal 끔: 장애 중 손으로 고친 것이 살아남는다. 대신 드리프트가 쌓이고 UI 에 OutOfSync 가 남는다. <b>대안 (다)</b> 수동 Sync 버튼만: 데모 중 사람이 눌러야 한다.</p></aside>
-<aside class="callout warn"><p class="callout-title">주의: 장애 중 손으로 고칠 때</p><p>selfHeal 이 켜진 앱을 급히 손으로 고쳐야 하면 순서를 지킨다. (1) Git 에서 그 앱(root 가 있으면 root 도)의 <code>automated</code> 를 끄는 커밋을 push 하거나, 최소한 그 앱에 sync window(AppProject 에 적는 "이 시간대엔 sync 금지/허용" 규칙. PoC 미사용, 본선에서 데모 시간대 보호에 쓸 수 있다)를 건다 (2) 손으로 고친다 (3) 고친 내용을 Git 에 반영한다 (4) 자동 동기화를 다시 켠다. 순서를 거꾸로 하면 고친 것이 몇 초 만에 사라진다.</p></aside>
+<aside class="callout warn"><p class="callout-title">주의: 장애 중 손으로 고칠 때</p><p>selfHeal 이 켜진 앱을 급히 손으로 고쳐야 하면 순서를 지킨다. (1) Git 에서 그 앱(root 가 있으면 root 도)의 <code>automated</code> 를 끄는 커밋을 push 하거나, 최소한 그 앱에 <span class="t">sync window</span> 를 건다 (2) 손으로 고친다 (3) 고친 내용을 Git 에 반영한다 (4) 자동 동기화를 다시 켠다. 순서를 거꾸로 하면 고친 것이 몇 초 만에 사라진다.</p>
+<aside class="notes"><dl>
+<div><dt>sync window</dt><dd>AppProject 에 적는 "이 시간대엔 sync 금지/허용" 규칙. PoC 미사용, 본선에서 데모 시간대 보호에 쓸 수 있다.</dd></div>
+</dl></aside></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><ul><li><a href="https://argo-cd.readthedocs.io/en/stable/user-guide/auto_sync/">Automated Sync Policy (Semantics 절)</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/user-guide/sync-options/">Sync Options (Prune=confirm 등)</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/user-guide/sync_windows/">Sync Windows</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/argocd-cmd-params-cm-yaml/">argocd-cmd-params-cm.yaml (self.heal 값)</a></li></ul></aside>
 
 <h2 id="tracking">리소스 추적과 finalizer</h2>
@@ -1386,15 +1556,21 @@ sequenceDiagram
 <text x="20" y="290" class="d-sub">추적 주석</text>
 </svg>
 </div>
-<figcaption><b>그림 1-24.</b> Argo CD v3 의 기본 추적 방식(annotation). Git 에 적힌 직계 리소스에만 <code>argocd.argoproj.io/tracking-id</code> 를 달고, 그 아래 ReplicaSet·Pod 는 쿠버네티스의 ownerReferences(리소스에 "내 주인은 이것" 이라고 적는 칸)를 따라가 UI 트리를 그린다.</figcaption>
+<figcaption><b>그림 1-24.</b> Argo CD v3 의 기본 추적 방식(annotation). Git 에 적힌 직계 리소스에만 <code>argocd.argoproj.io/tracking-id</code> 를 달고, 그 아래 ReplicaSet·Pod 는 쿠버네티스의 <span class="t">ownerReferences</span> 를 따라가 UI 트리를 그린다.</figcaption>
 </figure>
+<aside class="notes"><dl>
+<div><dt>ownerReferences</dt><dd>리소스에 "내 주인은 이것" 이라고 적는 칸.</dd></div>
+</dl></aside>
 
 </div>
 <div class="tier" data-tier="2">
 <h3>추적 방식 셋과 finalizer 삭제 순서</h3>
 <p>추적 방식은 세 가지이고 <code>argocd-cm</code> 의 <code>application.resourceTrackingMethod</code> 로 고른다.</p>
 <div class="table-wrap"><table><thead><tr><th>방식</th><th>표시</th><th>비고</th></tr></thead><tbody><tr><td><code>annotation</code> (v3 기본)</td><td><code>argocd.argoproj.io/tracking-id: &lt;앱&gt;:&lt;group&gt;/&lt;kind&gt;:&lt;ns&gt;/&lt;name&gt;</code></td><td>다른 도구와 안 부딪힌다. 주석 안의 이름·종류가 그 리소스 자신을 가리킬 때만 "내 것" 으로 본다 (다른 도구가 복사해 간 사본은 무시)</td></tr><tr><td><code>annotation+label</code></td><td>위 주석 + 인스턴스 라벨(정보용). 라벨 키는 <code>application.instanceLabelKey</code> 로 정하며, 차트 10.10.5 는 이 키를 <code>argocd.argoproj.io/instance</code> 로 두어 Helm 차트의 <code>app.kubernetes.io/instance</code> 와 부딪히지 않게 했다</td><td>라벨을 기대하는 다른 도구와 호환</td></tr><tr><td><code>label</code> (예전 기본)</td><td><code>app.kubernetes.io/instance: &lt;앱&gt;</code></td><td>63자 제한. 많은 Helm 차트가 같은 라벨을 스스로 달아서 "남의 것을 내 것으로" 착각할 수 있다</td></tr></tbody></table></div>
-<p>ownerReferences 의 주인이 지워지면 가비지 컬렉터(GC, 주인 잃은 리소스를 치우는 쿠버네티스 내장 컨트롤러)가 그 리소스를 따라 지운다. Application 을 지우는 순서다. finalizer 는 쿠버네티스 기본 기능이다: <code>metadata.finalizers</code> 가 비어 있지 않은 오브젝트는 지우라는 요청을 받아도 <code>deletionTimestamp</code> 만 찍히고 남아 있다. 해당 컨트롤러가 정리를 끝내고 finalizer 를 빼야 진짜 사라진다.</p>
+<p>ownerReferences 의 주인이 지워지면 <span class="t">가비지 컬렉터</span>가 그 리소스를 따라 지운다. 다음은 Application 을 지우는 순서다. finalizer 는 쿠버네티스 기본 기능이다: <code>metadata.finalizers</code> 가 비어 있지 않은 오브젝트는 지우라는 요청을 받아도 <code>deletionTimestamp</code> 만 찍히고 남아 있다. 해당 컨트롤러가 정리를 끝내고 finalizer 를 빼야 진짜 사라진다.</p>
+<aside class="notes"><dl>
+<div><dt>가비지 컬렉터(GC)</dt><dd>주인 잃은 리소스를 치우는 쿠버네티스 내장 컨트롤러.</dd></div>
+</dl></aside>
 <figure>
 <pre class="mermaid">
 sequenceDiagram
@@ -1541,7 +1717,10 @@ sequenceDiagram
 </figure>
 <p><code>helm template</code> 과 <code>helm install</code> 의 차이에서 오는 동작 차이:</p><ul><li><code>.Release.Name</code> 은 기본으로 <strong>Application 이름</strong>이다 (<code>helm.releaseName</code> 으로 바꿀 수 있다). hello-fn 차트가 모든 이름을 <code>{{ .Release.Name }}</code> 으로 지어서, 같은 차트를 bye-fn·tenant-a-hello 로 재사용해도 이름이 안 겹친다.</li><li><code>.Release.Namespace</code> 는 destination.namespace 다.</li><li><code>valuesObject</code> 와 <code>values</code> 를 같이 적으면 <code>valuesObject</code> 만 쓰이고 <code>values</code> 는 무시된다 (공식 문서 Helm Value Precedence).</li><li>클러스터에 묻는 <code>lookup</code> 함수는 렌더링 때 클러스터가 없으므로 빈 값을 돌려준다. repo-server 에 클러스터 열쇠가 없다는 앞 절의 설계와 같은 이야기다.</li><li><code>.Capabilities</code>(API 버전, 쿠버네티스 버전)는 대상 클러스터 정보를 Argo CD 가 넘겨 준다.</li><li>Helm 훅은 Argo CD 훅으로 바뀐다 (<a href="#sync">sync</a> 절의 표). 설치와 업그레이드를 구분하지 못한다.</li></ul>
 <h4>directory: 평범한 YAML 폴더</h4>
-<ul><li>기본은 그 폴더 바로 아래 파일만 읽는다. 하위 폴더까지 읽으려면 <code>directory.recurse: true</code> (05 platform-05).</li><li><code>directory.exclude</code>, <code>include</code> 는 glob 패턴(<code>*</code>, <code>{a,b}</code> 같은 파일 이름 패턴). 여러 개면 <code>{a.yaml,b.yaml}</code> (06 fault-defenses). 파일 하나만 빼려면 그 파일 첫 줄에 <code># +argocd:skip-file-rendering</code> 주석을 둘 수도 있다.</li><li>YAML 폴더에는 쿠버네티스 리소스만 있어야 한다. 리소스가 아닌 YAML(패치 조각, values 파일)이 섞이면 렌더링이 실패한다. 06 이 exclude 를 쓴 이유다.</li><li>directory 를 명시했는데 폴더 안에 Helm·Kustomize 파일이 있으면 실패한다.</li></ul>
+<ul><li>기본은 그 폴더 바로 아래 파일만 읽는다. 하위 폴더까지 읽으려면 <code>directory.recurse: true</code> (05 platform-05).</li><li><code>directory.exclude</code>, <code>include</code> 는 <span class="t">glob 패턴</span>이다. 여러 개면 <code>{a.yaml,b.yaml}</code> (06 fault-defenses). 파일 하나만 빼려면 그 파일 첫 줄에 <code># +argocd:skip-file-rendering</code> 주석을 둘 수도 있다.</li><li>YAML 폴더에는 쿠버네티스 리소스만 있어야 한다. 리소스가 아닌 YAML(패치 조각, values 파일)이 섞이면 렌더링이 실패한다. 06 이 exclude 를 쓴 이유다.</li><li>directory 를 명시했는데 폴더 안에 Helm·Kustomize 파일이 있으면 실패한다.</li></ul>
+<aside class="notes"><dl>
+<div><dt>glob 패턴</dt><dd><code>*</code>, <code>{a,b}</code> 같은 파일 이름 패턴.</dd></div>
+</dl></aside>
 <figure>
 <pre class="mermaid">
 flowchart LR
@@ -1622,7 +1801,12 @@ flowchart LR
               <span class="k">memory</span>: 16Mi
             <span class="k">limits</span>:
               <span class="k">memory</span>: 32Mi</code></pre>
-<div class="table-wrap"><table><thead><tr><th>줄</th><th>뜻</th></tr></thead><tbody><tr><td><code>name: {{ .Release.Name }}</code></td><td>Argo CD 로 깔면 Application 이름. 차트 재사용의 열쇠</td></tr><tr><td><code>replicas: {{ .Values.replicaCount }}</code></td><td>values.yaml 의 2. selfHeal 실험(5-1)에서 kubectl scale 5 가 이 값으로 되돌아간다</td></tr><tr><td><code>selector.matchLabels.app</code></td><td>Deployment 가 "내 파드" 로 셀 기준. 만든 뒤에는 바꿀 수 없는(immutable) 필드</td></tr><tr><td><code>template.metadata.labels.app</code></td><td>위 selector 와 같아야 한다. 다르면 API 서버가 거절 (5-2 실험)</td></tr><tr><td><code>image: … :{{ .Values.image.tag }}</code></td><td><code>hashicorp/http-echo:1.0</code></td></tr><tr><td><code>"-text={{ .Values.message }}"</code></td><td>measure-sync.sh 가 바꾸는 값. 바뀌면 파드 템플릿이 바뀌어 롤링 업데이트(파드를 하나씩 새 버전으로 바꾸는 Deployment 의 기본 방식)가 일어난다</td></tr><tr><td><code>resources</code></td><td>작게 잡았다. 03 의 ResourceQuota(namespace 의 CPU·메모리 총량 한도)·LimitRange(파드 하나의 기본값과 최대치)가 이 숫자를 기준으로 한다</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>줄</th><th>뜻</th></tr></thead><tbody><tr><td><code>name: {{ .Release.Name }}</code></td><td>Argo CD 로 깔면 Application 이름. 차트 재사용의 열쇠</td></tr><tr><td><code>replicas: {{ .Values.replicaCount }}</code></td><td>values.yaml 의 2. selfHeal 실험(5-1)에서 kubectl scale 5 가 이 값으로 되돌아간다</td></tr><tr><td><code>selector.matchLabels.app</code></td><td>Deployment 가 "내 파드" 로 셀 기준. 만든 뒤에는 바꿀 수 없는(immutable) 필드</td></tr><tr><td><code>template.metadata.labels.app</code></td><td>위 selector 와 같아야 한다. 다르면 API 서버가 거절 (5-2 실험)</td></tr><tr><td><code>image: … :{{ .Values.image.tag }}</code></td><td><code>hashicorp/http-echo:1.0</code></td></tr><tr><td><code>"-text={{ .Values.message }}"</code></td><td>measure-sync.sh 가 바꾸는 값. 바뀌면 파드 템플릿이 바뀌어 <span class="t">롤링 업데이트</span>가 일어난다</td></tr><tr><td><code>resources</code></td><td>작게 잡았다. 03 의 <span class="t">ResourceQuota</span>·<span class="t">LimitRange</span> 가 이 숫자를 기준으로 한다</td></tr></tbody></table></div>
+<aside class="notes"><dl>
+<div><dt>롤링 업데이트(rolling update)</dt><dd>파드를 하나씩 새 버전으로 바꾸는 Deployment 의 기본 방식.</dd></div>
+<div><dt>ResourceQuota</dt><dd>namespace 의 CPU·메모리 총량 한도.</dd></div>
+<div><dt>LimitRange</dt><dd>파드 하나의 기본값과 최대치.</dd></div>
+</dl></aside>
 <p>Argo CD 의 repo-server 가 하는 일을 맥에서 똑같이 해 볼 수 있다. README 3단계가 시키는 것이다.</p>
 <div class="code-head"><span>README 3단계 (맥)</span><span>명령</span></div>
 <pre><code>helm lint poc/01-argocd/functions/hello-fn
@@ -1707,7 +1891,7 @@ helm template bye-fn poc/01-argocd/functions/hello-fn --set message="bye v1"
 <p>위 의사코드의 <code>&lt;releaseName&gt;</code> 처럼 꺾쇠는 설명용이다. 렌더링이 실패하면(템플릿 문법 오류, 없는 values 키를 <code>required</code> 로 요구 등) 앱은 Unknown + ComparisonError 가 되고, 실패도 잠시 캐시된다. 일시적인 문제(네트워크)였다면 hard refresh 로 캐시를 지운다.</p>
 
 </div>
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>Helm 소스: hello-fn·bye-fn·tenant-x-hello (01 차트), tenant-a·b (03 차트), 07 의 NTH(OCI 레지스트리 차트 <code>oci://public.ecr.aws/aws-ec2/helm/aws-node-termination-handler</code>, <code>targetRevision: 0.27.6</code> 고정. 단 지금 파일에는 <code>path: .</code> 이 없는데, v3.5.5 는 단일 source 에 <code>path</code> 도 <code>chart</code> 도 없으면 InvalidSpecError "either spec.source.path or spec.source.chart are required" 를 내므로 OCI 문서대로 <code>path: .</code> 을 더해야 한다. 레포 쪽 확인 사항). YAML 폴더 소스: root, root-ec2, local-stage-apps, podinfo, faas-functions, platform-05(recurse), fault-defenses(exclude), placement-check. Kustomize 는 쓰지 않는다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>Helm 소스: hello-fn·bye-fn·tenant-x-hello (01 차트), tenant-a·b (03 차트), 07 의 NTH. NTH 는 OCI 레지스트리 차트 <code>oci://public.ecr.aws/aws-ec2/helm/aws-node-termination-handler</code> 를 <code>targetRevision: 0.27.6</code> 으로 고정해 받는데, 지금 파일에는 <code>path: .</code> 이 없다. v3.5.5 는 단일 source 에 <code>path</code> 도 <code>chart</code> 도 없으면 InvalidSpecError "either spec.source.path or spec.source.chart are required" 를 내므로 OCI 문서대로 <code>path: .</code> 을 더해야 한다 (레포 쪽 확인 사항). YAML 폴더 소스: root, root-ec2, local-stage-apps, podinfo, faas-functions, platform-05(recurse), fault-defenses(exclude), placement-check. Kustomize 는 쓰지 않는다.</p></aside>
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다: 5-2 라벨 불일치</p><p><b>한 일</b>: <code>templates/deployment.yaml</code> 의 <code>template.metadata.labels.app</code> 만 <code>hello-fn-x</code> 로 바꾸고 push. <b>증상</b>: 렌더링은 성공(Helm 은 의미를 모른다)하고 앱은 OutOfSync, 자동 sync 가 dry-run 에서 실패해 SYNC FAILED. 작업 메시지는 "one or more objects failed to apply (dry run)" 로 시작하고, 리소스 쪽 메시지는 쿠버네티스 Deployment 검증 오류 <code>spec.template.metadata.labels: Invalid value: map[string]string{"app":"hello-fn-x"}: `selector` does not match template `labels`</code> 다 (kubernetes 소스 <code>pkg/apis/apps/validation/validation.go</code> 의 문구. 실제 화면의 원문은 README 5-2 가 시키는 대로 실행해서 붙인다). 기존 파드는 그대로 돈다(Healthy). <b>고치는 법</b>: <code>git revert HEAD</code> → push. selector 까지 같이 바꾸면 이번엔 <code>spec.selector: Invalid value: …: field is immutable</code> 로 실패한다. 그땐 <code>Replace=true</code> 나 리소스 삭제 후 재생성이 필요하다.</p></aside>
 <aside class="callout why"><p class="callout-title">왜 Helm 차트를 골랐나 (대안)</p><p><b>선택</b>: Helm 차트 (Argo CD 가 helm template). <b>대안 (가)</b> 평범한 YAML 폴더: 함수·테넌트마다 값만 다른 파일을 복사해야 한다. <b>대안 (나)</b> Kustomize: 덮어쓰기(overlay)는 깔끔하지만 03 에서 테넌트 수만큼 찍어 낼 때 Helm values 파일 한 장이 더 짧다. 대가: Argo CD 는 helm install 을 안 쓰므로 <code>helm list</code> 에 안 보이고 Helm 훅 일부가 다르게 돈다 (<code>poc/01-argocd/README.md</code> 핵심 결정 2).</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><ul><li><a href="https://argo-cd.readthedocs.io/en/stable/user-guide/helm/">Helm (값 우선순위, 훅)</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/user-guide/directory/">Directory (recurse, include, exclude)</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/user-guide/kustomize/">Kustomize</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/user-guide/application_sources/">Tools: 도구 판별</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/faq/">FAQ: helm ls 에 안 보이는 이유</a></li></ul></aside>
@@ -1860,7 +2044,7 @@ sequenceDiagram
 <h2 id="appset">ApplicationSet</h2>
 <div class="tier" data-tier="1">
 <h3>틀 하나 + 목록 하나</h3>
-<p>App of Apps 는 Application YAML 을 사람이 하나씩 써서 폴더에 넣는다. <strong>ApplicationSet</strong> 은 Application <strong>틀 하나</strong>와 <strong>목록(generator) 하나</strong>를 받아 목록 항목마다 Application 을 찍어 낸다. Java 로 치면 for 문 안에서 같은 생성자를 다른 인자로 부르는 것이다. 03 은 이걸로 "테넌트 공장" 을 만들었다 (차트 쪽 이야기는 <a href="ch03-tenancy.html#appset">3장</a>).</p>
+<p>App of Apps 는 Application YAML 을 사람이 하나씩 써서 폴더에 넣는다. <strong>ApplicationSet</strong> 은 Application <strong>틀 하나</strong>와 <strong>목록(generator) 하나</strong>를 받아 목록 항목마다 Application 을 찍어 낸다. 틀은 하나이고, 바뀌는 것은 목록에서 오는 값뿐이다. 03 은 이걸로 "테넌트 공장" 을 만들었다 (차트 쪽 이야기는 <a href="ch03-tenancy.html#appset">3장</a>).</p>
 <figure>
 <div class="fig scroll">
 <svg viewBox="0 0 960 420" role="img" aria-labelledby="as-t">
@@ -1988,7 +2172,10 @@ sequenceDiagram
   <span class="c"># 결정: 파일을 지우면 Application 도 지운다 (create-update 로 바꾸면 지우기는 사람이 손으로)</span>
   <span class="k">syncPolicy</span>:
     <span class="k">applicationsSync</span>: sync</code></pre>
-<div class="table-wrap"><table><thead><tr><th>줄</th><th>뜻과 주의점</th></tr></thead><tbody><tr><td><code>goTemplate: true</code></td><td>Go 템플릿 문법(<code>{{ .name }}</code>)과 Sprig 함수(Go 템플릿용 함수 모음. 보안상 <code>env</code>, <code>expandenv</code>, <code>getHostByName</code> 은 빠져 있다)를 쓴다. 끄면 예전 방식(<code>{{name}}</code>, 단순 치환)</td></tr><tr><td><code>missingkey=error</code></td><td>없는 키를 참조하면 빈 문자열이 아니라 에러. 오타가 조용히 이름 없는 Application 을 만드는 걸 막는다 (공식 권장값)</td></tr><tr><td><code>git.files[].path: …/tenants/*.yaml</code></td><td>패턴에 맞는 파일마다 파라미터 묶음 하나. YAML 안의 중첩 키는 <code>quota.requestsCpu</code> 처럼 평평하게 펴진다</td></tr><tr><td><code>{{ .path.filename }}</code></td><td>생성기가 덧붙이는 파라미터: <code>path.path</code>(파일이 있는 폴더), <code>path.basename</code>(그 폴더 이름), <code>path.filename</code>(파일 이름), <code>path.segments</code>, 그리고 <code>…Normalized</code> 변형</td></tr><tr><td><code>template.metadata.finalizers</code></td><td>찍힌 Application 에도 finalizer. 그래서 Application 이 지워지면 namespace 와 울타리도 지워진다</td></tr><tr><td><code>project: default</code></td><td>울타리는 플랫폼 소유라 default Project. 테넌트 자신의 함수는 tenant-a Project (다음 절)</td></tr><tr><td><code>syncPolicy.applicationsSync: sync</code></td><td>만들기·고치기·지우기 전부 허용. 아래 주의 참고</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>줄</th><th>뜻과 주의점</th></tr></thead><tbody><tr><td><code>goTemplate: true</code></td><td>Go 템플릿 문법(<code>{{ .name }}</code>)과 <span class="t">Sprig 함수</span>를 쓴다. 끄면 예전 방식(<code>{{name}}</code>, 단순 치환)</td></tr><tr><td><code>missingkey=error</code></td><td>없는 키를 참조하면 빈 문자열이 아니라 에러. 오타가 조용히 이름 없는 Application 을 만드는 걸 막는다 (공식 권장값)</td></tr><tr><td><code>git.files[].path: …/tenants/*.yaml</code></td><td>패턴에 맞는 파일마다 파라미터 묶음 하나. YAML 안의 중첩 키는 <code>quota.requestsCpu</code> 처럼 평평하게 펴진다</td></tr><tr><td><code>{{ .path.filename }}</code></td><td>생성기가 덧붙이는 파라미터: <code>path.path</code>(파일이 있는 폴더), <code>path.basename</code>(그 폴더 이름), <code>path.filename</code>(파일 이름), <code>path.segments</code>, 그리고 <code>…Normalized</code> 변형</td></tr><tr><td><code>template.metadata.finalizers</code></td><td>찍힌 Application 에도 finalizer. 그래서 Application 이 지워지면 namespace 와 울타리도 지워진다</td></tr><tr><td><code>project: default</code></td><td>울타리는 플랫폼 소유라 default Project. 테넌트 자신의 함수는 tenant-a Project (다음 절)</td></tr><tr><td><code>syncPolicy.applicationsSync: sync</code></td><td>만들기·고치기·지우기 전부 허용. 아래 주의 참고</td></tr></tbody></table></div>
+<aside class="notes"><dl>
+<div><dt>Sprig 함수</dt><dd>Go 템플릿용 함수 모음. 보안상 <code>env</code>, <code>expandenv</code>, <code>getHostByName</code> 은 빠져 있다.</dd></div>
+</dl></aside>
 <aside class="callout warn"><p class="callout-title">참고: applicationsSync 가 실제로 적용되는 조건</p><p>ApplicationSet 마다 정책(<code>applicationsSync</code>)을 정하는 기능은 컨트롤러 설정 두 개, <code>applicationsetcontroller.policy</code> 와 <code>applicationsetcontroller.enable.policy.override</code> 에 달려 있다. v3.5.5 컨트롤러 코드는 <code>--policy</code> 가 비어 있으면 override 를 허용하는 것이 기본이고(ApplicationSet 의 값이 그대로 적용), 차트 10.10.5 는 두 값을 모두 비워 둔다. 그래서 PoC 의 <code>applicationsSync: sync</code> 는 물론, 파일 주석대로 <code>create-update</code> 로 바꾸는 것도 그대로 적용된다. 반대로 운영에서 컨트롤러에 <code>--policy sync</code> 처럼 값을 고정해 두면, override 를 따로 켜지 않는 한 ApplicationSet 쪽 값은 무시된다 (문서 페이지의 "override 기본 false" 설명은 이 경우를 말한 것이고, 컨트롤러 플래그 설명과 cmd-params 문서가 더 정확하다). 그리고 create-only, create-update 도 ApplicationSet 자체를 지울 때 ownerReference 에 따른 Application 삭제는 막지 못한다. 그걸 막는 것은 <code>preserveResourcesOnDeletion: true</code> 다.</p></aside>
 <pre class="pseudo"><code><span class="k">함수</span> reconcileAppSet(appset):
   params = []
@@ -2010,10 +2197,14 @@ sequenceDiagram
   <span class="k">각</span> app ∈ 실제 - 원하는: 정책이 delete 허용이면 삭제     <span class="c">// finalizer 로 워크로드까지</span>
   requeue(기본 3분)</code></pre>
 <p>엣지 케이스: (1) 파일 이름에 대문자·밑줄이 있으면 Application 이름 규칙(DNS)에 걸릴 수 있다. 03 은 이름을 파일 이름이 아니라 파일 안의 <code>name</code> 키에서 가져온다. (2) <code>tenant-b.yaml</code> 에는 <code>network</code> 키가 없지만 템플릿이 그 키를 쓰지 않으므로 missingkey 에 안 걸린다. 차트 쪽 기본값(<code>allowFromNamespaces: []</code>)이 채운다. (3) 같은 이름의 Application 을 두 ApplicationSet 이 만들면 서로 덮어쓴다 (03 README 가 정답본 ApplicationSet 과 동시에 붙이지 말라고 경고하는 이유).</p>
-<p>PoC 가 안 쓴 ApplicationSet 기능 셋: <code>strategy: RollingSync</code>(진행형 동기화. 라벨로 묶은 그룹을 순서대로 sync, 아직 알파), <code>preserveResourcesOnDeletion: true</code>(ApplicationSet 을 지워도 Application 은 남김), <code>ignoreApplicationDifferences</code>(찍어 낸 Application 의 일부 필드는 사람이 고쳐도 덮어쓰지 않음). 본선에서 "테넌트 수십 개를 한 번에 올리면 위험하다" 가 되면 RollingSync 가 첫 후보다.</p>
+<p>PoC 가 안 쓴 ApplicationSet 기능이 셋 있다. <code>strategy: RollingSync</code> 는 라벨로 묶은 그룹을 순서대로 sync 하는 진행형 동기화이고, v3.3 부터 베타다. <code>preserveResourcesOnDeletion: true</code> 는 ApplicationSet 을 지워도 Application 을 남긴다. <code>ignoreApplicationDifferences</code> 는 찍어 낸 Application 의 일부 필드를 사람이 고쳐도 덮어쓰지 않게 한다. 본선에서 "테넌트 수십 개를 한 번에 올리면 위험하다" 가 되면 RollingSync 가 첫 후보다.</p>
 
 </div>
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>run-all.sh</code> 의 tenants 단계: <code>kubectl apply -f poc/03-tenant-isolation/gitops/tenants-appset.yaml</code> → tenant-a, tenant-b Application 이 생길 때까지 2초마다 확인 → 각각 <code>wait_app</code>. 03 의 <code>measure.sh onboard</code> 는 tenant-c.yaml 을 추가·push 하고 <code>application-set-refresh</code> 주석으로 3분 주기를 건너뛴 뒤, namespace 와 울타리가 생기기까지를 잰다. 10/20 에 고친 이음새 하나도 여기다: <code>tenant-a.yaml</code> 에 <code>network.allowFromNamespaces: [knative-serving, kourier-system]</code> 를 넣어 Kourier(Knative 의 입구 게이트웨이)·activator(Knative 가 파드 0개일 때 요청을 잠시 붙잡아 두는 구성 요소)의 요청을 열었다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>run-all.sh</code> 의 tenants 단계: <code>kubectl apply -f poc/03-tenant-isolation/gitops/tenants-appset.yaml</code> → tenant-a, tenant-b Application 이 생길 때까지 2초마다 확인 → 각각 <code>wait_app</code>. 03 의 <code>measure.sh onboard</code> 는 tenant-c.yaml 을 추가·push 하고 <code>application-set-refresh</code> 주석으로 3분 주기를 건너뛴 뒤, namespace 와 울타리가 생기기까지를 잰다. 10/20 에 고친 이음새 하나도 여기다: <code>tenant-a.yaml</code> 에 <code>network.allowFromNamespaces: [knative-serving, kourier-system]</code> 를 넣어 <span class="t">Kourier</span>·<span class="t">activator</span> 의 요청을 열었다.</p>
+<aside class="notes"><dl>
+<div><dt>Kourier</dt><dd>Knative 의 입구 게이트웨이.</dd></div>
+<div><dt>activator</dt><dd>Knative 가 파드 0개일 때 요청을 잠시 붙잡아 두는 구성 요소.</dd></div>
+</dl></aside></aside>
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>(1) Application 이 안 생김</b>: <code>kubectl -n argocd describe applicationset tenants</code> 의 Conditions. 흔한 원인은 <code>files.path</code> 오타, push 안 함, 템플릿의 없는 키(missingkey=error). <b>(2) tenants/ 의 파일을 지웠더니 namespace 가 통째로 사라짐</b>: 정상 동작이다 (파일 주석 "namespace 까지 지워진다!"). 막으려면 Namespace 에 <code>Prune=confirm</code> 이나 <code>Delete=false</code> 주석, 또는 정책 override + create-update. <b>(3) B4</b>: <code>tenant-a.yaml</code> 의 <code>network:</code> 줄을 지우고 push 하면 Argo CD 는 Synced/Healthy 인데 함수 curl 이 타임아웃. Argo CD 의 초록불은 "Git 대로" 이지 "통신이 된다" 가 아니다.</p></aside>
 <aside class="callout why"><p class="callout-title">왜 Git files generator 인가 (대안)</p><p><b>선택</b>: Helm 차트 하나 + Git files generator. <b>대안 (가)</b> 테넌트마다 Application 을 손으로: 10개 넘으면 복붙 실수. <b>대안 (나)</b> list generator: 목록이 ApplicationSet YAML 안에 있어서 테넌트 추가 = 플랫폼 YAML 수정, 여러 사람이 동시에 고치면 충돌한다. 파일 하나 추가가 충돌이 적다. <b>대안 (다)</b> Capsule·vCluster 같은 멀티테넌트 도구: 하루 안에 이해하고 설명하기 어렵다 (03 README 핵심 결정 1).</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><ul><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/">ApplicationSet 개요</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators-Git/">Git Generator (files, 파라미터, 폴링 주기)</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/GoTemplate/">Go Template (missingkey)</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Controlling-Resource-Modification/">Controlling Resource Modification (applicationsSync, override)</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Application-Deletion/">Application Deletion (ApplicationSet)</a></li></ul></aside>
@@ -2021,7 +2212,10 @@ sequenceDiagram
 <h2 id="project">AppProject 와 Argo CD RBAC</h2>
 <div class="tier" data-tier="1">
 <h3>Application 의 울타리</h3>
-<p><strong>AppProject</strong> 는 Application 묶음 + 허용 범위다. "이 Project 의 Application 은 어느 저장소에서 가져와(sourceRepos), 어느 클러스터·namespace 에(destinations), 어떤 종류의 리소스를(whitelist/blacklist) 배포할 수 있나" 를 적는다. 03 의 울타리 6겹(Namespace, ResourceQuota, LimitRange, NetworkPolicy(파드 사이 통신 허용 규칙), 쿠버네티스 RBAC, 그리고 AppProject) 중 마지막 겹이 이것이다 (<a href="ch03-tenancy.html#appproject">3장 AppProject</a>).</p>
+<p><strong>AppProject</strong> 는 Application 묶음 + 허용 범위다. "이 Project 의 Application 은 어느 저장소에서 가져와(sourceRepos), 어느 클러스터·namespace 에(destinations), 어떤 종류의 리소스를(whitelist/blacklist) 배포할 수 있나" 를 적는다. 03 의 울타리 6겹(Namespace, ResourceQuota, LimitRange, <span class="t">NetworkPolicy</span>, 쿠버네티스 RBAC, 그리고 AppProject) 중 마지막 겹이 이것이다 (<a href="ch03-tenancy.html#appproject">3장 AppProject</a>).</p>
+<aside class="notes"><dl>
+<div><dt>NetworkPolicy</dt><dd>파드 사이 통신 허용 규칙.</dd></div>
+</dl></aside>
 <figure>
 <div class="fig scroll">
 <svg viewBox="0 0 960 420" role="img" aria-labelledby="pj-t">
@@ -2091,7 +2285,10 @@ flowchart TD
 </pre>
 <figcaption><b>그림 1-34.</b> AppProject 검사 순서. 저장소와 목적지는 Application 단위로, 리소스 종류는 리소스 단위로 검사한다.</figcaption>
 </figure>
-<p>종류 제한의 비대칭에 주의한다 (공식 문서): <strong>namespace 범위 리소스는 거부 목록(blacklist)</strong>, <strong>클러스터 범위 리소스는 허용 목록(whitelist)</strong>으로 다룬다. 그래서 03 의 <code>clusterResourceWhitelist: []</code> 는 "클러스터 범위는 하나도 안 됨" (Namespace, ClusterRole, CRD 생성 금지)이고, <code>namespaceResourceBlacklist</code> 는 "이것들만 빼고 namespace 안의 것은 다 됨" 이다. 반대로 <code>namespaceResourceWhitelist</code> 를 쓰면 "이것들만 됨" 으로 바뀌고, 둘 다 적으면 "whitelist 에 있으면서 blacklist 에 없는 종류" 만 된다 (Namespace 는 클러스터 범위라 ClusterRole(클러스터 전체에 걸친 권한 정의)과 함께 whitelist 쪽이다).</p>
+<p>종류 제한의 비대칭에 주의한다 (공식 문서): <strong>namespace 범위 리소스는 거부 목록(blacklist)</strong>, <strong>클러스터 범위 리소스는 허용 목록(whitelist)</strong>으로 다룬다. 그래서 03 의 <code>clusterResourceWhitelist: []</code> 는 "클러스터 범위는 하나도 안 됨" (Namespace, ClusterRole, CRD 생성 금지)이고, <code>namespaceResourceBlacklist</code> 는 "이것들만 빼고 namespace 안의 것은 다 됨" 이다. 반대로 <code>namespaceResourceWhitelist</code> 를 쓰면 "이것들만 됨" 으로 바뀌고, 둘 다 적으면 "whitelist 에 있으면서 blacklist 에 없는 종류" 만 된다 (Namespace 는 클러스터 범위라 <span class="t">ClusterRole</span> 과 함께 whitelist 쪽이다).</p>
+<aside class="notes"><dl>
+<div><dt>ClusterRole</dt><dd>클러스터 전체에 걸친 권한 정의.</dd></div>
+</dl></aside>
 <figure>
 <div class="fig scroll">
 <svg viewBox="0 0 960 330" role="img" aria-labelledby="pl-t">
@@ -2117,7 +2314,10 @@ flowchart TD
 </div>
 <figcaption><b>그림 1-35.</b> "권한" 이라는 말이 가리키는 층이 넷이다. 위 둘은 Argo CD 안의 규칙이고, 아래 둘은 쿠버네티스 RBAC 이다. AppProject 가 막아도 controller 의 ServiceAccount 자체는 대부분의 권한을 갖고 있다는 점이 중요하다. AppProject 는 controller 가 스스로 지키는 규칙이다.</figcaption>
 </figure>
-<p><strong>Argo CD RBAC</strong> 은 사람(또는 토큰)이 Argo CD API 로 무엇을 할 수 있나를 정한다. Casbin(접근 제어 규칙 라이브러리) 문법이고 <code>argocd-rbac-cm</code> 의 <code>policy.csv</code> 에 적는다. 기본 역할은 <code>role:readonly</code>, <code>role:admin</code> 둘이고, 로그인한 사람은 최소 <code>policy.default</code> 의 권한을 받는다 (deny 로도 못 막는다). 사용자는 두 길로 만든다: <code>argocd-cm</code> 의 <code>accounts.&lt;이름&gt;</code> 으로 로컬 계정(비밀번호 로그인이나 API 키 발급)을 두거나, 조직 로그인을 SSO(dex 또는 OIDC 제공자 직접 연결)로 붙인다. 공식 문서는 로컬 계정을 소수의 관리자·CI 용으로, 사람이 많으면 SSO 를 권한다. PoC 는 dex 를 끄고 admin 하나만 쓴다.</p>
+<p><strong>Argo CD RBAC</strong> 은 사람(또는 토큰)이 Argo CD API 로 무엇을 할 수 있나를 정한다. <span class="t">Casbin</span> 문법이고 <code>argocd-rbac-cm</code> 의 <code>policy.csv</code> 에 적는다. 기본 역할은 <code>role:readonly</code>, <code>role:admin</code> 둘이고, 로그인한 사람은 최소 <code>policy.default</code> 의 권한을 받는다 (deny 로도 못 막는다). 사용자는 두 길로 만든다: <code>argocd-cm</code> 의 <code>accounts.&lt;이름&gt;</code> 으로 로컬 계정(비밀번호 로그인이나 API 키 발급)을 두거나, 조직 로그인을 SSO(dex 또는 OIDC 제공자 직접 연결)로 붙인다. 공식 문서는 로컬 계정을 소수의 관리자·CI 용으로, 사람이 많으면 SSO 를 권한다. PoC 는 dex 를 끄고 admin 하나만 쓴다.</p>
+<aside class="notes"><dl>
+<div><dt>Casbin</dt><dd>접근 제어 규칙 라이브러리.</dd></div>
+</dl></aside>
 
 </div>
 <div class="tier" data-tier="3">
@@ -2153,7 +2353,12 @@ flowchart TD
       <span class="k">kind</span>: Role
     - <span class="k">group</span>: rbac.authorization.k8s.io
       <span class="k">kind</span>: RoleBinding</code></pre>
-<div class="table-wrap"><table><thead><tr><th>줄</th><th>뜻</th></tr></thead><tbody><tr><td><code>metadata.namespace: argocd</code></td><td>AppProject 도 Argo CD 가 사는 namespace 에 있어야 보인다. 이 차트에서 이것만 테넌트 namespace 가 아니다 (Application tenant-a 의 destination 은 tenant-a 지만 default Project 라 argocd 에도 쓸 수 있다)</td></tr><tr><td><code>sourceRepos</code></td><td>이 레포만. 와일드카드(<code>https://github.com/org/*</code>)와 부정(<code>!</code> 접두사)도 된다</td></tr><tr><td><code>destinations</code></td><td><code>server</code>(또는 <code>name</code>) + <code>namespace</code> 쌍. tenant-a 하나</td></tr><tr><td><code>clusterResourceWhitelist: []</code></td><td>클러스터 범위 리소스 전부 금지</td></tr><tr><td><code>namespaceResourceBlacklist</code></td><td>울타리 오브젝트 6종 금지 (CiliumNetworkPolicy 는 Cilium 의 확장 NetworkPolicy, Role·RoleBinding 은 쿠버네티스 RBAC 의 권한 정의와 그 부여). 테넌트가 자기 Quota 를 지우거나 NetworkPolicy 를 덮어쓰지 못한다</td></tr></tbody></table></div>
+<div class="table-wrap"><table><thead><tr><th>줄</th><th>뜻</th></tr></thead><tbody><tr><td><code>metadata.namespace: argocd</code></td><td>AppProject 도 Argo CD 가 사는 namespace 에 있어야 보인다. 이 차트에서 이것만 테넌트 namespace 가 아니다 (Application tenant-a 의 destination 은 tenant-a 지만 default Project 라 argocd 에도 쓸 수 있다)</td></tr><tr><td><code>sourceRepos</code></td><td>이 레포만. 와일드카드(<code>https://github.com/org/*</code>)와 부정(<code>!</code> 접두사)도 된다</td></tr><tr><td><code>destinations</code></td><td><code>server</code>(또는 <code>name</code>) + <code>namespace</code> 쌍. tenant-a 하나</td></tr><tr><td><code>clusterResourceWhitelist: []</code></td><td>클러스터 범위 리소스 전부 금지</td></tr><tr><td><code>namespaceResourceBlacklist</code></td><td>울타리 오브젝트 6종(ResourceQuota, LimitRange, NetworkPolicy, <span class="t">CiliumNetworkPolicy</span>, <span class="t">Role</span>, <span class="t">RoleBinding</span>) 금지. 테넌트가 자기 Quota 를 지우거나 NetworkPolicy 를 덮어쓰지 못한다</td></tr></tbody></table></div>
+<aside class="notes"><dl>
+<div><dt>CiliumNetworkPolicy</dt><dd>Cilium 의 확장 NetworkPolicy.</dd></div>
+<div><dt>Role</dt><dd>쿠버네티스 RBAC 의 권한 정의. namespace 범위.</dd></div>
+<div><dt>RoleBinding</dt><dd>Role 을 사용자·그룹·ServiceAccount 에 부여하는 리소스.</dd></div>
+</dl></aside>
 <div class="code-head"><span>poc/03-tenant-isolation/gitops/tenant-a-hello.yaml</span><span>4~27행 발췌</span></div>
 <pre><code><span class="k">apiVersion</span>: argoproj.io/v1alpha1
 <span class="k">kind</span>: Application
@@ -2204,7 +2409,10 @@ p, role:tenant-a-dev, applications, sync, tenant-a/*, allow
 p, role:tenant-a-dev, logs,         get,  tenant-a/*, allow
 g, tenant-a-developers, role:tenant-a-dev        <span class="c"># SSO 그룹을 역할에 묶음</span>
 <span class="c"># data.policy.default: role:readonly   → 로그인하면 최소 읽기</span></code></pre>
-<p>applications 객체는 <code>&lt;project&gt;/&lt;application&gt;</code> 모양이라 Project 가 RBAC 의 경계도 된다. 역할 정의는 Project 안(<code>spec.roles</code>)에도 둘 수 있고 JWT(JSON Web Token, 서명된 자격 토큰) 토큰을 발급할 수 있다 (CI 가 특정 앱만 sync 하게 할 때).</p>
+<p>applications 객체는 <code>&lt;project&gt;/&lt;application&gt;</code> 모양이라 Project 가 RBAC 의 경계도 된다. 역할 정의는 Project 안(<code>spec.roles</code>)에도 둘 수 있고 <span class="t">JWT</span> 토큰을 발급할 수 있다 (CI 가 특정 앱만 sync 하게 할 때).</p>
+<aside class="notes"><dl>
+<div><dt>JWT(JSON Web Token)</dt><dd>서명된 자격 토큰.</dd></div>
+</dl></aside>
 <pre class="pseudo"><code><span class="k">함수</span> permitted(project, app, resource):
   <span class="k">만약</span> 어느 sourceRepos 패턴도 app.repoURL 과 안 맞음 또는 부정 패턴이 맞음 → 거짓
   <span class="k">만약</span> 어느 destinations 도 (app.server, resource.namespace) 와 안 맞음 → 거짓
@@ -2216,10 +2424,16 @@ g, tenant-a-developers, role:tenant-a-dev        <span class="c"># SSO 그룹을
 <p>순서 문제 하나: tenant-a-hello 가 참조하는 AppProject tenant-a 는 ApplicationSet 이 만든 Application tenant-a 가 sync 해야 생긴다. 그래서 <code>run-all.sh</code> 는 <code>wait_app tenant-a</code> 를 먼저 하고 tenant-a-hello 를 붙인다. Project 가 없을 때 붙이면 조건에 InvalidSpecError("Application referencing project … which does not exist")가 생기고, Project 가 생긴 뒤 그 앱의 다음 비교에서 저절로 풀린다. 다만 controller 는 AppProject 가 생기는 사건으로 앱을 깨우지는 않는다 (v3.5.5 <code>controller/appcontroller.go</code> 의 AppProject 이벤트 핸들러는 Project 삭제 정리와 캐시 무효화만 한다). 그래서 다음 주기 폴링(최대 120초 + jitter 60초)까지 기다리거나 refresh 주석을 달아야 바로 풀린다.</p>
 
 </div>
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>03 의 tenant 차트가 테넌트마다 AppProject 를 만든다. 울타리(Quota·NetworkPolicy·RBAC)는 플랫폼이 default Project 로, 테넌트 함수는 테넌트 Project 로 배포한다. 이 분리가 03 의 핵심 결정 1 이다. Argo CD RBAC(<code>argocd-rbac-cm</code>)은 손대지 않았다. 테넌트 사람의 kubectl 권한은 03 의 Role/RoleBinding 이 맡고, 05 의 컨트롤 플레인·ops-agent(MCP 로 운영 도구를 부르는 05 의 운영 에이전트. MCP 는 Model Context Protocol, AI 에이전트가 도구를 부르는 규약)는 또 별도의 ServiceAccount RBAC 을 쓴다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>03 의 tenant 차트가 테넌트마다 AppProject 를 만든다. 울타리(Quota·NetworkPolicy·RBAC)는 플랫폼이 default Project 로, 테넌트 함수는 테넌트 Project 로 배포한다. 이 분리가 03 의 핵심 결정 1 이다. Argo CD RBAC(<code>argocd-rbac-cm</code>)은 손대지 않았다. 테넌트 사람의 kubectl 권한은 03 의 Role/RoleBinding 이 맡고, 05 의 컨트롤 플레인·<span class="t">ops-agent</span> 는 또 별도의 ServiceAccount RBAC 을 쓴다.</p>
+<aside class="notes"><dl>
+<div><dt>ops-agent</dt><dd>MCP 로 운영 도구를 부르는 05 의 운영 에이전트. MCP 는 Model Context Protocol, AI 에이전트가 도구를 부르는 규약.</dd></div>
+</dl></aside></aside>
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>(1) "application destination … is not permitted in project"</b>: 목적지가 destinations 에 없다. 03 의 시험이 일부러 만드는 상태. <b>(2) "resource … is not permitted in project"</b>: blacklist 종류를 배포하려 했다 (테넌트 차트에 NetworkPolicy 를 넣는 등). <b>(3) tenant-a-hello 에 CreateNamespace 를 켜면</b>: Namespace 는 클러스터 범위라 whitelist [] 에 걸린다. 파일 주석이 "CreateNamespace 는 쓰지 않는다" 라고 적은 이유. 볼 곳은 모두 <code>kubectl -n argocd describe application X</code> 의 Conditions.</p></aside>
 <aside class="callout why"><p class="callout-title">왜 울타리와 함수를 다른 Project 로 나눴나 (대안)</p><p><b>대안</b>: 한 Project 에 울타리와 함수를 같이 두기. 그러면 테넌트가 자기 Application 으로 Quota 나 NetworkPolicy 를 지우거나 바꿀 수 있다. Project 를 나누면 "울타리는 플랫폼만, 함수는 테넌트" 가 Argo CD 수준에서 강제된다. 대가는 Application 이 테넌트당 둘(울타리, 함수)로 늘어난다는 것이다.</p></aside>
-<aside class="callout warn"><p class="callout-title">주의: AppProject 는 controller 의 자기 규칙이다</p><p>controller 의 ServiceAccount 는 차트 10.10.5 기본값(<code>createClusterRoles: true</code>, <code>controller.clusterRoleRules.enabled: false</code>)에서 apiGroups·resources·verbs 가 전부 <code>*</code> 인 ClusterRole 을 받는다. 즉 클러스터 전체 권한이다. AppProject 는 "controller 가 스스로 안 하기로 한 것" 이지 쿠버네티스가 막는 벽이 아니다. 더 강하게 하려면 Project 의 <code>destinationServiceAccounts</code>(앱마다 지정한 ServiceAccount 로 가장(impersonation)해서 apply, 가장 낮은 권한) 기능을 쓴다. v3.5 에서 베타이고 기본은 꺼져 있다: <code>argocd-cm</code> 의 <code>application.sync.impersonation.enabled: "true"</code> 로 켜야 하며 차트 10.10.5 기본값은 false 다. 그리고 argocd namespace 에 배포할 수 있는 Project 는 사실상 관리자다 (Application 을 새로 만들 수 있으므로).</p></aside>
+<aside class="callout warn"><p class="callout-title">주의: AppProject 는 controller 의 자기 규칙이다</p><p>controller 의 ServiceAccount 는 차트 10.10.5 기본값(<code>createClusterRoles: true</code>, <code>controller.clusterRoleRules.enabled: false</code>)에서 apiGroups·resources·verbs 가 전부 <code>*</code> 인 ClusterRole 을 받는다. 즉 클러스터 전체 권한이다. AppProject 는 "controller 가 스스로 안 하기로 한 것" 이지 쿠버네티스가 막는 벽이 아니다. 더 강하게 하려면 Project 의 <span class="t"><code>destinationServiceAccounts</code></span> 기능을 쓴다. v3.5 에서 베타이고 기본은 꺼져 있다: <code>argocd-cm</code> 의 <code>application.sync.impersonation.enabled: "true"</code> 로 켜야 하며 차트 10.10.5 기본값은 false 다. 그리고 argocd namespace 에 배포할 수 있는 Project 는 사실상 관리자다 (Application 을 새로 만들 수 있으므로).</p>
+<aside class="notes"><dl>
+<div><dt><code>destinationServiceAccounts</code></dt><dd>AppProject 에 적어, 앱마다 지정한 ServiceAccount 로 가장(impersonation)해서 apply 하게 하는 기능. 가장 낮은 권한만 주는 방법.</dd></div>
+</dl></aside></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><ul><li><a href="https://argo-cd.readthedocs.io/en/stable/user-guide/projects/">Projects</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/rbac/">RBAC Configuration</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/argocd-rbac-cm-yaml/">argocd-rbac-cm.yaml</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/user-management/">User Management (로컬 계정, SSO)</a></li></ul></aside>
 
 <h2 id="multicluster">여러 클러스터</h2>
@@ -2278,7 +2492,10 @@ g, tenant-a-developers, role:tenant-a-dev        <span class="c"># SSO 그룹을
 </div>
 <div class="tier" data-tier="3">
 <h3>등록, 샤딩, 07 의 구조</h3>
-<ul><li><strong>클러스터 등록</strong>: <code>argocd cluster add &lt;컨텍스트&gt;</code>(컨텍스트는 kubeconfig 안의 "어느 클러스터에 어떤 계정으로" 묶음)는 대상 클러스터에 <code>argocd-manager</code> ServiceAccount 와 ClusterRole 을 만들고 그 토큰을 클러스터 Secret 에 넣는다. 선언적으로는 Secret 을 직접 만든다 (Declarative Setup 문서).</li><li><strong>샤딩</strong>: application-controller 의 replica 를 늘리고 <code>ARGOCD_CONTROLLER_REPLICAS</code> 를 같이 맞추면 클러스터를 replica 들에 나눠 맡긴다 (round-robin, legacy, consistent-hashing). 클러스터 Secret 에 <code>shard</code> 를 적어 고정할 수도 있다.</li><li><strong>같은 이름 충돌</strong>: 여러 Argo CD 가 한 클러스터를 같이 관리하면 <code>installationID</code> 를 다르게 둔다 (추적 주석에 설치 ID 가 붙는다).</li><li><strong>07 의 구조</strong>: <code>root-ec2</code> → <code>07/gitops/apps/</code> 의 세 Application (local-stage-apps, node-termination-handler, placement-check). 로컬과 다른 점(노드 배치)은 Argo CD 설치 값(<code>argocd-values-k3s.yaml</code>)에만 있고, 앱 정의는 같은 파일을 쓴다.</li></ul>
+<ul><li><strong>클러스터 등록</strong>: kubeconfig 의 <span class="t">컨텍스트</span> 하나를 골라 <code>argocd cluster add &lt;컨텍스트&gt;</code> 를 치면 대상 클러스터에 <code>argocd-manager</code> ServiceAccount 와 ClusterRole 을 만들고 그 토큰을 클러스터 Secret 에 넣는다. 선언적으로는 Secret 을 직접 만든다 (Declarative Setup 문서).</li><li><strong>샤딩</strong>: application-controller 의 replica 를 늘리고 <code>ARGOCD_CONTROLLER_REPLICAS</code> 를 같이 맞추면 클러스터를 replica 들에 나눠 맡긴다 (round-robin, legacy, consistent-hashing). 클러스터 Secret 에 <code>shard</code> 를 적어 고정할 수도 있다.</li><li><strong>같은 이름 충돌</strong>: 여러 Argo CD 가 한 클러스터를 같이 관리하면 <code>installationID</code> 를 다르게 둔다 (추적 주석에 설치 ID 가 붙는다).</li><li><strong>07 의 구조</strong>: <code>root-ec2</code> → <code>07/gitops/apps/</code> 의 세 Application (local-stage-apps, node-termination-handler, placement-check). 로컬과 다른 점(노드 배치)은 Argo CD 설치 값(<code>argocd-values-k3s.yaml</code>)에만 있고, 앱 정의는 같은 파일을 쓴다.</li></ul>
+<aside class="notes"><dl>
+<div><dt>컨텍스트(context)</dt><dd>kubeconfig 안의 "어느 클러스터에 어떤 계정으로" 묶음.</dd></div>
+</dl></aside>
 <div class="code-head"><span>poc/07-ec2-k3s/gitops/apps/local-stage-apps.yaml</span><span>전체</span></div>
 <pre><code><span class="c"># 로컬 kind 에서 만든 앞 단계 앱들을 EC2 에도 그대로 올린다. Jeong 작성, 정답본.</span>
 <span class="c"># 1단계 App of Apps 폴더를 그대로 가리킨다 → 그 폴더에 앱을 추가하면 로컬과 EC2 둘 다 따라온다.</span>
@@ -2312,7 +2529,10 @@ g, tenant-a-developers, role:tenant-a-dev        <span class="c"># SSO 그룹을
 
 </div>
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>06 의 대역 클러스터 <code>chaos</code> 에는 Argo CD 가 없다 (fault-defenses.yaml 주석). 07 EC2 는 <code>bootstrap-argocd.sh</code> 가 01 과 같은 차트 10.10.5 + 01 values + k3s 덧씌우기 values 로 Argo CD 를 깔고 root-ec2 를 붙인다. 07 은 코드만 있고 실제 apply 는 하지 않았다.</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>EC2 에서 hello-fn 은 뜨는데 04 함수는 안 뜬다</b>: local-stage-apps 는 01 의 apps/ 만 가져온다. 04 의 Knative·gVisor(컨테이너와 커널 사이에 끼어 시스템 호출을 대신 받는 샌드박스 런타임, <a href="ch06-build-runtime.html#gvisor">6장</a>)는 EC2 에 깔려 있지 않다. 볼 곳: Application 의 리소스 목록과 Conditions ("no matches for kind" 류). <b>클러스터 Secret 의 토큰 만료</b>(허브 방식): 앱이 Unknown, 조건에 인증 오류.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><b>EC2 에서 hello-fn 은 뜨는데 04 함수는 안 뜬다</b>: local-stage-apps 는 01 의 apps/ 만 가져온다. 04 의 Knative·<span class="t">gVisor</span>(<a href="ch06-build-runtime.html#gvisor">6장</a>)는 EC2 에 깔려 있지 않다. 볼 곳: Application 의 리소스 목록과 Conditions ("no matches for kind" 류). <b>클러스터 Secret 의 토큰 만료</b>(허브 방식): 앱이 Unknown, 조건에 인증 오류.</p>
+<aside class="notes"><dl>
+<div><dt>gVisor</dt><dd>컨테이너와 커널 사이에 끼어 시스템 호출을 대신 받는 샌드박스 런타임.</dd></div>
+</dl></aside></aside>
 <aside class="callout why"><p class="callout-title">왜 클러스터마다 Argo CD 인가</p><p>맥 안 kind 는 바깥에서 API 서버로 들어올 수 없고, EC2 쪽에 허브를 두면 맥 클러스터를 등록할 수 없다. 각자 pull 하면 연결 방향이 언제나 "클러스터 → GitHub" 하나라서 방화벽·터널 문제가 없다. 본선에서 클러스터가 여러 개가 되고 한 화면이 중요해지면 허브 방식 + cluster generator 가 다음 단계다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><ul><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/declarative-setup/#clusters">Declarative Setup: Clusters</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/high_availability/">High Availability: 샤딩</a></li><li><a href="https://argo-cd.readthedocs.io/en/stable/operator-manual/applicationset/Generators-Cluster/">Cluster Generator</a></li></ul></aside>
 
@@ -2495,8 +2715,11 @@ sequenceDiagram
 <text x="36" y="312" class="d-sub">ApplicationSet tenants, tenant-a-hello, tenant-b-hello</text>
 </svg>
 </div>
-<figcaption><b>그림 1-41.</b> Argo CD 는 자기 자신이 생기기 전에는 아무것도 pull 할 수 없다. 그래서 클러스터, CNI(Container Network Interface, 파드에 IP 를 주고 파드 사이 통신을 잇는 네트워크 플러그인. 우리는 Cilium 이고 Hubble 은 그 관측 도구다, <a href="ch04-network.html#cni">4장</a>), Argo CD, root 까지는 push 다. root 이후는 Git 이 정답이지만, PoC 에는 아직 손으로 붙이는 것(노란 상자)이 남아 있다.</figcaption>
+<figcaption><b>그림 1-41.</b> Argo CD 는 자기 자신이 생기기 전에는 아무것도 pull 할 수 없다. 그래서 클러스터, <span class="t">CNI</span>(<a href="ch04-network.html#cni">4장</a>), Argo CD, root 까지는 push 다. root 이후는 Git 이 정답이지만, PoC 에는 아직 손으로 붙이는 것(노란 상자)이 남아 있다.</figcaption>
 </figure>
+<aside class="notes"><dl>
+<div><dt>CNI(Container Network Interface)</dt><dd>파드에 IP 를 주고 파드 사이 통신을 잇는 네트워크 플러그인 규격. 우리는 Cilium 이고 Hubble 은 그 관측 도구다.</dd></div>
+</dl></aside>
 <p>README 9절의 "처음부터 다시 세우기" 네 줄이 이 문제의 최소 답이다: <code>kind delete</code> → <code>kind create</code> → <code>helm install argocd …</code> → <code>kubectl apply -f root.yaml</code>. 나머지는 Git 에서 돌아온다. 본선 첫날 팀 환경을 이 네 줄로 통일하는 것이 01 단계의 본선 연결점이다.</p>
 
 </div>

@@ -151,6 +151,36 @@ body.shallow .tier[data-tier="3"] { display: none; }
 .callout.fact { background: var(--user-soft); border-color: var(--user-line); }
 .callout.fact .callout-title { color: var(--user); }
 
+/* ---------- 용어 주석: 본문 옆(넓은 화면) / 단락 아래(좁은 화면) ---------- */
+/* 본문:   <span class="t">파드</span>  → 위첨자 번호가 붙는다 (장 안에서 1부터 이어 센다)
+   주석:   그 단락(p, ul/ol, .table-wrap, figure, .callout) 바로 뒤에
+           <aside class="notes"><dl><div><dt>파드(pod)</dt><dd>한두 문장 설명</dd></div>…</dl></aside>
+   번호는 CSS 카운터라서 본문 .t 순서와 dt 순서가 같아야 맞는다. 넓은 화면에서는 JS(layoutNotes)가 단락 옆으로 띄운다 */
+main { counter-reset: tn tnd; }
+.t { text-decoration: underline dotted var(--accent-line); text-decoration-thickness: 1.5px; text-underline-offset: 0.2em; cursor: help; }
+.t::after { counter-increment: tn; content: counter(tn); font-size: 0.68em; font-weight: 700; color: var(--accent); vertical-align: super; line-height: 0; margin-left: 0.1em; font-family: var(--font-mono); }
+.t.hl, .t:hover { background: var(--accent-soft); }
+aside.notes { font-size: 0.82rem; line-height: 1.55; color: var(--muted); margin: -0.4rem 0 1.25rem; padding: 0.45rem 0.9rem 0.45rem 0.85rem; border-left: 2px solid var(--accent-line); background: var(--surface-2); border-radius: 0 8px 8px 0; }
+li aside.notes, dd aside.notes { margin-top: 0.25rem; }
+aside.notes dl { margin: 0; }
+aside.notes dl > div { margin: 0 0 0.3rem; }
+aside.notes dl > div:last-child { margin-bottom: 0; }
+aside.notes dt { display: inline; font-weight: 700; color: var(--text); }
+aside.notes dt::before { counter-increment: tnd; content: counter(tnd); font-family: var(--font-mono); font-weight: 700; color: var(--accent); font-size: 0.85em; margin-right: 0.35em; }
+aside.notes dd { display: inline; margin: 0; }
+aside.notes dt::after { content: " "; }
+aside.notes dl > div.hl { background: var(--accent-soft); border-radius: 4px; }
+aside.notes code { font-size: 0.9em; }
+@media (min-width: 1260px) {
+  .page { --measure: 42rem; position: relative; }
+  section > .callout, .page > .callout { max-width: var(--measure); }
+  aside.notes.side {
+    position: absolute; left: calc(var(--measure) + 2.5rem); width: min(19rem, calc(100% - var(--measure) - 2.5rem));
+    margin: 0; padding: 0 0 0 0.75rem; background: transparent; border-left: 1px solid var(--line); border-radius: 0;
+  }
+  .tier aside.notes.side { background: var(--surface); }
+}
+
 /* ---------- 그림 ---------- */
 figure { margin: 2rem 0; }
 .fig { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 1rem; }

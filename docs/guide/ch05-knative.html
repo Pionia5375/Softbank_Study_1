@@ -21,7 +21,12 @@
 <header class="chapter-head">
   <p class="eyebrow">05장 · 관련 폴더 poc/04-faas-runtime, poc/05-control-plane-mcp</p>
   <h1>서버리스: Knative Serving 과 Kourier 로 0↔N</h1>
-  <p class="lede">함수를 돌리는 파드(pod, 쿠버네티스가 컨테이너를 띄우는 최소 단위. 컨테이너 하나 이상이 IP 하나를 같이 쓴다)가 요청이 없으면 0개로 사라지고, 요청이 오면 다시 뜨는 일이 Knative(쿠버네티스 위에 서버리스 층을 얹는 오픈소스. 우리는 그중 Serving 을 쓴다) 안에서 어떤 객체·부품·알고리즘으로 일어나는지 설명할 수 있게 된다. 우리 PoC 의 Knative Service(함수 하나를 선언하는 YAML 한 장) 세 장과 05 템플릿을 한 줄씩 읽고, 깨졌을 때 어디를 봐야 하는지도 말할 수 있게 된다. 앞 장을 읽지 않았어도 이 장만으로 읽히도록, 처음 나오는 용어는 그 자리에서 짧게 설명한다.</p>
+  <p class="lede">함수를 돌리는 <span class="t">파드</span>가 요청이 없으면 0개로 사라지고, 요청이 오면 다시 뜨는 일이 <span class="t">Knative</span> 안에서 어떤 객체·부품·알고리즘으로 일어나는지 설명할 수 있게 된다. 우리 PoC 의 <span class="t">Knative Service</span> 세 장과 05 템플릿을 한 줄씩 읽고, 깨졌을 때 어디를 봐야 하는지도 말할 수 있게 된다. 앞 장을 읽지 않았어도 이 장만으로 읽히도록, 처음 나오는 용어는 단락 옆 주석으로 짧게 설명한다.</p>
+  <aside class="notes"><dl>
+  <div><dt>파드(pod)</dt><dd>쿠버네티스가 컨테이너를 띄우는 최소 단위. 컨테이너 하나 이상이 IP 하나를 같이 쓴다.</dd></div>
+  <div><dt>Knative</dt><dd>쿠버네티스 위에 서버리스 층을 얹는 오픈소스. 우리는 그중 Serving 을 쓴다.</dd></div>
+  <div><dt>Knative Service</dt><dd>함수 하나를 선언하는 YAML 한 장. 쿠버네티스 기본 Service 와는 다른 객체다.</dd></div>
+  </dl></aside>
   <div class="chapter-meta">
     <span class="chip">PoC 폴더 <b>poc/04-faas-runtime</b></span>
     <span class="chip">이어지는 곳 <b>poc/05 templates/ksvc.yaml · ops_mcp</b></span>
@@ -31,8 +36,23 @@
 </header>
 
 <h2 id="map">이 장의 지도</h2>
-<p>전체 아키텍처에서 이 장이 맡는 곳은 "요청이 함수 파드에 닿기까지"와 "파드 수를 0 과 N 사이에서 움직이는 일"이다. 무대는 맥 위의 kind 클러스터다(kind = Kubernetes in Docker, Docker 컨테이너 하나를 쿠버네티스 노드 하나로 쓰는 로컬 클러스터 도구. 노드는 클러스터를 이루는 기계 하나이고, 여기서는 control-plane 노드 1대와 워커 3대다). 맥의 <code>localhost:8081</code> 로 들어온 요청은 control-plane 노드의 NodePort 31080(NodePort = 모든 노드의 같은 포트를 열어 클러스터 안 Service 로 넘겨 주는 방식) 을 지나 Kourier 로 간다. Kourier 는 Knative 전용 입구로, 범용 L7 프록시 서버 Envoy 하나와 그 Envoy 에 설정을 넣어 주는 작은 컨트롤러로 이루어진다. Envoy 는 HTTP 요청의 Host 헤더(어느 호스트 이름으로 보낸 요청인지 적는 칸. 진짜 DNS 가 없어도 이 값만 맞추면 된다)를 보고 어느 함수인지 고른다. 함수 파드가 있으면 파드로, 없으면 activator(파드가 없을 때 요청을 대신 받아 두었다가 파드가 뜨면 넘기는 Knative 부품)로 간다.</p>
-<p>노드는 역할별로 풀(pool, 같은 역할의 노드 묶음. 라벨 <code>pool=system|build|exec</code>)로 나뉜다. 함수 파드는 exec 풀에만 뜨고, Knative 부품은 전부 system 풀에 뜬다. build·exec 풀에는 taint(노드에 거는 "출입 금지" 표시. 그 taint 를 견딘다고 toleration 을 적은 파드만 올 수 있다)가 걸려 있어서, toleration 이 없는 플랫폼 부품은 자연히 system 풀로 모인다. 함수는 namespace(쿠버네티스 안에서 이름과 권한을 나누는 칸)별로 산다: 04 의 측정용 함수 3개는 <code>fn-runtime</code>, 05 의 사용자 함수는 테넌트 namespace <code>tenant-a</code>. 04 함수는 Argo CD(Git 에 둔 YAML 을 클러스터에 맞춰 적용해 주는 GitOps 도구, <a href="ch01-gitops.html">01장</a>)가 Git 에서 적용하고, 05 함수는 컨트롤 플레인(이 PoC 에서는 함수 배포 API 를 가진 Spring Boot 서비스를 뜻한다, <a href="ch07-control-plane.html">07장</a>)이 쿠버네티스 API 로 직접 적용한다. 위 칩에 적힌 나머지 두 이름도 미리 풀어 두면, KPA(Knative Pod Autoscaler)는 요청 수를 보고 파드 수를 정하는 Knative 의 오토스케일러이고, queue-proxy 는 함수 파드마다 옆에 붙어 요청을 세고 상한을 지키는 작은 프록시다. 둘 다 아래에 절이 하나씩 있다.</p>
+<p>전체 아키텍처에서 이 장이 맡는 곳은 "요청이 함수 파드에 닿기까지"와 "파드 수를 0 과 N 사이에서 움직이는 일"이다. 무대는 맥 위의 <span class="t">kind</span> 클러스터다. 맥의 <code>localhost:8081</code> 로 들어온 요청은 control-plane 노드의 <span class="t">NodePort</span> 31080 을 지나 Kourier 로 간다. Kourier 는 Knative 전용 입구로, 범용 L7 프록시 서버 Envoy 하나와 그 Envoy 에 설정을 넣어 주는 작은 컨트롤러로 이루어진다. Envoy 는 HTTP 요청의 <span class="t">Host 헤더</span>를 보고 어느 함수인지 고른다. 함수 파드가 있으면 파드로, 없으면 <span class="t">activator</span>로 간다.</p>
+<aside class="notes"><dl>
+<div><dt>kind</dt><dd>Kubernetes in Docker. Docker 컨테이너 하나를 쿠버네티스 노드(클러스터를 이루는 기계 하나) 하나로 쓰는 로컬 클러스터 도구. 여기서는 control-plane 노드 1대와 워커 3대다.</dd></div>
+<div><dt>NodePort</dt><dd>모든 노드의 같은 포트를 열어 클러스터 안 Service 로 넘겨 주는 방식.</dd></div>
+<div><dt>Host 헤더</dt><dd>어느 호스트 이름으로 보낸 요청인지 적는 HTTP 칸. 진짜 DNS 가 없어도 이 값만 맞추면 된다.</dd></div>
+<div><dt>activator</dt><dd>파드가 없을 때 요청을 대신 받아 두었다가 파드가 뜨면 넘기는 Knative 부품.</dd></div>
+</dl></aside>
+<p>노드는 역할별로 <span class="t">풀</span>로 나뉜다. 함수 파드는 exec 풀에만 뜨고, Knative 부품은 전부 system 풀에 뜬다. build·exec 풀에는 <span class="t">taint</span>가 걸려 있어서, toleration 이 없는 플랫폼 부품은 자연히 system 풀로 모인다. 함수는 <span class="t">namespace</span>별로 산다: 04 의 측정용 함수 3개는 <code>fn-runtime</code>, 05 의 사용자 함수는 테넌트 namespace <code>tenant-a</code>. 04 함수는 <span class="t">Argo CD</span>가 Git 에서 적용하고, 05 함수는 <span class="t">컨트롤 플레인</span>이 쿠버네티스 API 로 직접 적용한다. 위 칩에 적힌 나머지 두 이름, <span class="t">KPA</span> 와 <span class="t">queue-proxy</span> 는 아래에 절이 하나씩 있다.</p>
+<aside class="notes"><dl>
+<div><dt>풀(pool)</dt><dd>같은 역할의 노드 묶음. 라벨 <code>pool=system|build|exec</code>.</dd></div>
+<div><dt>taint</dt><dd>노드에 거는 "출입 금지" 표시. 그 taint 를 견딘다고 toleration 을 적은 파드만 올 수 있다.</dd></div>
+<div><dt>namespace</dt><dd>쿠버네티스 안에서 이름과 권한을 나누는 칸.</dd></div>
+<div><dt>Argo CD</dt><dd>Git 에 둔 YAML 을 클러스터에 맞춰 적용해 주는 GitOps 도구. <a href="ch01-gitops.html">01장</a>.</dd></div>
+<div><dt>컨트롤 플레인</dt><dd>이 PoC 에서는 함수 배포 API 를 가진 Spring Boot 서비스. <a href="ch07-control-plane.html">07장</a>.</dd></div>
+<div><dt>KPA(Knative Pod Autoscaler)</dt><dd>요청 수를 보고 파드 수를 정하는 Knative 의 오토스케일러.</dd></div>
+<div><dt>queue-proxy</dt><dd>함수 파드마다 옆에 붙어 요청을 세고 상한을 지키는 작은 프록시.</dd></div>
+</dl></aside>
 
 <figure>
   <div class="fig scroll">
@@ -92,24 +112,27 @@
       <path d="M700 130 L700 148 L600 148 L600 262" class="d-e-git" marker-end="url(#map-m-git)"/>
     </svg>
   </div>
-  <figcaption><b>그림 5-1.</b> 이 장의 범위(초록 칸 knative-serving 과 파란 칸). 파란 실선 = 사용자 요청, 보라 점선 = 파드가 0개일 때 activator 를 거치는 길, 주황 = 05 컨트롤 플레인이 Knative Service 를 직접 적용, 초록 = 04 함수 3개를 Argo CD 가 Git 에서 적용. 이미지 빌드와 gVisor(남의 코드를 가두는 샌드박스 컨테이너 런타임)는 <a href="ch06-build-runtime.html">06장</a>, 노드 풀은 <a href="ch03-tenancy.html">03장</a>.</figcaption>
+  <figcaption><b>그림 5-1.</b> 이 장의 범위(초록 칸 knative-serving 과 파란 칸). 파란 실선 = 사용자 요청, 보라 점선 = 파드가 0개일 때 activator 를 거치는 길, 주황 = 05 컨트롤 플레인이 Knative Service 를 직접 적용, 초록 = 04 함수 3개를 Argo CD 가 Git 에서 적용. 이미지 빌드와 <span class="t">gVisor</span> 는 <a href="ch06-build-runtime.html">06장</a>, 노드 풀은 <a href="ch03-tenancy.html">03장</a>.</figcaption>
 </figure>
+<aside class="notes"><dl>
+<div><dt>gVisor</dt><dd>남의 코드를 가두는 샌드박스 컨테이너 런타임. 사용자 공간에서 리눅스 커널을 흉내 내어, 함수가 호스트 커널을 직접 건드리지 못하게 한다.</dd></div>
+</dl></aside>
 
 <div class="table-wrap"><table><thead><tr><th>절</th><th>한 줄</th></tr></thead><tbody>
 <tr><td><a href="#serverless">서버리스와 FaaS</a></td><td>무엇을 플랫폼에 맡기나, 0 까지 줄이는 경제학, Lambda·OpenFaaS·KEDA·Cloud Run 과 비교</td></tr>
-<tr><td><a href="#resource-model">Knative Serving 자원 모델</a></td><td>Service → Configuration → Revision(바뀌지 않는 버전 스냅샷), Route, 트래픽 분할과 태그</td></tr>
+<tr><td><a href="#resource-model">Knative Serving 자원 모델</a></td><td>Service → Configuration → Revision, Route, 트래픽 분할과 태그</td></tr>
 <tr><td><a href="#components">부품: 컨트롤 플레인과 데이터 플레인</a></td><td>controller, webhook, autoscaler, activator, net-kourier-controller, queue-proxy, Envoy</td></tr>
 <tr><td><a href="#request-path">요청 경로: 파드가 있을 때와 0개일 때</a></td><td>요청이 파드로 바로 가는 길과 activator 를 거치는 길, 그 갈림길을 바꾸는 ServerlessService 와 PodAutoscaler, 0 으로 가는 정확한 조건</td></tr>
 <tr><td><a href="#autoscaling">KPA 오토스케일링 알고리즘</a></td><td>동시성 대 RPS, target 과 70%, stable 60초·panic 6초, scale-to-zero 조건, target-burst-capacity</td></tr>
 <tr><td><a href="#queue-proxy">queue-proxy</a></td><td>파드 안 문지기: 동시성 상한, 지표, 준비 확인, 우아한 종료</td></tr>
-<tr><td><a href="#networking">네트워크 층: KIngress 와 Kourier</a></td><td>Route 의 규칙이 Envoy 설정이 되는 길(xDS, Envoy 가 설정을 받아 가는 API), Host 헤더 라우팅, 도메인 설정, kind 의 NodePort, 클러스터 안 주소, DomainMapping</td></tr>
+<tr><td><a href="#networking">네트워크 층: KIngress 와 Kourier</a></td><td>Route 의 규칙이 Envoy 설정이 되는 길(xDS), Host 헤더 라우팅, 도메인 설정, kind 의 NodePort, 클러스터 안 주소, DomainMapping</td></tr>
 <tr><td><a href="#configmaps">설정 맵 (ConfigMap)</a></td><td>config-features, config-deployment(태그 해석), config-autoscaler, config-network</td></tr>
 <tr><td><a href="#coldstart">콜드 스타트 해부</a></td><td>스케줄 → 이미지 → 시작 → 앱 초기화 → 준비 → activator 가 넘김</td></tr>
 <tr><td><a href="#our-ksvc">우리 함수 3개 (04)</a></td><td>hello-runc, hello-gvisor, hello-gvisor-warm 을 한 줄씩</td></tr>
-<tr><td><a href="#template-05">05 Knative Service 템플릿</a></td><td>nodeSelector, toleration, containerConcurrency(파드별 동시 요청 상한), timeoutSeconds, build-id 로 새 Revision</td></tr>
+<tr><td><a href="#template-05">05 Knative Service 템플릿</a></td><td>nodeSelector, toleration, containerConcurrency, timeoutSeconds, build-id 로 새 Revision</td></tr>
 <tr><td><a href="#measure">측정 스크립트의 논리</a></td><td>coldstart.sh, latency.sh, build-noise.sh 가 무엇을 기다리고 무엇을 재나</td></tr>
 <tr><td><a href="#mcp">MCP scale·rollback 과 Knative 필드</a></td><td>min-scale 주석, traffic 고정, server-side apply 의 필드 주인</td></tr>
-<tr><td><a href="#break">깨지면</a></td><td>플래그 꺼짐, toleration 빠짐, NetworkPolicy(파드 사이 통신 규칙)에 막힘, http 레지스트리 태그 해석</td></tr>
+<tr><td><a href="#break">깨지면</a></td><td>플래그 꺼짐, toleration 빠짐, NetworkPolicy 에 막힘, http 레지스트리 태그 해석</td></tr>
 <tr><td><a href="#decisions">결정 표</a></td><td>Knative vs KEDA vs 직접, Kourier vs Istio</td></tr>
 <tr><td><a href="#recap">정리</a></td><td>체크리스트, 본선에서 옮겨 쓸 패턴, 스스로 답해 볼 질문</td></tr>
 </tbody></table></div>
@@ -119,13 +142,17 @@
 
 <div class="tier" data-tier="1">
   <h3>서버리스는 "서버가 없다"가 아니라 "서버 수를 사용자가 정하지 않는다"</h3>
-  <p>서버리스(serverless)는 서버를 몇 대 띄울지, 언제 줄일지를 사용자가 아니라 플랫폼이 요청량을 보고 정하는 운영 모델이다. 그중 FaaS(Function as a Service)는 사용자가 "함수 코드" 만 올리면 빌드·배포·스케일·격리를 플랫폼이 다 하는 형태다. Spring 에 비유하면, 개발자는 <code>@RestController</code> 메서드 하나만 쓰고 톰캣을 몇 개 띄울지, 로드 밸런서에 어떻게 붙일지는 전혀 신경 쓰지 않는 상태다.</p>
+  <p>서버리스(serverless)는 서버를 몇 대 띄울지, 언제 줄일지를 사용자가 아니라 플랫폼이 요청량을 보고 정하는 운영 모델이다. 그중 FaaS(Function as a Service)는 사용자가 "함수 코드" 만 올리면 빌드·배포·스케일·격리를 플랫폼이 다 하는 형태다. 개발자는 요청을 받아 답하는 함수 하나만 쓰고, 그 함수를 돌릴 프로세스를 몇 개 띄울지, 들어오는 요청을 그 프로세스들에 어떻게 나눠 줄지는 전혀 신경 쓰지 않는 상태다.</p>
   <p>핵심 성질은 셋이다.</p>
   <ul>
-    <li><strong>요청 기반 스케일</strong>: 동시에 처리 중인 요청 수(또는 초당 요청 수)를 보고 인스턴스(여기서는 함수를 돌리는 파드) 수를 정한다. CPU 사용률을 보는 쿠버네티스 기본 오토스케일러 HPA(Horizontal Pod Autoscaler, CPU·메모리 사용률로 파드 수를 늘리고 줄이는 컨트롤러)와 다르다. Knative 의 오토스케일러는 KPA(Knative Pod Autoscaler)라 부르고, 이 장의 "KPA 오토스케일링 알고리즘" 절에서 자세히 본다.</li>
+    <li><strong>요청 기반 스케일</strong>: 동시에 처리 중인 요청 수(또는 초당 요청 수)를 보고 <span class="t">인스턴스</span> 수를 정한다. CPU 사용률을 보는 <span class="t">HPA</span> 와 다르다. Knative 의 오토스케일러는 KPA 라 부르고, 이 장의 "KPA 오토스케일링 알고리즘" 절에서 자세히 본다.</li>
     <li><strong>0 까지 줄이기(scale-to-zero)</strong>: 요청이 없으면 인스턴스를 0개로. 쉬는 함수는 자원을 먹지 않는다.</li>
     <li><strong>콜드 스타트(cold start)</strong>: 0개일 때 온 첫 요청은 인스턴스가 뜰 때까지 기다린다. 0 까지 줄이는 대가다.</li>
   </ul>
+  <aside class="notes"><dl>
+  <div><dt>인스턴스</dt><dd>함수를 실제로 돌리는 실행 단위. 여기서는 파드 하나.</dd></div>
+  <div><dt>HPA(Horizontal Pod Autoscaler)</dt><dd>CPU·메모리 사용률로 파드 수를 늘리고 줄이는 쿠버네티스 기본 오토스케일러.</dd></div>
+  </dl></aside>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 300" role="img" aria-labelledby="faas4-t">
@@ -166,8 +193,13 @@
         <path d="M750 150 L770 150" class="d-e-api" marker-end="url(#faas4-m)"/>
       </svg>
     </div>
-    <figcaption><b>그림 5-2.</b> FaaS 플랫폼의 4가지 일. 이 장은 3번(스케일)과, 2번 중 "Knative Service 가 무엇을 만드나"를 다룬다. 그림의 낯선 이름 셋: Kaniko 는 Docker 데몬 없이 컨테이너 안에서 이미지를 만드는 빌더, Job 은 한 번 돌고 끝나는 파드를 관리하는 쿠버네티스 리소스, gVisor(runsc)는 사용자 공간에서 리눅스 커널을 흉내 내어 남의 코드를 가두는 샌드박스 런타임이다. 빌드와 격리 런타임은 <a href="ch06-build-runtime.html">06장</a>.</figcaption>
+    <figcaption><b>그림 5-2.</b> FaaS 플랫폼의 4가지 일. 이 장은 3번(스케일)과, 2번 중 "Knative Service 가 무엇을 만드나"를 다룬다. 그림 안의 낯선 이름 <span class="t">Kaniko</span>, <span class="t">Job</span>, <span class="t">runsc</span> 는 빌드와 격리 런타임을 다루는 <a href="ch06-build-runtime.html">06장</a>에서 자세히 본다.</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>Kaniko</dt><dd>Docker 데몬 없이 컨테이너 안에서 이미지를 만드는 빌더.</dd></div>
+  <div><dt>Job</dt><dd>한 번 돌고 끝나는 파드를 관리하는 쿠버네티스 리소스.</dd></div>
+  <div><dt>runsc</dt><dd>gVisor 의 실행 파일 이름. 컨테이너 런타임 자리에 runc 대신 들어간다.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="2">
@@ -200,21 +232,40 @@
         <text x="758" y="55" class="d-sub">0↔N 파드 수</text>
       </svg>
     </div>
-    <figcaption><b>그림 5-3.</b> 개념도. 파란 막대 = 요청량, 주황 = 항상 켜 둔 파드 수, 초록 = 0↔N 파드 수. 초록 선 아래 면적이 작을수록 자원을 덜 쓴다. 빨간 점이 콜드 스타트가 생기는 순간이다. 요청이 끊긴 뒤에도 잠깐 남는 꼬리는 stable window(autoscaler 가 평균을 내는 시간 창, 기본 60초)와 scale-to-zero-grace-period(마지막 파드를 지우기 전에 activator 가 경로에 들어왔는지 기다리는 상한, 기본 30초) 때문이다. 둘 다 KPA 절에서 자세히 본다.</figcaption>
+    <figcaption><b>그림 5-3.</b> 개념도. 파란 막대 = 요청량, 주황 = 항상 켜 둔 파드 수, 초록 = 0↔N 파드 수. 초록 선 아래 면적이 작을수록 자원을 덜 쓴다. 빨간 점이 콜드 스타트가 생기는 순간이다. 요청이 끊긴 뒤에도 잠깐 남는 꼬리는 <span class="t">stable window</span> 와 <span class="t">scale-to-zero-grace-period</span> 때문이다. 둘 다 KPA 절에서 자세히 본다.</figcaption>
   </figure>
-  <p>대가는 두 가지다. 첫째, 콜드 스타트 지연이 사용자에게 보인다. 둘째, 0 에서 1 로 가는 동안 요청을 어딘가 붙잡아 둘 장치가 필요하다. Knative 에서 그 장치가 activator 다. 그래서 설계 질문은 언제나 "이 함수는 콜드 스타트를 감수할 만큼 뜸한가" 이고, 아니면 <code>min-scale</code>(파드 수의 하한을 정하는 주석. 1 이면 요청이 없어도 파드 하나를 켜 둔다)로 웜 파드(warm pod, 이미 떠 있어서 바로 응답할 수 있는 파드)를 남긴다.</p>
+  <aside class="notes"><dl>
+  <div><dt>stable window</dt><dd>autoscaler 가 요청 수의 평균을 내는 시간 창. 기본 60초.</dd></div>
+  <div><dt>scale-to-zero-grace-period</dt><dd>마지막 파드를 지우기 전에 activator 가 경로에 들어왔는지 기다리는 상한. 기본 30초.</dd></div>
+  </dl></aside>
+  <p>대가는 두 가지다. 첫째, 콜드 스타트 지연이 사용자에게 보인다. 둘째, 0 에서 1 로 가는 동안 요청을 어딘가 붙잡아 둘 장치가 필요하다. Knative 에서 그 장치가 activator 다. 그래서 설계 질문은 언제나 "이 함수는 콜드 스타트를 감수할 만큼 뜸한가" 이고, 아니면 <span class="t"><code>min-scale</code></span>로 <span class="t">웜 파드</span>를 남긴다.</p>
+  <aside class="notes"><dl>
+  <div><dt><code>min-scale</code></dt><dd>파드 수의 하한을 정하는 주석(annotation). 1 이면 요청이 없어도 파드 하나를 켜 둔다.</dd></div>
+  <div><dt>웜 파드(warm pod)</dt><dd>이미 떠 있어서 바로 응답할 수 있는 파드.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="3">
   <h3>다른 서버리스 플랫폼과 무엇이 같고 다른가</h3>
-  <p>같은 문제(요청 기반 스케일, 0 까지 줄임, 콜드 스타트 중 요청 보관)를 서로 다른 층에서 푼다. 비교 기준은 "스케일 단위", "0 일 때 요청을 누가 잡나", "버전·트래픽 분할", "격리 단위" 다.</p>
+  <p>요청 기반 스케일, 0 까지 줄임, 콜드 스타트 중 요청 보관이라는 같은 문제를 플랫폼마다 서로 다른 층에서 푼다. 비교 기준은 "스케일 단위", "0 일 때 요청을 누가 잡나", "버전·트래픽 분할", "격리 단위" 다.</p>
   <div class="table-wrap"><table><thead><tr><th>플랫폼</th><th>스케일 단위·지표</th><th>0 일 때 요청 보관</th><th>버전·트래픽</th><th>격리·실행</th><th>우리와의 관계</th></tr></thead><tbody>
-  <tr><td>AWS Lambda</td><td>실행 환경 하나가 요청 하나(동시성 1)씩</td><td>Lambda 서비스 내부 (사용자에게 안 보임)</td><td>버전 + 별칭(alias) 가중치</td><td>Firecracker microVM(AWS 가 만든 초경량 가상 머신)</td><td>"Provisioned Concurrency" 가 우리 <code>min-scale</code> 에 해당. 사용자에게 노드가 안 보인다</td></tr>
-  <tr><td>OpenFaaS</td><td>gateway 가 Prometheus(지표를 주기적으로 긁어 저장하는 시계열 DB) 지표(초당 요청)로 replica(파드 복제본) 수 조정</td><td>gateway 가 잡고 깨움. 0 까지 줄이기는 상용판(OpenFaaS Standard/Pro) 기능. 공식 비교표는 Community Edition 을 "scale to zero 미지원, 함수당 최대 5 replica, 함수 15개·namespace 1개" 로 적는다 (<a href="https://docs.openfaas.com/openfaas-pro/comparison/">docs.openfaas.com 비교표</a>)</td><td>함수 = Deployment(쿠버네티스가 파드 N개를 유지해 주는 기본 리소스) 하나, Revision(바뀌지 않는 버전 스냅샷, 다음 절) 개념 없음</td><td>보통 runc(기본 컨테이너 런타임, 호스트 커널을 그대로 쓴다)</td><td>쿠버네티스 위 FaaS 의 다른 길. 함수 템플릿·CLI 가 강점</td></tr>
+  <tr><td>AWS Lambda</td><td>실행 환경 하나가 요청 하나씩(<span class="t">동시성</span> 1)</td><td>Lambda 서비스 내부 (사용자에게 안 보임)</td><td>버전 + 별칭(alias) 가중치</td><td><span class="t">Firecracker microVM</span></td><td>"Provisioned Concurrency" 가 우리 <code>min-scale</code> 에 해당. 사용자에게 노드가 안 보인다</td></tr>
+  <tr><td>OpenFaaS</td><td>gateway 가 <span class="t">Prometheus</span> 지표(초당 요청)로 <span class="t">replica</span> 수 조정</td><td>gateway 가 잡고 깨움. 0 까지 줄이기는 상용판(OpenFaaS Standard/Pro) 기능. 공식 비교표는 Community Edition 을 "scale to zero 미지원, 함수당 최대 5 replica, 함수 15개·namespace 1개" 로 적는다 (<a href="https://docs.openfaas.com/openfaas-pro/comparison/">docs.openfaas.com 비교표</a>)</td><td>함수 = <span class="t">Deployment</span> 하나, <span class="t">Revision</span> 개념 없음</td><td>보통 <span class="t">runc</span></td><td>쿠버네티스 위 FaaS 의 다른 길. 함수 템플릿·CLI 가 강점</td></tr>
   <tr><td>KEDA HTTP add-on</td><td>interceptor 가 센 대기 요청 수 → KEDA 가 Deployment replica 조정</td><td>interceptor(프록시)가 잡아 둠</td><td>없음 (Deployment 를 그대로)</td><td>파드 그대로</td><td>대안 1순위. 기존 Deployment 에 붙는 장점, Revision·트래픽 분할 없음</td></tr>
-  <tr><td>Google Cloud Run</td><td>컨테이너 인스턴스, 인스턴스당 동시 요청 상한</td><td>Google 프런트엔드</td><td>Revision + 트래픽 % + 태그 URL</td><td>샌드박스. 1세대 실행 환경은 gVisor(시스템 콜 대부분을 흉내, 콜드 스타트 빠름), 2세대는 microVM(리눅스 커널 호환 전부, 최소 512 MiB, 지속 부하에 빠름). 공식 문서 <a href="https://docs.cloud.google.com/run/docs/about-execution-environments">About execution environments</a></td><td>Knative Serving API 와 호환되는 관리형 서비스. ksvc YAML 모양이 거의 같다</td></tr>
-  <tr><td><strong>Knative Serving</strong></td><td>파드, 동시 요청 수(기본) 또는 RPS</td><td>activator</td><td>Revision + Route(%, 태그)</td><td>RuntimeClass(파드마다 어떤 컨테이너 런타임으로 돌릴지 고르는 쿠버네티스 리소스)로 고름 (우리는 runc / gVisor)</td><td>이 PoC 의 선택</td></tr>
+  <tr><td>Google Cloud Run</td><td>컨테이너 인스턴스, 인스턴스당 동시 요청 상한</td><td>Google 프런트엔드</td><td>Revision + 트래픽 % + 태그 URL</td><td>샌드박스. 1세대 실행 환경은 gVisor 로 <span class="t">시스템 콜</span> 대부분을 흉내 내어 콜드 스타트가 빠르고, 2세대는 microVM 이라 리눅스 커널과 완전히 호환되지만 최소 512 MiB 를 쓰며 지속 부하에 빠르다. 공식 문서 <a href="https://docs.cloud.google.com/run/docs/about-execution-environments">About execution environments</a></td><td>Knative Serving API 와 호환되는 관리형 서비스. ksvc YAML 모양이 거의 같다</td></tr>
+  <tr><td><strong>Knative Serving</strong></td><td>파드, 동시 요청 수(기본) 또는 RPS</td><td>activator</td><td>Revision + Route(%, 태그)</td><td><span class="t">RuntimeClass</span> 로 고름 (우리는 runc / gVisor)</td><td>이 PoC 의 선택</td></tr>
   </tbody></table></div>
+  <aside class="notes"><dl>
+  <div><dt>동시성(concurrency)</dt><dd>어느 순간에 아직 응답을 돌려주지 않은 요청의 개수. 요청이 길수록, 많이 겹칠수록 커진다.</dd></div>
+  <div><dt>Firecracker microVM</dt><dd>AWS 가 만든 초경량 가상 머신. 함수 실행 환경 하나마다 작은 VM 하나를 띄워 가둔다.</dd></div>
+  <div><dt>Prometheus</dt><dd>지표를 주기적으로 긁어 저장하는 시계열 DB. <a href="ch02-rollouts.html#prometheus">02장</a>.</dd></div>
+  <div><dt>replica</dt><dd>파드 복제본. Deployment 가 "같은 파드를 몇 개 유지하나" 를 세는 단위.</dd></div>
+  <div><dt>Deployment</dt><dd>쿠버네티스가 같은 파드를 N개 유지해 주는 기본 리소스.</dd></div>
+  <div><dt>Revision</dt><dd>Knative 가 배포마다 남기는, 바뀌지 않는 버전 스냅샷. 다음 절에서 자세히 본다.</dd></div>
+  <div><dt>runc</dt><dd>기본 컨테이너 런타임. 호스트 커널을 그대로 쓴다.</dd></div>
+  <div><dt>시스템 콜(syscall)</dt><dd>프로그램이 파일·네트워크·메모리 같은 일을 커널에 부탁하는 호출. 샌드박스는 이 호출을 가로채 격리한다.</dd></div>
+  <div><dt>RuntimeClass</dt><dd>파드마다 어떤 컨테이너 런타임으로 돌릴지 고르는 쿠버네티스 리소스.</dd></div>
+  </dl></aside>
   <figure>
   <pre class="mermaid">
 flowchart TD
@@ -225,12 +276,19 @@ flowchart TD
   Q3 -->|예| A3["시간대별 min-scale 조정<br/>MCP scale 도구"]
   Q3 -->|아니오| A4["min-scale 1 + 작은 이미지<br/>웜 1개 비용 감수"]
   </pre>
-  <figcaption><b>그림 5-4.</b> 0 까지 줄일지 정하는 순서도. 우리 PoC 는 hello-runc·hello-gvisor 가 A2, hello-gvisor-warm 이 A4, 05 의 MCP scale 도구가 A3 를 사람이나 에이전트가 하게 한다. MCP(Model Context Protocol)는 AI 에이전트가 외부 도구를 부르는 규약이고, scale 도구는 운영 에이전트가 함수의 min-scale 을 올리고 내리는 도구다(이 장 MCP 절, <a href="ch07-control-plane.html#mcp">07장</a>).</figcaption>
+  <figcaption><b>그림 5-4.</b> 0 까지 줄일지 정하는 순서도. 우리 PoC 는 hello-runc·hello-gvisor 가 A2, hello-gvisor-warm 이 A4 이고, A3 는 05 의 <span class="t">MCP scale 도구</span>로 사람이나 에이전트가 한다(이 장 MCP 절, <a href="ch07-control-plane.html#mcp">07장</a>).</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>MCP scale 도구</dt><dd>MCP(Model Context Protocol)는 AI 에이전트가 외부 도구를 부르는 규약이고, scale 은 운영 에이전트가 함수의 min-scale 을 올리고 내리는 도구다.</dd></div>
+  </dl></aside>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>04 의 함수 3개(<code>poc/04-faas-runtime/functions/ksvc/</code>)가 0↔N 을 직접 보여 준다. hello-runc 와 hello-gvisor 는 <code>min-scale: "0"</code> 이라 요청이 끊기면 사라지고, hello-gvisor-warm 은 <code>min-scale: "1"</code> 이라 하나가 늘 남는다. 05 의 사용자 함수(<code>tenant-a/hello</code>)는 템플릿에 min-scale 을 아예 쓰지 않아 기본값 0 으로 시작하고, 운영 에이전트가 MCP <code>scale</code> 도구로 올린다.</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: "가끔 첫 요청만 느리다" 는 불만. 장애가 아니라 scale-to-zero 의 정상 동작이다. <strong>볼 곳</strong>: 그 시각 직전 함수 파드 수(<code>kubectl get pods -l serving.knative.dev/service=&lt;함수&gt;</code>), 응답 JSON 의 <code>cold</code> 칸(우리 함수가 "이 프로세스의 첫 요청이었나" 를 적어 주는 값). <strong>고치는 법</strong>: 그 함수만 min-scale 1, 또는 <code>scale-down-delay</code>(줄이는 결정을 이 시간만큼 미루는 설정)로 꼬리를 늘린다. 전체를 바꾸지 않는다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: "가끔 첫 요청만 느리다" 는 불만. 장애가 아니라 scale-to-zero 의 정상 동작이다. <strong>볼 곳</strong>: 그 시각 직전 함수 파드 수(<code>kubectl get pods -l serving.knative.dev/service=&lt;함수&gt;</code>), 응답 JSON 의 <span class="t"><code>cold</code> 칸</span>. <strong>고치는 법</strong>: 그 함수만 min-scale 1, 또는 <span class="t"><code>scale-down-delay</code></span> 로 꼬리를 늘린다. 전체를 바꾸지 않는다.</p>
+<aside class="notes"><dl>
+<div><dt><code>cold</code> 칸</dt><dd>우리 함수가 "이 프로세스의 첫 요청이었나" 를 응답 JSON 에 적어 주는 값.</dd></div>
+<div><dt><code>scale-down-delay</code></dt><dd>파드를 줄이는 결정을 이 시간만큼 미루는 설정. 기본 0초.</dd></div>
+</dl></aside></aside>
 <aside class="callout why"><p class="callout-title">왜 Knative 인가 (대안)</p><p>작년 본선 주제가 FaaS 였고 상위 팀이 Knative + gVisor 조합이었다(04 README). 우리가 필요한 것은 (1) 0↔N, (2) 0 일 때 요청 보관, (3) 버전별 트래픽 분할(롤백), (4) 노드 풀 고정이다. KEDA HTTP add-on 은 (1)(2)는 되지만 (3)이 없다. OpenFaaS 는 (3)이 약하고 0 까지 줄이기가 상용판 기능이다(공식 비교표 기준, 위 표 참고). 직접 만들기는 본선 시간 안에 못 한다. 자세한 표는 <a href="#decisions">결정 표</a>.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/">Knative Serving 개요</a> · <a href="https://knative.dev/docs/serving/autoscaling/scale-to-zero/">Scale to zero</a> · <a href="https://knative.dev/docs/serving/request-flow/">HTTP 요청 흐름 (activator 와 콜드 스타트)</a> · <a href="https://cloud.google.com/run/docs/resource-model">Cloud Run 자원 모델</a> · <a href="https://github.com/kedacore/http-add-on">KEDA HTTP add-on</a></p></aside>
 
@@ -241,8 +299,13 @@ flowchart TD
 
 <div class="tier" data-tier="1">
   <h3>한 장을 넣으면 네 종류가 생긴다</h3>
-  <p>우리가 쓰는 것은 <code>kind: Service</code> (apiVersion <code>serving.knative.dev/v1</code>) 한 장뿐이다. 쿠버네티스 YAML 에서 <code>kind</code> 는 객체의 종류, <code>apiVersion</code> 은 그 종류가 속한 API 그룹과 버전이다. 쿠버네티스 기본 리소스 Service(파드 집합에 고정 이름·IP 를 주는 것)와 이름이 같아 헷갈리므로 Knative 의 것은 <code>kubectl</code> 에서 <code>ksvc</code> 로 줄여 부른다. Knative controller(Knative 가 설치하는 프로그램. 객체를 지켜보다가 거기서 파생되는 객체를 만들고 상태를 적는다)는 이 한 장을 둘로 쪼갠다. "무엇을 돌릴까"(컨테이너 이미지·환경 변수·자원) 는 <strong>Configuration</strong> 에, "요청을 어디로 보낼까"(몇 % 를 어느 버전으로) 는 <strong>Route</strong> 에 넘긴다. Configuration 은 <code>spec.template</code> 이 바뀔 때마다 <strong>Revision</strong> 을 하나씩 새로 만든다. Revision 은 그 순간의 코드·설정 스냅샷이고, 한 번 만들어지면 바뀌지 않는다.</p>
-  <p>Spring 에 비유하면 Revision 은 "빌드된 jar 하나 + 그 jar 의 application.yml" 이고, Route 는 "로드 밸런서의 가중치 표" 다. 롤백은 jar 를 다시 빌드하는 게 아니라 가중치 표만 예전 jar 쪽으로 돌리는 일이 된다.</p>
+  <p>우리가 쓰는 것은 <span class="t"><code>kind: Service</code></span> (apiVersion <code>serving.knative.dev/v1</code>) 한 장뿐이다. 쿠버네티스 기본 리소스 <span class="t">Service</span> 와 이름이 같아 헷갈리므로 Knative 의 것은 <code>kubectl</code> 에서 <code>ksvc</code> 로 줄여 부른다. <span class="t">Knative controller</span> 는 이 한 장을 둘로 쪼갠다. "무엇을 돌릴까"(컨테이너 이미지·환경 변수·자원) 는 <strong>Configuration</strong> 에, "요청을 어디로 보낼까"(몇 % 를 어느 버전으로) 는 <strong>Route</strong> 에 넘긴다. Configuration 은 <code>spec.template</code> 이 바뀔 때마다 <strong>Revision</strong> 을 하나씩 새로 만든다. Revision 은 그 순간의 코드·설정 스냅샷이고, 한 번 만들어지면 바뀌지 않는다.</p>
+  <aside class="notes"><dl>
+  <div><dt><code>kind: Service</code></dt><dd>쿠버네티스 YAML 에서 <code>kind</code> 는 객체의 종류, <code>apiVersion</code> 은 그 종류가 속한 API 그룹과 버전이다. Knative 의 Service 는 <code>serving.knative.dev/v1</code> 그룹에 속한다.</dd></div>
+  <div><dt>Service(쿠버네티스)</dt><dd>파드 집합에 고정된 이름과 IP 를 주는 쿠버네티스 기본 리소스. Knative 의 Service 와는 다른 객체다.</dd></div>
+  <div><dt>Knative controller</dt><dd>Knative 가 설치하는 프로그램. 객체를 지켜보다가 거기서 파생되는 객체를 만들고 상태를 적는다.</dd></div>
+  </dl></aside>
+  <p>Revision 은 빌드된 결과물과 그때의 설정을 한데 묶어 봉인한 꾸러미이고, Route 는 그 꾸러미들 앞에 선 가중치 표다. 롤백은 꾸러미를 다시 만드는 일이 아니라, 가중치 표를 예전 꾸러미 쪽으로 돌리는 일이 된다.</p>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 520" role="img" aria-labelledby="rm-t">
@@ -343,22 +406,40 @@ classDiagram
   </pre>
   <figcaption><b>그림 5-6.</b> Serving API 의 주요 필드 (클래스도). <code>latestRevision: true</code> 인 대상은 "Configuration 의 latestReadyRevisionName" 을 따라가고, <code>revisionName</code> 대상은 특정 Revision 에 고정된다.</figcaption>
   </figure>
-  <p>Revision 이름은 <code>&lt;서비스&gt;-&lt;5자리 세대 번호&gt;</code> 다. 우리 함수는 <code>hello-runc-00001</code>, 05 의 <code>tenant-a/hello</code> 는 <code>hello-00001</code>, <code>hello-00002</code> … 로 쌓인다. 세대 번호는 Configuration 의 <code>metadata.generation</code>(쿠버네티스가 spec 이 바뀔 때마다 1씩 올리는 번호)이고 Revision 의 라벨(label, 객체에 붙이는 key=value 꼬리표. 조회와 선택의 기준이 된다) <code>serving.knative.dev/configurationGeneration</code> 에도 남는다. 05 의 MCP rollback(운영 에이전트가 트래픽을 옛 Revision 으로 돌리는 도구, MCP 절)은 이 라벨로 Revision 을 정렬한다.</p>
+  <p>Revision 이름은 <code>&lt;서비스&gt;-&lt;5자리 세대 번호&gt;</code> 다. 우리 함수는 <code>hello-runc-00001</code>, 05 의 <code>tenant-a/hello</code> 는 <code>hello-00001</code>, <code>hello-00002</code> … 로 쌓인다. 세대 번호는 Configuration 의 <span class="t"><code>metadata.generation</code></span> 이고 Revision 의 <span class="t">라벨</span> <code>serving.knative.dev/configurationGeneration</code> 에도 남는다. 05 의 <span class="t">MCP rollback</span> 은 이 라벨로 Revision 을 정렬한다.</p>
+  <aside class="notes"><dl>
+  <div><dt><code>metadata.generation</code></dt><dd>쿠버네티스가 객체의 spec 이 바뀔 때마다 1씩 올리는 번호.</dd></div>
+  <div><dt>라벨(label)</dt><dd>객체에 붙이는 key=value 꼬리표. 조회와 선택의 기준이 된다.</dd></div>
+  <div><dt>MCP rollback</dt><dd>운영 에이전트가 트래픽을 옛 Revision 으로 돌리는 MCP 도구. 이 장 MCP 절.</dd></div>
+  </dl></aside>
   <p>Revision 이 하나 생기면 그 아래로 쿠버네티스 객체가 딸린다.</p>
   <ul>
-    <li><strong>Deployment</strong>: 쿠버네티스가 같은 파드를 N개 유지해 주는 기본 리소스. 파드 수(<code>replicas</code>)를 Knative 가 올리고 내린다.</li>
-    <li><strong>PodAutoscaler</strong>(PA, <code>autoscaling.internal.knative.dev</code>): KPA 가 판단 결과(원하는 파드 수 <code>desiredScale</code>, 실제 수 <code>actualScale</code>)를 적는 Knative 내부 객체.</li>
-    <li><strong>ServerlessService</strong>(SKS, <code>networking.internal.knative.dev</code>): 쿠버네티스 Service 를 관리하는 Knative 내부 객체. 쿠버네티스 Service 는 파드 집합에 고정된 이름과 IP 를 주는 리소스이고, 그 이름 뒤에 실제로 연결된 파드 IP:포트 목록을 <strong>endpoints</strong> 라 한다. SKS 는 Service 두 개(공개용 <code>&lt;revision&gt;</code>, 내부용 <code>&lt;revision&gt;-private</code>)를 만들고, 공개용의 endpoints 를 함수 파드 IP 로 채울지 activator IP 로 채울지 바꾼다(요청 경로 절).</li>
-    <li>Route 쪽에서는 <strong>KIngress</strong> 가 생긴다. Ingress 는 "밖에서 들어온 요청을 호스트·경로에 따라 어느 Service 로 보낼지" 적는 규칙 객체인데, Knative 는 쿠버네티스 표준 Ingress 대신 자기 종류(<code>networking.internal.knative.dev/v1alpha1 Ingress</code>, 줄여서 KIngress)를 쓰고, 설치된 네트워크 층(우리는 Kourier)이 그것을 Envoy 설정으로 번역한다. Route 는 또 자기 이름의 쿠버네티스 Service(<code>hello</code>, type <code>ExternalName</code>)를 만들어 클러스터 안에서 <code>hello.tenant-a.svc.cluster.local</code> 로 부를 수 있게 한다(네트워크 층 절).</li>
+    <li><strong>Deployment</strong>: 쿠버네티스가 같은 파드를 N개 유지해 주는 기본 리소스. 파드 수 <span class="t"><code>replicas</code></span> 를 Knative 가 올리고 내린다.</li>
+    <li><strong>PodAutoscaler</strong>(PA, <code>autoscaling.internal.knative.dev</code>): KPA 가 원하는 파드 수 <code>desiredScale</code> 과 실제 수 <code>actualScale</code> 을 적는 Knative 내부 객체.</li>
+    <li><strong>ServerlessService</strong>(SKS, <code>networking.internal.knative.dev</code>): 쿠버네티스 Service 를 관리하는 Knative 내부 객체. 공개용 <code>&lt;revision&gt;</code> 과 내부용 <code>&lt;revision&gt;-private</code> 두 Service 를 만들고, 공개용의 <strong><span class="t">endpoints</span></strong> 를 함수 파드 IP 로 채울지 activator IP 로 채울지 바꾼다(요청 경로 절).</li>
+    <li>Route 쪽에서는 <strong>KIngress</strong> 가 생긴다. Knative 는 쿠버네티스 표준 <span class="t">Ingress</span> 대신 자기 종류인 <code>networking.internal.knative.dev/v1alpha1 Ingress</code>, 줄여서 KIngress 를 쓰고, 설치된 네트워크 층(우리는 Kourier)이 그것을 Envoy 설정으로 번역한다. Route 는 또 자기 이름의 쿠버네티스 Service <code>hello</code> 를 type <span class="t"><code>ExternalName</code></span> 으로 만들어 클러스터 안에서 <code>hello.tenant-a.svc.cluster.local</code> 로 부를 수 있게 한다(네트워크 층 절).</li>
   </ul>
+  <aside class="notes"><dl>
+  <div><dt><code>replicas</code></dt><dd>Deployment 가 유지할 파드 수. 이 숫자를 올리고 내리는 것이 곧 스케일이다.</dd></div>
+  <div><dt>endpoints</dt><dd>Service 이름 뒤에 실제로 연결된 파드 IP:포트 목록. 쿠버네티스가 Service 마다 관리한다.</dd></div>
+  <div><dt>Ingress</dt><dd>"밖에서 들어온 요청을 호스트·경로에 따라 어느 Service 로 보낼지" 적는 쿠버네티스 규칙 객체.</dd></div>
+  <div><dt><code>ExternalName</code></dt><dd>파드를 고르지 않고 "다른 이름으로 가라" 고 안내만 하는 Service 종류.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="3">
   <h3>바뀌지 않는 Revision, latestRevision, 트래픽 분할, 태그</h3>
   <h4>불변성 (immutability)</h4>
-  <p>Revision 의 spec 은 만들어진 뒤 바뀌지 않는다. 그래서 "Revision 3 = 이 이미지 + 이 설정" 이 영원히 참이다. 이것이 롤백을 믿을 만하게 만드는 전제인데, 이미지를 태그(<code>:v1</code>)로 적으면 그 전제가 흔들린다. 태그는 나중에 다른 이미지로 옮겨 붙일 수 있기 때문이다. Knative 가 Revision 을 만들 때 태그를 digest(이미지 내용 전체의 sha256 해시. 내용이 같으면 같고, 한 글자라도 다르면 다르다. <code>@sha256:…</code>)로 바꿔 Revision status 에 적어 두는 이유다(설정 맵 절의 태그 해석). <code>spec.template</code> 의 어떤 칸이든(주석 한 줄이라도) 바뀌면 새 Revision 이 생긴다. 이름을 직접 정하려면 <code>spec.template.metadata.name</code> 을 쓸 수 있지만, 그 이름이 이미 있으면 거절된다.</p>
+  <p>Revision 의 spec 은 만들어진 뒤 바뀌지 않는다. 그래서 "Revision 3 = 이 이미지 + 이 설정" 이 영원히 참이다. 이것이 롤백을 믿을 만하게 만드는 전제인데, 이미지를 태그(<code>:v1</code>)로 적으면 그 전제가 흔들린다. 태그는 나중에 다른 이미지로 옮겨 붙일 수 있기 때문이다. Knative 가 Revision 을 만들 때 태그를 <span class="t">digest</span> 로 바꿔 Revision status 에 적어 두는 이유다(설정 맵 절의 태그 해석). <code>spec.template</code> 의 어떤 칸이든(주석 한 줄이라도) 바뀌면 새 Revision 이 생긴다. 이름을 직접 정하려면 <code>spec.template.metadata.name</code> 을 쓸 수 있지만, 그 이름이 이미 있으면 거절된다.</p>
+  <aside class="notes"><dl>
+  <div><dt>digest</dt><dd>이미지 내용 전체의 sha256 해시. 내용이 같으면 같고, 한 글자라도 다르면 다르다. <code>@sha256:…</code> 모양.</dd></div>
+  </dl></aside>
   <h4>latestRevision 과 Ready</h4>
-  <p><code>latestCreatedRevisionName</code> 은 가장 최근에 만든 Revision, <code>latestReadyRevisionName</code> 은 그중 Ready 가 된 가장 최근 Revision 이다. 새 Revision 이 Ready 가 안 되면(파드가 Pending(갈 노드가 없어 대기 중), 이미지 못 받음, 준비 확인(readiness probe, "요청 받을 준비가 됐나" 를 주기적으로 묻는 검사) 실패) 둘이 갈라지고, <code>latestRevision: true</code> 트래픽은 계속 이전 Ready Revision 으로 간다. 이 성질 때문에 "새 배포가 망가져도 옛 버전이 계속 응답" 한다 (깨지면 절의 toleration 시나리오).</p>
+  <p><code>latestCreatedRevisionName</code> 은 가장 최근에 만든 Revision, <code>latestReadyRevisionName</code> 은 그중 Ready 가 된 가장 최근 Revision 이다. 새 Revision 이 <span class="t">Pending</span>, 이미지 못 받음, <span class="t">준비 확인</span> 실패 등으로 Ready 가 안 되면 둘이 갈라지고, <code>latestRevision: true</code> 트래픽은 계속 이전 Ready Revision 으로 간다. 이 성질 때문에 "새 배포가 망가져도 옛 버전이 계속 응답" 한다 (깨지면 절의 toleration 시나리오).</p>
+  <aside class="notes"><dl>
+  <div><dt>Pending</dt><dd>파드가 갈 노드를 못 찾아 대기 중인 상태.</dd></div>
+  <div><dt>준비 확인(readiness probe)</dt><dd>"요청 받을 준비가 됐나" 를 주기적으로 묻는 검사. 실패하면 그 파드로는 요청을 보내지 않는다.</dd></div>
+  </dl></aside>
   <figure>
   <pre class="mermaid">
 stateDiagram-v2
@@ -374,10 +455,17 @@ stateDiagram-v2
   Failed --> Collected: config-gc 조건 충족
   Collected --> [*]
   </pre>
-  <figcaption><b>그림 5-7.</b> Revision 의 일생. Ready 여부(conditions)와 라우팅 상태(라벨 <code>serving.knative.dev/routingState</code> 의 active·reserve 등)는 서로 다른 축이다. 트래픽을 받지 않는 Revision 은 파드가 0 으로 줄고 객체만 남는다. 그림의 progress-deadline 은 "파드가 이 시간 안에 준비되지 않으면 실패로 본다" 는 한도(config-deployment, 기본 600초), config-gc 는 트래픽을 안 받는 옛 Revision 을 언제 지울지 정하는 설정(이 절 끝)이다. 라벨 routingState 의 실제 값은 <code>active</code>(트래픽을 받음), <code>reserve</code>(안 받음), <code>pending</code>(아직 판정 전)이다. 상태 이름은 설명용으로 단순화했다.</figcaption>
+  <figcaption><b>그림 5-7.</b> Revision 의 일생. Ready 여부(conditions)와 라우팅 상태는 서로 다른 축이다. 트래픽을 받지 않는 Revision 은 파드가 0 으로 줄고 객체만 남는다. 그림의 <span class="t">progress-deadline</span> 과 <span class="t">config-gc</span> 는 Knative 의 설정값이다. 라우팅 상태는 라벨 <code>serving.knative.dev/routingState</code> 에 적히고, 실제 값은 <code>active</code>(트래픽을 받음), <code>reserve</code>(안 받음), <code>pending</code>(아직 판정 전)이다. 상태 이름은 설명용으로 단순화했다.</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>progress-deadline</dt><dd>"파드가 이 시간 안에 준비되지 않으면 실패로 본다" 는 한도. 기본 600초. 설정 맵 절의 config-deployment 에 있다.</dd></div>
+  <div><dt>config-gc</dt><dd>트래픽을 안 받는 옛 Revision 을 언제 지울지 정하는 설정 맵. 이 절 끝에서 본다.</dd></div>
+  </dl></aside>
   <h4>트래픽 분할과 태그</h4>
-  <p><code>spec.traffic</code> 은 목록이고 <code>percent</code> 합이 100 이어야 한다. 각 항목은 셋 중 하나로 대상을 고른다: <code>revisionName</code>(고정), <code>configurationName</code>, <code>latestRevision: true</code>(최신 Ready 를 따라감). <code>tag</code> 를 붙이면 그 대상만 받는 별도 주소가 생긴다. 주소 모양은 config-network(Knative 의 네트워크 설정을 담은 ConfigMap. ConfigMap 은 설정값을 key-value 로 담는 쿠버네티스 기본 객체다. 설정 맵 절)의 <code>tag-template</code>(기본 <code>{{.Tag}}-{{.Name}}</code>)과 <code>domain-template</code>(기본 <code>{{.Name}}.{{.Namespace}}.{{.Domain}}</code>) 을 합친 것이다. percent 0 + tag 조합은 "운영 트래픽은 안 주고 시험용 주소만 여는" 다크 런치(dark launch)다.</p>
+  <p><code>spec.traffic</code> 은 목록이고 <code>percent</code> 합이 100 이어야 한다. 각 항목은 셋 중 하나로 대상을 고른다: <code>revisionName</code>(고정), <code>configurationName</code>, <code>latestRevision: true</code>(최신 Ready 를 따라감). <code>tag</code> 를 붙이면 그 대상만 받는 별도 주소가 생긴다. 주소 모양은 <span class="t">config-network</span> 의 <code>tag-template</code>(기본 <code>{{.Tag}}-{{.Name}}</code>)과 <code>domain-template</code>(기본 <code>{{.Name}}.{{.Namespace}}.{{.Domain}}</code>) 을 합친 것이다. percent 0 + tag 조합은 "운영 트래픽은 안 주고 시험용 주소만 여는" 다크 런치(dark launch)다.</p>
+  <aside class="notes"><dl>
+  <div><dt>config-network</dt><dd>Knative 의 네트워크 설정을 담은 ConfigMap. ConfigMap 은 설정값을 key-value 로 담는 쿠버네티스 기본 객체다. 설정 맵 절.</dd></div>
+  </dl></aside>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 300" role="img" aria-labelledby="tag-t">
@@ -418,11 +506,17 @@ stateDiagram-v2
   KIngress 규칙 = [ 기본 호스트 → targets 전부 (비율대로) ]
                + [ 태그마다 "tag-name.ns.domain" → 그 rev 100% ]
   KIngress 를 apply  <span class="c">// net-kourier-controller 가 받아서 Envoy 로</span></code></pre>
-  <p>트래픽을 한 번에 옮기지 않고 서서히 옮기는 손잡이도 있다. Service 나 Route 의 주석 <code>serving.knative.dev/rollout-duration</code>(또는 config-network 의 <code>rollout-duration</code>, 기본 0 = 즉시)에 시간을 주면, <code>latestRevision: true</code> 대상의 트래픽이 그 시간에 걸쳐 새 Revision 으로 옮겨 간다. 우리 PoC 는 쓰지 않는다(플랫폼 배포의 카나리는 <a href="ch02-rollouts.html">02장</a> Argo Rollouts 가 맡고, 함수는 즉시 전환). 본선에서 "함수 배포도 점진 전환이 되나" 를 물으면 이 주석 한 줄이 답이다.</p>
-  <p>Revision 은 쌓이기만 하지 않는다. config-gc(Revision 가비지 컬렉션 설정 ConfigMap)의 기본값(<code>retain-since-create-time 48h</code>, <code>retain-since-last-active-time 15h</code>, <code>min-non-active-revisions 20</code>, <code>max-non-active-revisions 1000</code>) 에 따라 트래픽을 안 받는 오래된 Revision 은 지워진다. 그래서 "몇 달 전 Revision 으로 롤백" 은 보장되지 않는다. 지우면 안 되는 Revision 에는 주석 <code>serving.knative.dev/no-gc: "true"</code> 를 붙인다.</p>
+  <p>트래픽을 한 번에 옮기지 않고 서서히 옮기는 손잡이도 있다. Service 나 Route 의 주석 <code>serving.knative.dev/rollout-duration</code>(또는 config-network 의 <code>rollout-duration</code>, 기본 0 = 즉시)에 시간을 주면, <code>latestRevision: true</code> 대상의 트래픽이 그 시간에 걸쳐 새 Revision 으로 옮겨 간다. 우리 PoC 는 쓰지 않는다. 플랫폼 배포의 <span class="t">카나리</span>는 <a href="ch02-rollouts.html">02장</a>의 Argo Rollouts 가 맡고, 함수는 즉시 전환한다. 본선에서 "함수 배포도 점진 전환이 되나" 를 물으면 이 주석 한 줄이 답이다.</p>
+  <aside class="notes"><dl>
+  <div><dt>카나리(canary)</dt><dd>새 버전에 트래픽을 조금만 보내 보고 문제가 없으면 늘려 가는 배포 방식.</dd></div>
+  </dl></aside>
+  <p>Revision 은 쌓이기만 하지 않는다. config-gc 의 기본값(<code>retain-since-create-time 48h</code>, <code>retain-since-last-active-time 15h</code>, <code>min-non-active-revisions 20</code>, <code>max-non-active-revisions 1000</code>) 에 따라 트래픽을 안 받는 오래된 Revision 은 지워진다. 그래서 "몇 달 전 Revision 으로 롤백" 은 보장되지 않는다. 지우면 안 되는 Revision 에는 주석 <code>serving.knative.dev/no-gc: "true"</code> 를 붙인다.</p>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>04 의 ksvc 세 장에는 <code>traffic</code> 칸이 없다. 쓰지 않으면 기본값이 "최신 Ready Revision 100%" 다. 05 템플릿은 같은 뜻을 <code>traffic: [{latestRevision: true, percent: 100}]</code> 로 명시한다. 이유는 MCP rollback 이 traffic 을 특정 Revision 으로 고정한 뒤, 다음 배포의 server-side apply(SSA, "내가 적은 필드는 이 값" 을 API 서버가 필드 주인별로 기록하며 적용하는 방식. 05 템플릿 절과 <a href="ch07-control-plane.html#ssa">07장</a>)가 이 줄로 다시 "최신 따라가기" 로 되돌리게 하려는 것이다 (<a href="#mcp">MCP 절</a>).</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>04 의 ksvc 세 장에는 <code>traffic</code> 칸이 없다. 쓰지 않으면 기본값이 "최신 Ready Revision 100%" 다. 05 템플릿은 같은 뜻을 <code>traffic: [{latestRevision: true, percent: 100}]</code> 로 명시한다. 이유는 MCP rollback 이 traffic 을 특정 Revision 으로 고정한 뒤, 다음 배포의 <span class="t">server-side apply</span> 가 이 줄로 다시 "최신 따라가기" 로 되돌리게 하려는 것이다 (<a href="#mcp">MCP 절</a>).</p>
+<aside class="notes"><dl>
+<div><dt>server-side apply(SSA)</dt><dd>"내가 적은 필드는 이 값" 을 API 서버가 필드 주인별로 기록하며 적용하는 방식. 05 템플릿 절과 <a href="ch07-control-plane.html#ssa">07장</a>.</dd></div>
+</dl></aside></aside>
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: <code>kubectl get ksvc</code> 의 LATESTCREATED 와 LATESTREADY 가 다르다. 함수는 응답하는데 새 코드가 아니다. <strong>볼 곳</strong>: <code>kubectl -n tenant-a get revisions</code> 에서 READY 가 False 인 Revision 의 REASON, <code>kubectl describe revision &lt;이름&gt;</code>. <strong>고치는 법</strong>: 원인(이미지, 스케줄, 준비 확인)을 고친 새 template 을 다시 apply 한다. 망가진 Revision 을 지울 필요는 없다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/reference/serving-api/">Serving API 레퍼런스</a> · <a href="https://knative.dev/docs/serving/rolling-out-latest-revision/">점진 전환 (rollout-duration)</a> · <a href="https://knative.dev/docs/serving/traffic-management/">Traffic management</a> · <a href="https://knative.dev/docs/serving/revisions/revision-admin-config-options/">Revision 가비지 컬렉션</a> · <a href="https://github.com/knative/specs">Knative Runtime/API 명세</a></p></aside>
 
@@ -434,12 +528,12 @@ stateDiagram-v2
   <h3>결정하는 쪽과 요청을 나르는 쪽</h3>
   <p>Knative 부품은 두 무리로 나뉜다. <strong>컨트롤 플레인</strong>(control plane)은 객체를 보고 다른 객체를 만들거나 숫자를 정한다. 요청 자체는 만지지 않는다. <strong>데이터 플레인</strong>(data plane)은 실제 HTTP 요청이 지나가는 길이다. 단, activator 는 둘 다에 걸친다: 요청을 나르면서(데이터) autoscaler 에 수요 신호를 보낸다(컨트롤).</p>
   <div class="grid">
-    <div class="item"><h4>controller</h4><p>Service → Configuration·Route → Revision → Deployment·PodAutoscaler·SKS 를 만드는 재조정 루프(reconcile loop, "원하는 상태" 와 "실제 상태" 를 비교해 차이를 메우는 반복) 묶음.</p></div>
-    <div class="item"><h4>webhook</h4><p>승인 웹훅(admission webhook). API 서버(쿠버네티스의 중심 REST 서버. 모든 객체는 여기를 거쳐 저장소 etcd 에 쓰인다)가 객체를 저장하기 직전에 외부 프로그램을 불러 검사·수정을 맡기는 장치다. ksvc 의 기본값을 채우고, 기능 플래그 위반을 여기서 거절한다.</p></div>
+    <div class="item"><h4>controller</h4><p>Service → Configuration·Route → Revision → Deployment·PodAutoscaler·SKS 를 만드는 <span class="t">재조정 루프</span> 묶음.</p><aside class="notes"><dl><div><dt>재조정 루프(reconcile loop)</dt><dd>"원하는 상태" 와 "실제 상태" 를 비교해 차이를 메우는 반복.</dd></div></dl></aside></div>
+    <div class="item"><h4>webhook</h4><p>승인 웹훅(admission webhook). <span class="t">API 서버</span>가 객체를 저장하기 직전에 외부 프로그램을 불러 검사·수정을 맡기는 장치다. ksvc 의 기본값을 채우고, 기능 플래그 위반을 여기서 거절한다.</p><aside class="notes"><dl><div><dt>API 서버</dt><dd>쿠버네티스의 중심 REST 서버. 모든 객체는 여기를 거쳐 저장소 etcd 에 쓰인다.</dd></div></dl></aside></div>
     <div class="item"><h4>autoscaler</h4><p>queue-proxy 지표를 1초마다 긁어 모으고, 2초마다 PodAutoscaler 의 원하는 파드 수를 정한다 (KPA).</p></div>
     <div class="item"><h4>activator</h4><p>파드가 0개이거나 여유가 모자랄 때 요청을 받아 잡아 두고, 파드가 생기면 넘긴다.</p></div>
-    <div class="item"><h4>net-kourier-controller</h4><p>KIngress 를 Envoy 설정으로 번역해 xDS(Envoy 가 외부 서버에서 설정을 실시간으로 받아 가는 API 묶음)로 밀어 준다. knative-serving 에 뜬다.</p></div>
-    <div class="item"><h4>queue-proxy</h4><p>함수 파드마다 붙는 옆 컨테이너, 즉 사이드카(sidecar: 한 파드 안에서 주 컨테이너 옆에 같이 뜨는 보조 컨테이너. 같은 네트워크 공간을 쓰므로 localhost 로 주 컨테이너를 부른다). 요청을 세고, 상한을 지키고, 준비를 확인한다.</p></div>
+    <div class="item"><h4>net-kourier-controller</h4><p>KIngress 를 Envoy 설정으로 번역해 <span class="t">xDS</span> 로 밀어 준다. knative-serving 에 뜬다.</p><aside class="notes"><dl><div><dt>xDS</dt><dd>Envoy 가 외부 서버에서 설정을 실시간으로 받아 가는 API 묶음.</dd></div></dl></aside></div>
+    <div class="item"><h4>queue-proxy</h4><p>함수 파드마다 붙는 옆 컨테이너, 즉 <span class="t">사이드카</span>. 요청을 세고, 상한을 지키고, 준비를 확인한다.</p><aside class="notes"><dl><div><dt>사이드카(sidecar)</dt><dd>한 파드 안에서 주 컨테이너 옆에 같이 뜨는 보조 컨테이너. 같은 네트워크 공간을 쓰므로 localhost 로 주 컨테이너를 부른다.</dd></div></dl></aside></div>
   </div>
 </div>
 
@@ -536,7 +630,7 @@ stateDiagram-v2
     </div>
     <figcaption><b>그림 5-9.</b> Knative Serving + Kourier 구성도. 회색 = API 호출(watch·create), 보라 점선 = 비동기 신호(xDS 설정 밀어 주기, activator 의 수요 신호), 파랑 = 사용자 요청, 청록 점선 = autoscaler 가 queue-proxy 지표를 긁는 길. 요청은 파드가 충분하면 Envoy → queue-proxy 로 바로(serve), 0개이거나 여유가 모자라면 Envoy → activator → queue-proxy 로(proxy) 간다. serve/proxy 는 ServerlessService 의 두 모드 이름이고 다음 절에서 설명한다. xDS :18000 은 net-kourier-controller 가 Envoy 에 설정을 내려 주는 포트다.</figcaption>
   </figure>
-  <p>요청이 지나가는 순서는 늘 같다: <strong>Envoy</strong>(Kourier 게이트웨이) → (필요하면 <strong>activator</strong>) → 파드 안 <strong>queue-proxy</strong>(:8012) → <strong>user-container</strong>(:8080). 함수 코드는 queue-proxy 뒤에 숨어 있어서, Knative 는 코드를 한 줄도 고치지 않고 요청 수를 세고 상한을 지킬 수 있다. 이게 사이드카(sidecar) 방식의 힘이다.</p>
+  <p>요청이 지나가는 순서는 늘 같다: <strong>Envoy</strong>(Kourier 게이트웨이) → (필요하면 <strong>activator</strong>) → 파드 안 <strong>queue-proxy</strong>(:8012) → <strong>user-container</strong>(:8080). 함수 코드는 queue-proxy 뒤에 숨어 있어서, Knative 는 코드를 한 줄도 고치지 않고 요청 수를 세고 상한을 지킬 수 있다. 이게 사이드카 방식의 힘이다.</p>
   <figure>
   <pre class="mermaid">
 flowchart LR
@@ -563,17 +657,27 @@ flowchart LR
   <div class="table-wrap"><table><thead><tr><th>부품</th><th>종류</th><th>하는 일</th><th>지켜보는 것</th><th>죽으면</th></tr></thead><tbody>
   <tr><td>controller</td><td>Deployment, 여러 재조정기 묶음</td><td>Service·Configuration·Revision·Route 재조정, Deployment 와 KIngress 생성, 이미지 태그 → digest 해석</td><td>serving.knative.dev 전부, 설정 맵</td><td>이미 떠 있는 함수는 계속 응답. 새 배포·변경이 반영 안 됨</td></tr>
   <tr><td>webhook</td><td>admission webhook (검사 + 변경)</td><td>스키마·필드 허용 검사(기능 플래그), 기본값(containerConcurrency, timeoutSeconds 등) 채우기, 생성자 주석 기록</td><td>API 서버가 호출</td><td>ksvc 생성·수정이 API 서버에서 실패 (webhook 호출 실패)</td></tr>
-  <tr><td>autoscaler</td><td>Deployment</td><td>Revision 마다 decider(판단기 하나)를 두고 1초마다 지표 수집 → 2초마다 desiredScale(원하는 파드 수)과 여유 용량 EBC(Excess Burst Capacity, 지금 파드들이 더 받을 수 있는 요청 수. 음수면 모자람. KPA 절) 계산</td><td>PodAutoscaler, queue-proxy :9090, activator 의 stat</td><td>파드 수가 그 자리에 멈춘다. 0 에서 깨우지 못한다</td></tr>
-  <tr><td>activator</td><td>Deployment (HPA 로 1~20개, CPU 100% 기준으로 늘어남)</td><td>요청 버퍼, 파드 준비 확인 뒤 전달, 파드별 동시 요청 상한(containerConcurrency)을 아는 부하 분산, 수요 신호 전송</td><td>Revision 의 endpoints</td><td>proxy 모드 Revision(0개 포함)의 요청이 실패. serve 모드는 영향 적음</td></tr>
+  <tr><td>autoscaler</td><td>Deployment</td><td>Revision 마다 decider(판단기 하나)를 두고 1초마다 지표 수집 → 2초마다 desiredScale(원하는 파드 수)과 여유 용량 <span class="t">EBC</span> 계산</td><td>PodAutoscaler, queue-proxy :9090, activator 의 stat</td><td>파드 수가 그 자리에 멈춘다. 0 에서 깨우지 못한다</td></tr>
+  <tr><td>activator</td><td>Deployment. HPA 가 CPU 100% 기준으로 1~20개 사이에서 늘리고 줄임</td><td>요청 버퍼, 파드 준비 확인 뒤 전달, 파드별 동시 요청 상한(containerConcurrency)을 아는 부하 분산, 수요 신호 전송</td><td>Revision 의 endpoints</td><td>proxy 모드 Revision(0개 포함)의 요청이 실패. serve 모드는 영향 적음</td></tr>
   <tr><td>net-kourier-controller</td><td>Deployment (knative-serving)</td><td>KIngress → Envoy 리스너·라우트·클러스터, xDS 서버(:18000)</td><td>KIngress, endpoints</td><td>Envoy 는 마지막 설정으로 계속 동작. 새 함수 주소가 안 생김</td></tr>
   <tr><td>3scale-kourier-gateway</td><td>Envoy Deployment (kourier-system)</td><td>Host 헤더로 라우팅, 재시도·타임아웃</td><td>xDS</td><td>모든 함수 요청 실패 (입구)</td></tr>
   <tr><td>queue-proxy</td><td>파드마다 사이드카</td><td>동시성 상한, 지표, 준비 확인, 타임아웃, 우아한 종료</td><td>user-container</td><td>그 파드만 NotReady</td></tr>
   </tbody></table></div>
-  <p>activator 와 autoscaler 사이에는 두 방향의 신호가 있다. (1) autoscaler 가 activator 의 지표를 받는다: Revision 이 proxy 모드일 때 activator 가 그 Revision 으로 들어온 동시 요청 수를 웹소켓으로 autoscaler 에 보낸다. 파드가 0개일 때는 queue-proxy 가 없으니 이것이 유일한 수요 신호다. (2) autoscaler 가 "이 Revision 에 activator 몇 개를 붙일지(activator 부분 집합 크기)" 를 정한다. 식은 <code>max(2, ceil((준비된 파드 수 × 파드당 total + TBC) / activator-capacity))</code> 다. <code>activator-capacity</code> 는 activator 하나가 감당한다고 보는 동시 요청 수(기본 100), TBC 는 target-burst-capacity(미리 대비할 폭주분, KPA 절)이고, TBC 가 0 이면 늘 2개다. Revision 마다 activator 를 전부가 아니라 일부만 붙이는 이유는, 한 Revision 의 요청이 소수의 activator 로 모여야 "어느 파드가 비었나" 를 정확히 판단할 수 있기 때문이다(공식 문서 request-flow).</p>
+  <aside class="notes"><dl>
+  <div><dt>EBC(Excess Burst Capacity)</dt><dd>지금 파드들이 더 받을 수 있는 요청 수. 음수면 모자란다는 뜻. 계산은 KPA 절.</dd></div>
+  </dl></aside>
+  <p>activator 와 autoscaler 사이에는 두 방향의 신호가 있다. (1) autoscaler 가 activator 의 지표를 받는다: Revision 이 proxy 모드일 때 activator 가 그 Revision 으로 들어온 동시 요청 수를 웹소켓으로 autoscaler 에 보낸다. 파드가 0개일 때는 queue-proxy 가 없으니 이것이 유일한 수요 신호다. (2) autoscaler 가 "이 Revision 에 activator 몇 개를 붙일지(activator 부분 집합 크기)" 를 정한다. 식은 <code>max(2, ceil((준비된 파드 수 × 파드당 total + TBC) / activator-capacity))</code> 다. <span class="t"><code>activator-capacity</code></span> 와 <span class="t">TBC</span> 는 둘 다 config-autoscaler 의 값이고, TBC 가 0 이면 늘 2개다. Revision 마다 activator 를 전부가 아니라 일부만 붙이는 이유는, 한 Revision 의 요청이 소수의 activator 로 모여야 "어느 파드가 비었나" 를 정확히 판단할 수 있기 때문이다(공식 문서 request-flow).</p>
+  <aside class="notes"><dl>
+  <div><dt><code>activator-capacity</code></dt><dd>activator 하나가 감당한다고 보는 동시 요청 수. 기본 100.</dd></div>
+  <div><dt>TBC(target-burst-capacity)</dt><dd>미리 대비해 두는 폭주분. 파드들의 여유가 이보다 작으면 activator 를 경로에 남긴다. KPA 절.</dd></div>
+  </dl></aside>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>poc/04-faas-runtime/scripts/setup.sh</code> 2/5 단계가 <code>serving-crds.yaml</code>(CRD = CustomResourceDefinition, 쿠버네티스에 Service·Revision 같은 새 객체 종류를 등록하는 정의) → <code>serving-core.yaml</code>(부품 Deployment 들과 ConfigMap) 순서로 깔고, 3/5 단계가 <code>kourier.yaml</code> 을 깐다. 부품은 전부 toleration 이 없어서 taint 가 없는 system 풀로 모인다(03장 노드 풀). 확인 명령: <code>kubectl -n knative-serving get pods -o wide</code> 에 activator, autoscaler, controller, webhook, net-kourier-controller 가 보여야 한다.</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: ksvc apply 가 <code>failed calling webhook "webhook.serving.knative.dev"</code> 로 실패. Knative 는 웹훅을 셋 등록한다: <code>webhook.serving.knative.dev</code>(기본값 채우기), <code>validation.webhook.serving.knative.dev</code>(검사. "must not set the field(s)" 는 여기서 나온다), <code>config.webhook.serving.knative.dev</code>(ConfigMap 검사). 셋 다 같은 webhook 파드가 받는다. <strong>볼 곳</strong>: <code>kubectl -n knative-serving get pods</code> 의 webhook 상태, system 풀 메모리. <strong>고치는 법</strong>: webhook 파드가 뜰 때까지 기다리거나 system 노드 자원을 늘린다. 반대로 autoscaler 만 죽었으면 증상은 "0 인 함수가 안 깨어난다(요청이 activator 에서 타임아웃)" 로 다르다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>poc/04-faas-runtime/scripts/setup.sh</code> 2/5 단계가 <code>serving-crds.yaml</code>(<span class="t">CRD</span>) → <code>serving-core.yaml</code>(부품 Deployment 들과 ConfigMap) 순서로 깔고, 3/5 단계가 <code>kourier.yaml</code> 을 깐다. 부품은 전부 toleration 이 없어서 taint 가 없는 system 풀로 모인다(03장 노드 풀). 확인 명령: <code>kubectl -n knative-serving get pods -o wide</code> 에 activator, autoscaler, controller, webhook, net-kourier-controller 가 보여야 한다.</p>
+<aside class="notes"><dl>
+<div><dt>CRD(CustomResourceDefinition)</dt><dd>쿠버네티스에 Service·Revision 같은 새 객체 종류를 등록하는 정의.</dd></div>
+</dl></aside></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: ksvc apply 가 <code>failed calling webhook "webhook.serving.knative.dev"</code> 로 실패. Knative 는 웹훅을 셋 등록한다: 기본값을 채우는 <code>webhook.serving.knative.dev</code>, 검사를 하는 <code>validation.webhook.serving.knative.dev</code>("must not set the field(s)" 가 여기서 나온다), ConfigMap 을 검사하는 <code>config.webhook.serving.knative.dev</code>. 셋 다 같은 webhook 파드가 받는다. <strong>볼 곳</strong>: <code>kubectl -n knative-serving get pods</code> 의 webhook 상태, system 풀 메모리. <strong>고치는 법</strong>: webhook 파드가 뜰 때까지 기다리거나 system 노드 자원을 늘린다. 반대로 autoscaler 만 죽었으면 증상은 "0 인 함수가 안 깨어난다(요청이 activator 에서 타임아웃)" 로 다르다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/architecture/">Serving 아키텍처</a> · <a href="https://knative.dev/docs/serving/request-flow/">HTTP 요청 흐름</a> · <a href="https://knative.dev/docs/serving/">Serving 개요 (부품 목록)</a> · <a href="https://github.com/knative/serving/blob/knative-v1.23.0/docs/scaling/SYSTEM.md">scaling SYSTEM.md (설계 문서)</a></p></aside>
 
 
@@ -583,7 +687,7 @@ flowchart LR
 
 <div class="tier" data-tier="1">
   <h3>입구는 같고, 갈림길은 하나</h3>
-  <p>Envoy 는 함수 주소(Host 헤더)를 보고 그 Revision 의 공개용 쿠버네티스 Service 로 보낸다. 갈림길은 그 Service 의 <strong>endpoints 목록(Service 이름 뒤에 실제로 연결된 IP:포트 목록)에 무엇이 들어 있느냐</strong>다. 파드 IP 가 들어 있으면 요청은 파드로 바로 가고(serve 모드), activator IP 가 들어 있으면 activator 로 간다(proxy 모드). 이 목록을 바꾸는 것이 ServerlessService(SKS) 이고, 언제 바꿀지 정하는 것이 PodAutoscaler(KPA) 다. Envoy 설정은 바뀌지 않는다는 점이 중요하다. 그래서 전환이 빠르다.</p>
+  <p>Envoy 는 함수 주소(Host 헤더)를 보고 그 Revision 의 공개용 쿠버네티스 Service 로 보낸다. 갈림길은 그 Service 의 <strong>endpoints 목록에 무엇이 들어 있느냐</strong>다. 파드 IP 가 들어 있으면 요청은 파드로 바로 가고(serve 모드), activator IP 가 들어 있으면 activator 로 간다(proxy 모드). 이 목록을 바꾸는 것이 ServerlessService(SKS) 이고, 언제 바꿀지 정하는 것이 PodAutoscaler(KPA) 다. Envoy 설정은 바뀌지 않는다는 점이 중요하다. 그래서 전환이 빠르다.</p>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 400" role="img" aria-labelledby="rp-t">
@@ -666,8 +770,12 @@ sequenceDiagram
   P-->>C: 응답 (activator, Envoy 경유)
   S->>K: 여유가 생기면 SKS serve 모드
   </pre>
-  <figcaption><b>그림 5-12.</b> scale-from-zero 시퀀스. replicas 는 Deployment 가 유지할 파드 수, 스케줄은 스케줄러가 파드를 둘 노드를 고르는 일이다. activator 는 파드 준비를 스스로 프로브(probe, "준비됐나" 를 묻는 짧은 HTTP 요청. 200ms 간격, 300ms 타임아웃)로 확인한 뒤에 넘기므로, 쿠버네티스 endpoints 갱신을 기다리지 않는다. 그동안 클라이언트 연결은 열린 채로 기다린다(그래서 실패가 아니라 "느림" 이 된다).</figcaption>
+  <figcaption><b>그림 5-12.</b> scale-from-zero 시퀀스. 7번의 <span class="t">스케줄</span>·이미지·컨테이너 시작이 콜드 스타트 시간의 본체다(콜드 스타트 절). activator 는 파드 준비를 스스로 <span class="t">프로브</span>로 확인한 뒤에 넘기므로, 쿠버네티스 endpoints 갱신을 기다리지 않는다. 그동안 클라이언트 연결은 열린 채로 기다린다(그래서 실패가 아니라 "느림" 이 된다).</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>스케줄</dt><dd>스케줄러가 파드를 둘 노드를 고르는 일. 노드가 정해져야 그 노드가 컨테이너를 띄운다.</dd></div>
+  <div><dt>프로브(probe)</dt><dd>"준비됐나" 를 묻는 짧은 HTTP 요청. activator 는 200ms 간격, 300ms 타임아웃으로 보낸다.</dd></div>
+  </dl></aside>
   <h3>N → 0: 요청이 끊긴 뒤 사라지기까지</h3>
   <figure>
   <pre class="mermaid">
@@ -693,7 +801,10 @@ sequenceDiagram
 
 <div class="tier" data-tier="3">
   <h3>SKS 모드를 고르는 규칙과 상태 기계</h3>
-  <p>KPA 재조정기(<code>pkg/reconciler/autoscaling/kpa</code>, autoscaler 파드 안에서 도는 루프)는 매번 다음을 정한다. 아래에서 <code>want</code> 는 autoscaler 가 원하는 파드 수이고, EBC(Excess Burst Capacity, 여유 용량)는 "지금 파드들의 총 용량 − 미리 대비할 폭주분 − 지금 처리 중인 양" 으로, 음수면 파드만으로는 폭주를 못 받는다는 뜻이다(계산은 KPA 절). 기본은 proxy 이고, 두 조건이 모두 참일 때만 serve 로 바꾼다.</p>
+  <p><span class="t">KPA 재조정기</span>는 매번 다음을 정한다. 아래에서 <code>want</code> 는 autoscaler 가 원하는 파드 수이고, EBC 는 "지금 파드들의 총 용량 − 미리 대비할 폭주분 − 지금 처리 중인 양" 으로, 음수면 파드만으로는 폭주를 못 받는다는 뜻이다(계산은 KPA 절). 기본은 proxy 이고, 두 조건이 모두 참일 때만 serve 로 바꾼다.</p>
+  <aside class="notes"><dl>
+  <div><dt>KPA 재조정기</dt><dd>autoscaler 파드 안에서 도는 재조정 루프. 소스는 <code>pkg/reconciler/autoscaling/kpa</code>.</dd></div>
+  </dl></aside>
   <pre class="pseudo"><code><span class="k">함수</span> SKS 모드 정하기(pa, decider):
   mode = PROXY
   <span class="k">만약</span> want == 알수없음 <span class="k">그리고</span> pa 가 inactive:   <span class="c">// autoscaler 재시작 직후, 이전에 0 이었음</span>
@@ -720,8 +831,11 @@ stateDiagram-v2
   IP --> ACT: activator 가 요청 받음
   ACT --> IP: progress-deadline 넘도록 못 뜸
   </pre>
-  <figcaption><b>그림 5-14.</b> PodAutoscaler 의 Active 조건과 SKS 모드의 조합. 파드가 0 인 동안은 항상 proxy 다. initial-scale 은 새 Revision 이 처음 띄우는 파드 수(기본 1)다. 기본 설정(target-burst-capacity 211)에서는 파드가 적을 때도 proxy 에 머무는 일이 많다 (KPA 절 3단계).</figcaption>
+  <figcaption><b>그림 5-14.</b> PodAutoscaler 의 Active 조건과 SKS 모드의 조합. 파드가 0 인 동안은 항상 proxy 다. 새 Revision 은 <span class="t">initial-scale</span> 만큼 파드를 띄우며 시작한다. 기본 설정(target-burst-capacity 211)에서는 파드가 적을 때도 proxy 에 머무는 일이 많다 (KPA 절 3단계).</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>initial-scale</dt><dd>새 Revision 이 처음 띄우는 파드 수. 기본 1.</dd></div>
+  </dl></aside>
   <p>scale-to-zero 의 정확한 조건은 <code>kpa/scaler.go</code> 의 <code>handleScaleToZero</code> 에 있다. autoscaler 가 0 을 원해도 바로 0 이 되지 않고, PodAutoscaler 의 Active 상태에 따라 갈린다. (a) <code>enable-scale-to-zero</code> 가 false 면 1 에서 멈춘다. (b) Active=True(요청을 받던 중)면, Active 로 지낸 시간이 stable window 이상일 때만 Active=False(inactive) 로 바꾼다. 그 전까지는 <strong>1개까지만</strong> 줄이고 기다린다. (c) Active=False 면, 먼저 공개 Service 로 프로브를 보내 activator 가 정말 경로에 있는지 확인한다(TBC 가 -1 이면 늘 있으니 생략). 확인되면 inactive 로 지낸 시간이 <code>max(scale-to-zero-grace-period, scale-to-zero-pod-retention-period)</code> 이상이거나, SKS 가 proxy 모드로 grace period 이상 있었을 때 0 으로 간다. (d) Active=Unknown(0 → 1 로 깨우는 중)인데 <code>progress-deadline</code>(기본 600s) + 30초(<code>activationTimeoutBuffer</code>) 안에 파드가 준비되지 않으면 "활성화 실패" 로 보고 다시 0 으로 내린다.</p>
   <figure>
   <pre class="mermaid">
@@ -748,7 +862,10 @@ flowchart TD
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>coldstart.sh</code> 가 재는 시간이 정확히 그림 5-12 의 1~11 이다. 스크립트가 파드 0개를 본 뒤 <code>sleep 2</code> 를 더 두는 이유는 그림 5-13 의 마지막 단계(파드 종료) 뒤에 요청을 보내야 "진짜 0 에서 출발" 이기 때문이다. 응답 JSON 의 <code>cold: true</code> 는 user-container 프로세스의 첫 요청이었다는 뜻이다(<code>functions/hello-src/main.go</code> 의 <code>n == 1</code>).</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: 0 인 함수에 curl 하면 오래 기다리다 503 이나 타임아웃. 파드가 하나 떴다가 Ready 가 안 된다. <strong>볼 곳</strong>: <code>kubectl -n &lt;ns&gt; get podautoscaler,sks</code> (MODE 열), <code>kubectl -n knative-serving logs deploy/activator | grep &lt;revision&gt;</code>. <strong>고치는 법</strong>: activator → 파드 길(NetworkPolicy, <a href="#break">깨지면 절</a>)과 파드 준비 확인 실패 원인을 먼저 본다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: 0 인 함수에 curl 하면 오래 기다리다 503 이나 타임아웃. 파드가 하나 떴다가 Ready 가 안 된다. <strong>볼 곳</strong>: <code>kubectl -n &lt;ns&gt; get podautoscaler,sks</code> (MODE 열), <code>kubectl -n knative-serving logs deploy/activator | grep &lt;revision&gt;</code>. <strong>고치는 법</strong>: activator → 파드 길(<span class="t">NetworkPolicy</span>, <a href="#break">깨지면 절</a>)과 파드 준비 확인 실패 원인을 먼저 본다.</p>
+<aside class="notes"><dl>
+<div><dt>NetworkPolicy</dt><dd>파드 사이 통신을 라벨로 허용하는 규칙. 하나라도 걸린 파드는 허용 목록 밖의 연결을 버린다. <a href="ch04-network.html#netpol">04장</a>.</dd></div>
+</dl></aside></aside>
 <aside class="callout why"><p class="callout-title">왜 이런 구조인가 (대안)</p><p>대안은 Envoy 설정 자체를 "파드 있음 / 없음" 에 따라 바꾸는 것이다. 그러면 0 경계마다 xDS 갱신이 Envoy 전체에 퍼져야 하고 반영 지연이 생긴다. Knative 는 Envoy 는 그대로 두고 Revision 마다 쿠버네티스 Service 의 endpoints 만 바꾼다. 경계가 Revision 단위로 좁아지고, 바꾸는 주체도 SKS 하나로 모인다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/request-flow/">HTTP 요청 흐름</a> · <a href="https://knative.dev/docs/serving/autoscaling/scale-to-zero/">Configuring scale to zero</a> · <a href="https://github.com/knative/serving/blob/knative-v1.23.0/pkg/reconciler/autoscaling/kpa/scaler.go">kpa/scaler.go (handleScaleToZero)</a> · <a href="https://github.com/knative/serving/blob/knative-v1.23.0/pkg/reconciler/autoscaling/kpa/kpa.go">kpa/kpa.go (SKS 모드)</a></p></aside>
 
@@ -758,7 +875,7 @@ flowchart TD
 
 <div class="tier" data-tier="1">
   <h3>"파드 하나에 동시 요청 몇 개" 를 맞추는 온도 조절기</h3>
-  <p>KPA(Knative Pod Autoscaler, autoscaler 파드 안에서 Revision 마다 파드 수를 정하는 알고리즘)는 HPA 처럼 CPU 를 보지 않고 <strong>동시에 처리 중인 요청 수</strong>(concurrency, 동시성: 어느 순간에 아직 응답을 돌려주지 않은 요청의 개수. 요청이 길수록, 많이 겹칠수록 커진다)를 본다. 목표가 "파드 하나당 동시 요청 7개" 이고 지금 전체 동시 요청이 21개면 파드 3개가 필요하다. 이 나눗셈을 2초마다 한다. 다만 순간 숫자가 아니라 지난 60초 평균(stable window)을 쓰고, 갑자기 몰리면 지난 6초 평균(panic window)으로 빨리 반응한다. HPA 와 달리 0 까지 내려갈 수 있다는 점이 가장 큰 차이다.</p>
+  <p>KPA 는 autoscaler 파드 안에서 Revision 마다 파드 수를 정하는 알고리즘이다. HPA 처럼 CPU 를 보지 않고 <strong>동시에 처리 중인 요청 수</strong>, 즉 동시성(concurrency)을 본다. 목표가 "파드 하나당 동시 요청 7개" 이고 지금 전체 동시 요청이 21개면 파드 3개가 필요하다. 이 나눗셈을 2초마다 한다. 다만 순간 숫자가 아니라 지난 60초 평균(stable window)을 쓰고, 갑자기 몰리면 지난 6초 평균(panic window)으로 빨리 반응한다. HPA 와 달리 0 까지 내려갈 수 있다는 점이 가장 큰 차이다.</p>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 260" role="img" aria-labelledby="win-t">
@@ -791,7 +908,7 @@ flowchart TD
     <li>주석 <code>autoscaling.knative.dev/target</code> 이 있으면 total = 그 값. 단 containerConcurrency 가 0 이 아니면 둘 중 작은 값.</li>
     <li>실제 목표 = total × 사용률 (하한 0.01). 사용률은 <code>container-concurrency-target-percentage</code>(기본 70) 또는 주석 <code>autoscaling.knative.dev/target-utilization-percentage</code>. rps 지표일 때는 total 이 <code>requests-per-second-target-default</code>(기본 200)에서 시작하고 사용률은 같은 70% 다.</li>
   </ol>
-  <p>그래서 우리 04 ksvc(target 10, containerConcurrency 0)는 파드당 7, 05 템플릿(target 주석 없음, containerConcurrency 10)도 파드당 7 을 목표로 한다. 70% 는 "꽉 차기 전에 미리 늘려서 대기를 피하는" 여유다. target 은 <strong>부드러운 상한</strong>(soft limit, 평균을 맞출 뿐 넘을 수 있다), containerConcurrency 는 <strong>단단한 상한</strong>(hard limit, queue-proxy 가 넘는 요청을 줄 세운다)이다.</p>
+  <p>그래서 우리 04 ksvc(target 10, containerConcurrency 0)는 파드당 7, 05 템플릿(target 주석 없음, containerConcurrency 10)도 파드당 7 을 목표로 한다. 70% 는 "꽉 차기 전에 미리 늘려서 대기를 피하는" 여유다. target 은 <strong>부드러운 상한</strong>(soft limit)이라 평균을 맞출 뿐 넘을 수 있고, containerConcurrency 는 <strong>단단한 상한</strong>(hard limit)이라 queue-proxy 가 넘는 요청을 줄 세운다.</p>
   <h4>stable 모드와 panic 모드</h4>
   <figure>
   <pre class="mermaid">
@@ -868,7 +985,7 @@ flowchart TD
         <text x="716" y="224" class="d-subd">0 이상 → serve 모드</text>
       </svg>
     </div>
-    <figcaption><b>그림 5-18.</b> EBC 는 "총 용량에서 예상 폭주분(TBC)과 지금 처리 중인 양을 뺀 나머지" 다. 파란 막대가 노란 막대보다 짧으면 activator 가 경로에 남는다. 우리처럼 파드당 total 이 10 인 함수는 max-scale 5 로 다 떠도 총 용량이 50 이라 기본 TBC 211 을 넘지 못한다. 즉 우리 함수는 기본 설정에서 항상 activator 를 거친다(식에서 바로 나온다. 눈으로 보려면 <code>kubectl -n fn-runtime get sks</code> 의 MODE 열이 Proxy 다).</figcaption>
+    <figcaption><b>그림 5-18.</b> EBC 는 "총 용량에서 예상 폭주분(TBC)과 지금 처리 중인 양을 뺀 나머지" 다. 파란 막대가 노란 막대보다 짧으면 activator 가 경로에 남는다. 우리처럼 파드당 total 이 10 인 함수는 max-scale 5 로 다 떠도 총 용량이 50 이라 기본 TBC 211 을 넘지 못한다. 즉 우리 함수는 기본 설정에서 항상 activator 를 거친다. 식에서 바로 나오는 결과이고, 눈으로 보려면 <code>kubectl -n fn-runtime get sks</code> 의 MODE 열이 Proxy 인지 확인하면 된다.</figcaption>
   </figure>
 
   <h4>모든 손잡이 한 표</h4>
@@ -881,7 +998,7 @@ flowchart TD
   <tr><td><code>panic-window-percentage</code></td><td><code>panic-window-percentage</code></td><td>10.0</td><td>panic 창 = stable × 이 비율 (1 ~ 100%, 지표 버킷 1초 단위로 올림)</td></tr>
   <tr><td><code>panic-threshold-percentage</code></td><td><code>panic-threshold-percentage</code></td><td>200.0</td><td>panic 시작 기준</td></tr>
   <tr><td>(없음)</td><td><code>max-scale-up-rate</code> / <code>max-scale-down-rate</code></td><td>1000.0 / 2.0</td><td>2초당 늘이기·줄이기 배율 한도</td></tr>
-  <tr><td><code>target-burst-capacity</code></td><td><code>target-burst-capacity</code></td><td>211 (문서 페이지는 200 이라 적지만 설치 파일 <code>config-autoscaler</code> 의 기본값은 211)</td><td>activator 경로 유지 기준</td></tr>
+  <tr><td><code>target-burst-capacity</code></td><td><code>target-burst-capacity</code></td><td>211. 문서 페이지는 200 이라 적지만 설치 파일 <code>config-autoscaler</code> 의 기본값은 211</td><td>activator 경로 유지 기준</td></tr>
   <tr><td><code>min-scale</code> / <code>max-scale</code></td><td><code>min-scale</code> / <code>max-scale</code></td><td>0 / 0(무제한)</td><td>파드 수 하한·상한. 상한은 <code>max-scale-limit</code> 로 전역 제한 가능</td></tr>
   <tr><td><code>initial-scale</code></td><td><code>initial-scale</code>, <code>allow-zero-initial-scale</code></td><td>1, false</td><td>새 Revision 이 처음 띄울 파드 수</td></tr>
   <tr><td><code>activation-scale</code></td><td>(없음)</td><td>1</td><td>0 에서 깨어날 때 최소 몇 개로</td></tr>
@@ -891,12 +1008,18 @@ flowchart TD
   <tr><td>(없음)</td><td><code>enable-scale-to-zero</code></td><td>true</td><td>false 면 최소 1</td></tr>
   </tbody></table></div>
   <aside class="callout warn"><p class="callout-title">주의: 주석 이름의 옛 표기</p><p>옛 문서와 config 설명에는 <code>autoscaling.knative.dev/minScale</code>, <code>maxScale</code>, <code>initialScale</code> 처럼 낙타 표기가 남아 있다. 지금 공식 표기는 <code>min-scale</code>, <code>max-scale</code>, <code>initial-scale</code> 이고 우리 코드도 이 표기를 쓴다. v1.23 소스(<code>pkg/apis/autoscaling/register.go</code> 의 <code>kmap.KeyPriority</code>)는 둘 다 읽되 하이픈 표기를 우선한다. 단 <code>target</code>, <code>window</code>, <code>metric</code>, <code>class</code>, <code>activation-scale</code> 은 하이픈 표기 하나뿐이다.</p></aside>
-  <p>edge case 셋. (1) 새 Revision 은 <code>initial-scale</code> 1 로 파드 하나를 띄우고 Ready 를 확인한다. 그래서 0 인 함수라도 배포 직후 잠깐 파드가 보이고, stable window 뒤 다시 0 이 된다(04 README 6단계 "처음 만들 때 잠깐 뜨고"). (2) min-scale 은 Revision 이 트래픽을 받을 수 있을 때만 지켜진다. PodAutoscaler 의 <code>spec.reachability</code> 가 <code>Unreachable</code>(Revision 라벨 routingState 가 reserve, 즉 어떤 Route 도 가리키지 않음)이면 <code>ScaleBounds</code> 가 하한을 0 으로 본다(v1.23 <code>pa_lifecycle.go</code>). 그래서 트래픽 0% 인 예비 Revision 은 min-scale 이 있어도 0 으로 내려가고, 앞의 의사코드처럼 줄이기 한도도 없어 한 번에 0 이 된다. 그래서 05 MCP scale 은 traffic 이 고정돼 있으면 거절한다. (3) <code>window</code> 를 짧게 하면 0 으로 빨리 가지만 지표가 흔들려서 파드 수가 출렁인다. 측정 편의를 위한 값이지 운영값이 아니다.</p>
+  <p>edge case 셋. (1) 새 Revision 은 <code>initial-scale</code> 1 로 파드 하나를 띄우고 Ready 를 확인한다. 그래서 0 인 함수라도 배포 직후 잠깐 파드가 보이고, stable window 뒤 다시 0 이 된다(04 README 6단계 "처음 만들 때 잠깐 뜨고"). (2) min-scale 은 Revision 이 트래픽을 받을 수 있을 때만 지켜진다. PodAutoscaler 의 <code>spec.reachability</code> 가 <code>Unreachable</code> 이면, 즉 Revision 라벨 routingState 가 reserve 라서 어떤 Route 도 가리키지 않으면 <code>ScaleBounds</code> 가 하한을 0 으로 본다(v1.23 <code>pa_lifecycle.go</code>). 그래서 트래픽 0% 인 예비 Revision 은 min-scale 이 있어도 0 으로 내려가고, 앞의 의사코드처럼 줄이기 한도도 없어 한 번에 0 이 된다. 그래서 05 MCP scale 은 traffic 이 고정돼 있으면 거절한다. (3) <code>window</code> 를 짧게 하면 0 으로 빨리 가지만 지표가 흔들려서 파드 수가 출렁인다. 측정 편의를 위한 값이지 운영값이 아니다.</p>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>04 ksvc 는 <code>target: "10"</code>, <code>window: "6s"</code>, <code>max-scale: "5"</code>. 05 템플릿은 <code>containerConcurrency: 10</code>, <code>max-scale: "5"</code>, target 없음. 둘 다 파드당 실제 목표 7. 전역 config-autoscaler 는 건드리지 않았다(설치 기본값). 그래서 04 함수가 0 으로 가는 시간은 대략 window(6s) + grace(30s 상한) + 파드 종료이고, 05 함수는 window 기본 60s 라 더 오래 남는다.</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상 1</strong>: 부하를 줘도 파드가 5개에서 안 늘어난다 → max-scale. <strong>증상 2</strong>: 부하가 끝났는데 오래 안 줄어든다 → 60초 stable window, panic 중 줄이지 않음, scale-down-delay. <strong>증상 3</strong>: 05 함수 파드가 늘다가 멈추고 Pending → 테넌트 ResourceQuota(namespace 전체의 파드 수·CPU·메모리 한도, <a href="ch03-tenancy.html#quota">03장</a>. tenant-a 는 pods 10, limits.memory 2Gi). <strong>볼 곳</strong>: <code>kubectl get podautoscaler</code> 의 DESIREDSCALE/ACTUALSCALE, <code>kubectl -n knative-serving logs deploy/autoscaler | grep &lt;revision&gt;</code> (PANICKING 줄).</p></aside>
-<aside class="callout why"><p class="callout-title">왜 KPA (대안)</p><p>HPA 클래스는 CPU·메모리로 늘리는 익숙한 방식이지만 0 까지 못 내리고, 지표 반영이 metrics-server(파드의 CPU·메모리 사용량을 모아 주는 쿠버네티스 부가 부품) 주기에 묶여 느리다. 함수는 "요청이 몇 개 걸려 있나" 가 부하를 가장 직접 보여 주는 숫자라 concurrency 기반 KPA 가 맞다. 대가는 지표가 queue-proxy 에서만 나온다는 점(사이드카 필수)이다.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상 1</strong>: 부하를 줘도 파드가 5개에서 안 늘어난다 → max-scale. <strong>증상 2</strong>: 부하가 끝났는데 오래 안 줄어든다 → 60초 stable window, panic 중 줄이지 않음, scale-down-delay. <strong>증상 3</strong>: 05 함수 파드가 늘다가 멈추고 Pending → 테넌트 <span class="t">ResourceQuota</span>. <strong>볼 곳</strong>: <code>kubectl get podautoscaler</code> 의 DESIREDSCALE/ACTUALSCALE, <code>kubectl -n knative-serving logs deploy/autoscaler | grep &lt;revision&gt;</code> (PANICKING 줄).</p>
+<aside class="notes"><dl>
+<div><dt>ResourceQuota</dt><dd>namespace 전체의 파드 수·CPU·메모리 한도. tenant-a 는 pods 10, limits.memory 2Gi. <a href="ch03-tenancy.html#quota">03장</a>.</dd></div>
+</dl></aside></aside>
+<aside class="callout why"><p class="callout-title">왜 KPA (대안)</p><p>HPA 클래스는 CPU·메모리로 늘리는 익숙한 방식이지만 0 까지 못 내리고, 지표 반영이 <span class="t">metrics-server</span> 주기에 묶여 느리다. 함수는 "요청이 몇 개 걸려 있나" 가 부하를 가장 직접 보여 주는 숫자라 concurrency 기반 KPA 가 맞다. 대가는 지표가 queue-proxy 에서만 나온다는 점(사이드카 필수)이다.</p>
+<aside class="notes"><dl>
+<div><dt>metrics-server</dt><dd>파드의 CPU·메모리 사용량을 모아 주는 쿠버네티스 부가 부품. HPA 와 <code>kubectl top</code> 이 쓴다.</dd></div>
+</dl></aside></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/autoscaling/">Autoscaling 개요</a> · <a href="https://knative.dev/docs/serving/autoscaling/kpa-specific/">KPA 전용 설정 (window, panic)</a> · <a href="https://knative.dev/docs/serving/autoscaling/autoscaling-metrics/">Metrics</a> · <a href="https://knative.dev/docs/serving/autoscaling/autoscaling-targets/">Targets</a> · <a href="https://knative.dev/docs/serving/autoscaling/scale-bounds/">Scale bounds</a> · <a href="https://knative.dev/docs/serving/load-balancing/target-burst-capacity/">Target burst capacity</a> · <a href="https://github.com/knative/serving/blob/knative-v1.23.0/config/core/configmaps/autoscaler.yaml">config-autoscaler 원본(기본값과 설명)</a> · <a href="https://github.com/knative/serving/blob/knative-v1.23.0/pkg/autoscaler/scaling/autoscaler.go">autoscaler.go</a></p></aside>
 
 
@@ -948,16 +1071,21 @@ flowchart TD
         <path d="M610 230 L660 230" class="d-e-user" marker-end="url(#qp-m-user)"/>
       </svg>
     </div>
-    <figcaption><b>그림 5-19.</b> 파드 해부도. 요청(파랑)은 queue-proxy :8012 로 들어와 localhost:8080 의 함수로 간다. autoscaler 는 :9090 에서 지표를 긁어 간다(청록). kubelet(노드마다 하나 있는 쿠버네티스 에이전트. 파드를 실제로 띄우고 프로브를 보낸다)의 준비 확인(회색)도 queue-proxy 가 받아, 함수에 대신 물어본다. h2c 는 TLS 없이 쓰는 HTTP/2, :8022 의 drain 은 "새 요청을 끊고 처리 중인 것을 비우기" 다. 포트 번호는 Knative 소스의 상수(<code>pkg/networking/constants.go</code>)다.</figcaption>
+    <figcaption><b>그림 5-19.</b> 파드 해부도. 요청(파랑)은 queue-proxy :8012 로 들어와 localhost:8080 의 함수로 간다. autoscaler 는 :9090 에서 지표를 긁어 간다(청록). <span class="t">kubelet</span> 의 준비 확인(회색)도 queue-proxy 가 받아, 함수에 대신 물어본다. 그림의 <span class="t">h2c</span> 는 프로토콜 이름이고, :8022 의 <span class="t">drain</span> 은 파드가 꺼질 때 쓰는 끝점이다. 포트 번호는 Knative 소스의 상수(<code>pkg/networking/constants.go</code>)다.</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>kubelet</dt><dd>노드마다 하나 있는 쿠버네티스 에이전트. 파드를 실제로 띄우고 프로브를 보낸다.</dd></div>
+  <div><dt>h2c</dt><dd>TLS 없이 쓰는 HTTP/2.</dd></div>
+  <div><dt>drain</dt><dd>"새 요청을 끊고 처리 중인 것을 비우기". 그림 5-20 의 우아한 종료에서 쓴다.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="2">
   <h3>네 가지 역할</h3>
   <dl class="terms">
-    <dt>동시성 상한 (breaker, 회로 차단기처럼 동시에 통과하는 요청 수를 막는 부품)</dt><dd><code>containerConcurrency</code> 가 0 이 아니면 그 수만큼만 user-container 로 동시에 보낸다. 넘치는 요청은 queue-proxy 안에서 줄을 선다(이름이 queue-proxy 인 이유). 줄 길이에도 상한이 있다: containerConcurrency 의 10배. 그것마저 넘치면 503 "pending request queue full" 을 돌려준다. 0 이면 상한 없이 다 통과시킨다. activator 도 같은 값을 알고 있어서, proxy 모드에서는 파드마다 같은 상한의 breaker 를 두고 분배 방식도 값에 따라 바꾼다: 0(상한 없음)이면 파드 둘을 무작위로 골라 덜 바쁜 쪽(power of two choices), 3 이하면 첫 번째로 빈 파드, 4 이상이면 round-robin 이다(v1.23 <code>activator/net/throttler.go</code>). 그래서 04 함수(0)와 05 함수(10)는 activator 안에서 다르게 분배된다.</dd>
-    <dt>지표</dt><dd>처리 중 요청 수(동시성)와 요청 수를 집계해 :9090 에 내놓는다. autoscaler 가 이것을 긁어 stable/panic 평균을 만든다. 사용자용 Prometheus(지표를 주기적으로 긁어 저장하는 시계열 DB, <a href="ch02-rollouts.html#prometheus">02장</a>) 지표는 :9091.</dd>
-    <dt>준비 확인 (readiness)</dt><dd>kubelet 의 readinessProbe(쿠버네티스가 "요청 받을 준비가 됐나" 를 주기적으로 묻는 검사. 실패하면 그 파드는 Service 의 endpoints 에서 빠진다)는 queue-proxy 를 향한다(:8012 에 헤더 <code>K-Network-Probe: queue</code>). queue-proxy 는 user-container 의 TCP 포트(ksvc 에 readinessProbe 를 안 적었을 때의 기본값. 적었으면 그 프로브)를 대신 확인하고, 통과하면 준비됐다고 답한다. 프로브에 <code>periodSeconds</code> 를 안 적으면(0) queue-proxy 가 50ms 간격·100ms 타임아웃으로 촘촘히 확인한다(aggressive probing, <code>pkg/queue/readiness</code>). kubelet 의 최소 주기(1초)보다 촘촘해서 콜드 스타트를 줄이는 장치다. livenessProbe 와 startupProbe 는 kubelet 이 user-container 에 직접 보낸다.</dd>
+    <dt>동시성 상한 (breaker)</dt><dd>breaker 는 회로 차단기처럼 동시에 통과하는 요청 수를 막는 부품이다. <code>containerConcurrency</code> 가 0 이 아니면 그 수만큼만 user-container 로 동시에 보낸다. 넘치는 요청은 queue-proxy 안에서 줄을 선다(이름이 queue-proxy 인 이유). 줄 길이에도 상한이 있다: containerConcurrency 의 10배. 그것마저 넘치면 503 "pending request queue full" 을 돌려준다. 0 이면 상한 없이 다 통과시킨다. activator 도 같은 값을 알고 있어서, proxy 모드에서는 파드마다 같은 상한의 breaker 를 두고 분배 방식도 값에 따라 바꾼다: 0(상한 없음)이면 파드 둘을 무작위로 골라 덜 바쁜 쪽(power of two choices), 3 이하면 첫 번째로 빈 파드, 4 이상이면 round-robin 이다(v1.23 <code>activator/net/throttler.go</code>). 그래서 04 함수(0)와 05 함수(10)는 activator 안에서 다르게 분배된다.</dd>
+    <dt>지표</dt><dd>처리 중 요청 수(동시성)와 요청 수를 집계해 :9090 에 내놓는다. autoscaler 가 이것을 긁어 stable/panic 평균을 만든다. 사용자용 Prometheus 지표(<a href="ch02-rollouts.html#prometheus">02장</a>)는 :9091.</dd>
+    <dt>준비 확인 (readiness)</dt><dd>kubelet 의 readinessProbe 는 queue-proxy 를 향한다(:8012 에 헤더 <code>K-Network-Probe: queue</code>). 실패하면 그 파드는 Service 의 endpoints 에서 빠진다. ksvc 에 readinessProbe 를 안 적었으면 queue-proxy 가 user-container 의 TCP 포트를 대신 확인하고, 적었으면 그 프로브를 대신 보내서, 통과하면 준비됐다고 답한다. 프로브에 <code>periodSeconds</code> 를 안 적으면(0) queue-proxy 가 50ms 간격·100ms 타임아웃으로 촘촘히 확인한다(aggressive probing, <code>pkg/queue/readiness</code>). kubelet 의 최소 주기(1초)보다 촘촘해서 콜드 스타트를 줄이는 장치다. livenessProbe 와 startupProbe 는 kubelet 이 user-container 에 직접 보낸다.</dd>
     <dt>타임아웃과 우아한 종료</dt><dd><code>timeoutSeconds</code>(요청 하나의 전체 시간 한도)를 넘는 요청을 504 로 끊는다. 비슷한 한도가 둘 더 있다: <code>responseStartTimeoutSeconds</code>(첫 응답 바이트까지)와 <code>idleTimeoutSeconds</code>(데이터가 안 흐르는 시간). 파드가 종료될 때는 프로브에 실패를 답해 endpoints 에서 빠지고, 처리 중인 요청이 끝날 때까지 기다린 뒤 끝난다.</dd>
   </dl>
   <figure>
@@ -979,8 +1107,12 @@ sequenceDiagram
   K->>U: SIGTERM
   K->>Q: SIGTERM
   </pre>
-  <figcaption><b>그림 5-20.</b> 우아한 종료(graceful drain). preStop 훅은 "컨테이너를 끄기 직전에 kubelet 이 실행해 주는 HTTP 호출", SIGTERM 은 "종료하라" 는 신호다. v1.23 의 순서: kubelet 이 queue-proxy 에 SIGTERM 을 보내면 queue-proxy 는 프로브에 503 을 답하기 시작하고(endpoints 에서 빠짐) 30초(<code>drainSleepDuration</code>)의 조용한 구간이 지날 때까지 기다린 뒤 서버를 닫는다. user-container 는 preStop 훅(<code>:8022/wait-for-drain</code>)이 그 drain 이 끝날 때까지 돌아오지 않으므로 먼저 죽지 않는다. 전체 유예 시간 <code>terminationGracePeriodSeconds</code> 는 Knative 가 <code>timeoutSeconds</code> 와 같은 값으로 둔다(<code>deploy.go</code>). 05 템플릿은 30 이라 drain 30초와 같아 빠듯하고, 04 는 기본 300 이다.</figcaption>
+  <figcaption><b>그림 5-20.</b> 우아한 종료(graceful drain). v1.23 의 순서: kubelet 이 queue-proxy 에 <span class="t">SIGTERM</span> 을 보내면 queue-proxy 는 프로브에 503 을 답하기 시작하고(endpoints 에서 빠짐) 30초(<code>drainSleepDuration</code>)의 조용한 구간이 지날 때까지 기다린 뒤 서버를 닫는다. user-container 는 <span class="t">preStop 훅</span>(<code>:8022/wait-for-drain</code>)이 그 drain 이 끝날 때까지 돌아오지 않으므로 먼저 죽지 않는다. 전체 유예 시간 <code>terminationGracePeriodSeconds</code> 는 Knative 가 <code>timeoutSeconds</code> 와 같은 값으로 둔다(<code>deploy.go</code>). 05 템플릿은 30 이라 drain 30초와 같아 빠듯하고, 04 는 기본 300 이다.</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>SIGTERM</dt><dd>"종료하라" 는 운영체제 신호. 프로세스가 받아서 정리할 틈을 준 뒤 꺼지게 한다.</dd></div>
+  <div><dt>preStop 훅</dt><dd>컨테이너를 끄기 직전에 kubelet 이 실행해 주는 HTTP 호출이나 명령. 이것이 끝나야 그 컨테이너에 SIGTERM 이 간다.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="3">
@@ -994,13 +1126,19 @@ sequenceDiagram
   localhost:PORT 로 전달, 응답을 그대로 돌려줌
   inFlight -= 1</code></pre>
   <ul>
-    <li><strong>자원</strong>: queue-proxy 의 requests.cpu 는 config-deployment 의 <code>queue-sidecar-cpu-request</code>(기본 25m)이고, 메모리 request 와 CPU·메모리 limit 은 기본으로 붙지 않는다. 붙이려면 config-deployment 에 <code>queue-sidecar-memory-request</code> 같은 키를 적거나, config-features 의 <code>queueproxy.resource-defaults</code> 를 enabled 로 해 소스 기본값(cpu limit 1000m, memory 400Mi/800Mi)을 쓰게 한다. Revision 주석 <code>queue.sidecar.serving.knative.dev/cpu-resource-request</code> 처럼 함수별로도 정할 수 있다. 우리 테넌트 namespace 에는 LimitRange(컨테이너 하나의 기본 requests·limits 와 상한을 정하는 리소스. 비어 있는 칸만 채운다, <a href="ch03-tenancy.html#limitrange">03장</a>)가 있어서, queue-proxy 는 limits cpu 200m / memory 128Mi, requests memory 64Mi 가 붙고 requests cpu 는 25m 그대로다(03 차트 <code>limitRange.default</code>, <code>defaultRequest</code>). 확인: <code>kubectl -n tenant-a get pod -l serving.knative.dev/service=hello -o jsonpath='{.items[0].spec.containers[*].resources}'</code>. 05 README 의 max-scale 계산(결정 2)에서 "queue-proxy 도 메모리를 쓴다" 가 이 이야기다: 파드 하나의 limits.memory 는 128Mi + 128Mi 가 된다.</li>
+    <li><strong>자원</strong>: queue-proxy 의 requests.cpu 는 config-deployment 의 <code>queue-sidecar-cpu-request</code>(기본 25m)이고, 메모리 request 와 CPU·메모리 limit 은 기본으로 붙지 않는다. 붙이려면 config-deployment 에 <code>queue-sidecar-memory-request</code> 같은 키를 적거나, config-features 의 <code>queueproxy.resource-defaults</code> 를 enabled 로 해 소스 기본값(cpu limit 1000m, memory 400Mi/800Mi)을 쓰게 한다. Revision 주석 <code>queue.sidecar.serving.knative.dev/cpu-resource-request</code> 처럼 함수별로도 정할 수 있다. 우리 테넌트 namespace 에는 <span class="t">LimitRange</span> 가 있어서, queue-proxy 는 limits cpu 200m / memory 128Mi, requests memory 64Mi 가 붙고 requests cpu 는 25m 그대로다(03 차트 <code>limitRange.default</code>, <code>defaultRequest</code>). 확인: <code>kubectl -n tenant-a get pod -l serving.knative.dev/service=hello -o jsonpath='{.items[0].spec.containers[*].resources}'</code>. 05 README 의 max-scale 계산(결정 2)에서 "queue-proxy 도 메모리를 쓴다" 가 이 이야기다: 파드 하나의 limits.memory 는 128Mi + 128Mi 가 된다.</li>
     <li><strong>containerConcurrency 와 target</strong>: containerConcurrency 는 파드 하나의 실제 상한(hard), target 은 오토스케일러가 맞추려는 평균(soft)이다. 둘 다 주면 target 은 둘 중 작은 값이 되고, 거기에 70% 가 곱해진다. containerConcurrency 1 은 Lambda 와 같은 "인스턴스당 요청 하나" 모델이 된다.</li>
     <li><strong>containerConcurrency 의 한도</strong>: config-defaults 의 <code>container-concurrency</code>(기본 0)와 <code>container-concurrency-max-limit</code>(기본 1000). timeoutSeconds 는 <code>revision-timeout-seconds</code>(기본 300)이 기본, <code>max-revision-timeout-seconds</code>(기본 600)이 상한이다. 나머지 두 타임아웃의 기본은 <code>revision-response-start-timeout-seconds</code>(300)와 <code>revision-idle-timeout-seconds</code>(0 = 없음)다.</li>
   </ul>
+  <aside class="notes"><dl>
+  <div><dt>LimitRange</dt><dd>컨테이너 하나의 기본 requests·limits 와 상한을 정하는 리소스. 비어 있는 칸만 채운다. <a href="ch03-tenancy.html#limitrange">03장</a>.</dd></div>
+  </dl></aside>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>04 함수는 containerConcurrency 를 안 적었다(기본 0 = 상한 없음). 05 템플릿은 <code>containerConcurrency: 10</code>. 04 README 8단계 측정에서 <code>cpu 10ms</code> 를 동시 4개로 보내면 느려진 원인은 queue-proxy 가 아니라 user-container 의 CPU limit 500m(CFS quota: limit 을 넘으면 커널이 그 컨테이너를 잠시 멈춰 세우는 조절, throttling)이었다. queue-proxy 의 줄 서기와 CPU throttling 은 둘 다 "지연이 늘어남" 으로 보이니, <code>kubectl top pod --containers</code> 로 어느 컨테이너인지 먼저 가른다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>04 함수는 containerConcurrency 를 안 적었다(기본 0 = 상한 없음). 05 템플릿은 <code>containerConcurrency: 10</code>. 04 README 8단계 측정에서 <code>cpu 10ms</code> 를 동시 4개로 보내면 느려진 원인은 queue-proxy 가 아니라 user-container 의 CPU limit 500m 에 걸린 <span class="t">throttling</span> 이었다. queue-proxy 의 줄 서기와 CPU throttling 은 둘 다 "지연이 늘어남" 으로 보이니, <code>kubectl top pod --containers</code> 로 어느 컨테이너인지 먼저 가른다.</p>
+<aside class="notes"><dl>
+<div><dt>throttling(CFS quota)</dt><dd>컨테이너가 CPU limit 을 넘으면 커널이 그 컨테이너를 잠시 멈춰 세우는 조절. 밖에서는 지연이 늘어난 것으로 보인다.</dd></div>
+</dl></aside></aside>
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: 파드가 <code>1/2</code> 에서 멈춘다. <strong>볼 곳</strong>: <code>kubectl describe pod</code> 의 queue-proxy Readiness probe failed, <code>kubectl logs &lt;pod&gt; -c user-container</code>. <strong>원인</strong>: 함수가 <code>PORT</code>(8080) 가 아닌 포트를 듣거나, 시작이 progress-deadline 안에 안 끝남. <code>main.go</code> 가 <code>os.Getenv("PORT")</code> 를 읽는 이유다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/autoscaling/concurrency/">Concurrency (soft/hard limit)</a> · <a href="https://knative.dev/docs/serving/services/configure-probing/">Probing 설정</a> · <a href="https://knative.dev/docs/serving/configuration/deployment/">config-deployment (queue-proxy 자원)</a> · <a href="https://github.com/knative/serving/tree/knative-v1.23.0/pkg/queue">pkg/queue 소스</a></p></aside>
 
@@ -1010,7 +1148,10 @@ sequenceDiagram
 
 <div class="tier" data-tier="1">
   <h3>Knative 는 입구를 갈아 끼울 수 있게 만들었다</h3>
-  <p>Route 는 "이 주소는 이 Revision 들로 이 비율" 이라는 뜻만 담고, 실제 프록시 설정은 모른다. Route controller 는 그 뜻을 <strong>KIngress</strong>(Knative 내부 Ingress 객체)로 적고, 설치된 네트워크 층(net-istio, net-kourier, net-contour, net-gateway-api)이 KIngress 를 자기 프록시 설정으로 번역한다. 어느 층이 맡을지는 config-network 의 <code>ingress-class</code> 가 정한다. 우리는 <strong>Kourier</strong> 다: Envoy 프록시 하나 + Envoy 에 설정을 밀어 주는 xDS 컨트롤 플레인(net-kourier-controller) 조합. 서비스 메시(service mesh, 모든 파드에 프록시를 붙여 파드 사이 통신을 암호화·관측·제어하는 층. Istio 가 대표) 없이 Knative 에 필요한 것만 한다.</p>
+  <p>Route 는 "이 주소는 이 Revision 들로 이 비율" 이라는 뜻만 담고, 실제 프록시 설정은 모른다. Route controller 는 그 뜻을 <strong>KIngress</strong> 로 적고, 설치된 네트워크 층(net-istio, net-kourier, net-contour, net-gateway-api)이 KIngress 를 자기 프록시 설정으로 번역한다. 어느 층이 맡을지는 config-network 의 <code>ingress-class</code> 가 정한다. 우리는 <strong>Kourier</strong> 다: Envoy 프록시 하나 + Envoy 에 설정을 밀어 주는 xDS 컨트롤 플레인(net-kourier-controller) 조합. <span class="t">서비스 메시</span> 없이 Knative 에 필요한 것만 한다.</p>
+  <aside class="notes"><dl>
+  <div><dt>서비스 메시(service mesh)</dt><dd>모든 파드에 프록시를 붙여 파드 사이 통신을 암호화·관측·제어하는 층. Istio 가 대표.</dd></div>
+  </dl></aside>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 280" role="img" aria-labelledby="ki-t">
@@ -1043,7 +1184,7 @@ sequenceDiagram
         <text x="20" y="224" class="d-sub">바로 Revision 쪽으로 간다.</text>
       </svg>
     </div>
-    <figcaption><b>그림 5-21.</b> 설정 흐름. Route controller 가 KIngress 를 만들고, net-kourier-controller 가 그것을 Envoy 의 리스너(받는 포트)·가상 호스트(Host 이름별 규칙)·클러스터(보낼 곳의 주소 목록)로 번역해 xDS(Envoy 의 동적 설정 API)로 밀어 준다(보라 점선). Envoy 는 재시작 없이 새 함수 주소를 받는다.</figcaption>
+    <figcaption><b>그림 5-21.</b> 설정 흐름. Route controller 가 KIngress 를 만들고, net-kourier-controller 가 그것을 Envoy 의 리스너(받는 포트)·가상 호스트(Host 이름별 규칙)·클러스터(보낼 곳의 주소 목록)로 번역해 xDS 로 밀어 준다(보라 점선). Envoy 는 재시작 없이 새 함수 주소를 받는다.</figcaption>
   </figure>
 </div>
 
@@ -1089,8 +1230,12 @@ sequenceDiagram
         <text x="20" y="196" class="d-sub">1·2: cluster/kind-config.yaml extraPortMappings · 3·4: setup.sh 3/5 의 patch service kourier</text>
       </svg>
     </div>
-    <figcaption><b>그림 5-22.</b> 포트 사슬. kind 에는 LoadBalancer(클라우드가 외부 IP 를 붙여 주는 Service 종류)가 없어서 Kourier Service 를 NodePort 31080 으로 바꾸고, kind 의 extraPortMappings 로 맥 8081 을 control-plane 노드 컨테이너의 31080 에 잇는다. 8080 은 Argo CD port-forward(kubectl 이 맥의 포트를 클러스터 안 Service 로 터널링하는 기능)가 쓰고 있어서 8081 이다.</figcaption>
+    <figcaption><b>그림 5-22.</b> 포트 사슬. kind 에는 <span class="t">LoadBalancer</span> 가 없어서 Kourier Service 를 NodePort 31080 으로 바꾸고, kind 의 extraPortMappings 로 맥 8081 을 control-plane 노드 컨테이너의 31080 에 잇는다. 8080 은 Argo CD <span class="t">port-forward</span> 가 쓰고 있어서 8081 이다.</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>LoadBalancer</dt><dd>클라우드가 외부 IP 를 붙여 주는 Service 종류. kind 같은 로컬 클러스터에는 없다.</dd></div>
+  <div><dt>port-forward</dt><dd>kubectl 이 맥의 포트를 클러스터 안 Service 나 파드로 터널링하는 기능.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="3">
@@ -1110,10 +1255,13 @@ kubectl -n knative-serving patch configmap config-domain --type merge -p "{\"dat
   <ul>
     <li><code>rollout status deploy</code> 두 번: Kourier 는 두 namespace 에 나뉘어 뜬다. 게이트웨이 Envoy(<code>3scale-kourier-gateway</code>)는 kourier-system, 번역기(<code>net-kourier-controller</code>)는 knative-serving.</li>
     <li><code>ingress-class</code>: KIngress 의 담당자를 고르는 키. 비우면 기본값(Istio)이라 아무도 KIngress 를 처리하지 않고 Route 가 Ready 가 안 된다.</li>
-    <li><code>patch service kourier</code>: 포트 이름 <code>http2</code>, port 80, targetPort 8080(Envoy 리스너), nodePort 31080. <code>--type merge</code> 는 JSON merge patch(적은 칸만 덮어쓰는 수정 방식. 단 목록은 부분 병합이 아니라 통째로 교체)라 ports 목록이 이 한 줄로 바뀐다. 원본 <code>kourier.yaml</code>(net-kourier v1.23.0 <code>config/300-gateway.yaml</code>)의 Service 는 <code>http2 80→8080</code> 과 <code>https 443→8443</code> 두 포트였으므로 패치 뒤에는 https 포트가 사라진다. 우리는 http 만 쓰니 괜찮지만, 본선에서 TLS 를 켜려면 이 patch 에 https 포트(nodePort 하나 더)를 같이 적어야 한다.</li>
+    <li><code>patch service kourier</code>: 포트 이름 <code>http2</code>, port 80, targetPort 8080(Envoy 리스너), nodePort 31080. <code>--type merge</code> 는 <span class="t">JSON merge patch</span> 라 ports 목록이 이 한 줄로 바뀐다. 원본 <code>kourier.yaml</code>(net-kourier v1.23.0 <code>config/300-gateway.yaml</code>)의 Service 는 <code>http2 80→8080</code> 과 <code>https 443→8443</code> 두 포트였으므로 패치 뒤에는 https 포트가 사라진다. 우리는 http 만 쓰니 괜찮지만, 본선에서 TLS 를 켜려면 이 patch 에 https 포트(nodePort 하나 더)를 같이 적어야 한다.</li>
     <li><code>config-domain</code>: 키가 도메인, 값이 라벨 셀렉터. 값이 빈 문자열이면 "모든 Service 의 기본 도메인". 키를 여러 개 두면 라벨로 도메인을 다르게 줄 수 있다. 라벨 <code>networking.knative.dev/visibility: cluster-local</code> 을 단 ksvc 는 외부 도메인 없이 <code>svc.cluster.local</code> 로만 열린다.</li>
-    <li>클러스터 안 호출은 <code>kourier-internal</code> Service(kourier-system, Envoy 의 :8081 리스너)를 거친다. Route 가 만드는 쿠버네티스 Service <code>hello</code> 는 type <code>ExternalName</code>(파드를 고르지 않고 "다른 이름으로 가라" 고 안내만 하는 Service)으로 <code>kourier-internal.kourier-system.svc.cluster.local</code> 을 가리키므로, 클러스터 안의 파드는 <code>http://hello.tenant-a.svc.cluster.local</code> 로 부르면 된다. 외부 입구(<code>kourier</code>, :8080)와 내부 입구가 따로다.</li>
+    <li>클러스터 안 호출은 <code>kourier-internal</code> Service(kourier-system, Envoy 의 :8081 리스너)를 거친다. Route 가 만드는 쿠버네티스 Service <code>hello</code> 는 type <code>ExternalName</code> 으로 <code>kourier-internal.kourier-system.svc.cluster.local</code> 을 가리키므로, 클러스터 안의 파드는 <code>http://hello.tenant-a.svc.cluster.local</code> 로 부르면 된다. 외부 입구(<code>kourier</code>, :8080)와 내부 입구가 따로다.</li>
   </ul>
+  <aside class="notes"><dl>
+  <div><dt>JSON merge patch</dt><dd>적은 칸만 덮어쓰는 수정 방식. 단 목록은 부분 병합이 아니라 통째로 교체된다.</dd></div>
+  </dl></aside>
   <figure>
   <pre class="mermaid">
 flowchart LR
@@ -1125,12 +1273,16 @@ flowchart LR
   </pre>
   <figcaption><b>그림 5-23.</b> 바깥 입구와 안쪽 입구. 안쪽 호출의 전체 이름은 <code>hello.tenant-a.svc.cluster.local</code> 이고, ExternalName 이 그것을 <code>kourier-internal.kourier-system.svc.cluster.local</code> 로 바꿔 준다. 둘 다 같은 Envoy 파드의 다른 리스너이고, 그 뒤는 같은 Revision 공개 Service 로 합쳐진다. 05 컨트롤 플레인이나 다른 테넌트 함수가 함수를 부를 때는 안쪽 입구를 쓴다.</figcaption>
   </figure>
-  <p>도메인을 함수 하나에만 따로 주고 싶으면 <code>DomainMapping</code>(<code>serving.knative.dev/v1beta1</code>) 객체를 쓴다. "<code>api.example.org</code> → ksvc hello" 처럼 한 도메인을 한 Service 에 매핑하고, 그 도메인을 이 namespace 가 써도 된다는 <code>ClusterDomainClaim</code> 이 먼저 있어야 한다(config-network 의 <code>autocreate-cluster-domain-claims: "true"</code> 면 자동 생성되지만, 그러면 누구나 아무 도메인이나 매핑할 수 있어 멀티테넌트에서는 끄는 편이 맞다). 우리 PoC 는 쓰지 않는다. 본선에서 "테넌트마다 자기 도메인" 을 묻는다면, 테넌트 namespace 에 DomainMapping 을 허용하되 ClusterDomainClaim 은 플랫폼이 만들어 주는 구조가 답이다.</p>
+  <p>도메인을 함수 하나에만 따로 주고 싶으면 <code>DomainMapping</code>(<code>serving.knative.dev/v1beta1</code>) 객체를 쓴다. "<code>api.example.org</code> → ksvc hello" 처럼 한 도메인을 한 Service 에 매핑하고, 그 도메인을 이 namespace 가 써도 된다는 <code>ClusterDomainClaim</code> 이 먼저 있어야 한다. config-network 의 <code>autocreate-cluster-domain-claims: "true"</code> 면 자동으로 만들어지지만, 그러면 누구나 아무 도메인이나 매핑할 수 있어 멀티테넌트에서는 끄는 편이 맞다. 우리 PoC 는 쓰지 않는다. 본선에서 "테넌트마다 자기 도메인" 을 묻는다면, 테넌트 namespace 에 DomainMapping 을 허용하되 ClusterDomainClaim 은 플랫폼이 만들어 주는 구조가 답이다.</p>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>입구가 하나(Envoy)이고 모든 테넌트 함수가 같은 입구를 쓴다. 그래서 테넌트 격리는 입구에서가 아니라 함수 파드 쪽 NetworkPolicy(파드 사이 통신을 라벨로 허용하는 규칙. 하나라도 걸린 파드는 허용 목록 밖의 연결을 버린다, <a href="ch04-network.html#netpol">04장</a>)에서 한다. tenant-a 의 NetworkPolicy 가 <code>kourier-system</code> 과 <code>knative-serving</code> 을 허용해야 하는 이유가 그림 5-11 의 두 경로다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>입구가 하나(Envoy)이고 모든 테넌트 함수가 같은 입구를 쓴다. 그래서 테넌트 격리는 입구에서가 아니라 함수 파드 쪽 NetworkPolicy(<a href="ch04-network.html#netpol">04장</a>)에서 한다. tenant-a 의 NetworkPolicy 가 <code>kourier-system</code> 과 <code>knative-serving</code> 을 허용해야 하는 이유가 그림 5-11 의 두 경로다.</p></aside>
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: <code>curl localhost:8081</code> 이 연결 거부 → 사슬 1~3 (kind-config 포트, NodePort patch). <strong>증상</strong>: 404 와 빈 응답 → Host 헤더 오타, 또는 Route 가 Ready 아님. <strong>볼 곳</strong>: <code>kubectl get ksvc</code> 의 URL 열, <code>kubectl get king -A</code>(KIngress 축약어), <code>kubectl -n kourier-system get svc kourier</code>. <strong>고치는 법</strong>: Host 를 ksvc URL 그대로 복사한다.</p></aside>
-<aside class="callout why"><p class="callout-title">왜 Kourier (대안)</p><p>Istio 는 mTLS(양쪽이 인증서로 서로를 확인하는 TLS), 정교한 트래픽 정책, 관측을 주지만 istiod 와 Envoy 사이드카(net-istio 기본 구성 기준)로 메모리를 많이 쓴다. 우리 system 풀은 노드 하나에 Argo CD·Prometheus·자바 컨트롤 플레인까지 몰려 있다. Knative 가 입구에 바라는 것(Host 라우팅, 비율 분할, 태그, 타임아웃)은 Kourier 로 충분하다. 네트워크 정책은 Cilium(04장)이 따로 한다. Contour·Gateway API 는 선택지지만 Knative 빠른 시작이 Kourier 를 기본으로 안내한다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 Kourier (대안)</p><p>Istio 는 <span class="t">mTLS</span>, 정교한 트래픽 정책, 관측을 주지만 istiod 와 Envoy 사이드카(net-istio 기본 구성 기준)로 메모리를 많이 쓴다. 우리 system 풀은 노드 하나에 Argo CD·Prometheus·자바 컨트롤 플레인까지 몰려 있다. Knative 가 입구에 바라는 것(Host 라우팅, 비율 분할, 태그, 타임아웃)은 Kourier 로 충분하다. 네트워크 정책은 <span class="t">Cilium</span>(<a href="ch04-network.html">04장</a>)이 따로 한다. Contour·Gateway API 는 선택지지만 Knative 빠른 시작이 Kourier 를 기본으로 안내한다.</p>
+<aside class="notes"><dl>
+<div><dt>mTLS</dt><dd>양쪽이 인증서로 서로를 확인하는 TLS.</dd></div>
+<div><dt>Cilium</dt><dd>우리 클러스터의 파드 네트워크를 맡는 CNI 플러그인. NetworkPolicy 도 이것이 집행한다.</dd></div>
+</dl></aside></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/install/yaml-install/serving/install-serving-with-yaml/">YAML 설치 (네트워크 층 고르기)</a> · <a href="https://knative.dev/docs/serving/using-a-custom-domain/">config-domain</a> · <a href="https://knative.dev/docs/serving/services/private-services/">cluster-local 서비스</a> · <a href="https://knative.dev/docs/serving/services/custom-domains/">DomainMapping</a> · <a href="https://github.com/knative-extensions/net-kourier">net-kourier</a> · <a href="https://kind.sigs.k8s.io/docs/user/configuration/#extra-port-mappings">kind extraPortMappings</a></p></aside>
 
 <!-- ============================================================ -->
@@ -1139,7 +1291,7 @@ flowchart LR
 
 <div class="tier" data-tier="1">
   <h3>Knative 의 손잡이는 knative-serving 의 ConfigMap 에 있다</h3>
-  <p>Knative 는 설정을 자기 CRD 가 아니라 <code>knative-serving</code> namespace 의 ConfigMap(설정값을 key-value 로 담는 쿠버네티스 기본 객체) 여러 장에 둔다. controller·webhook·autoscaler 가 이 ConfigMap 들을 지켜보고 있다가 바뀌면 재시작 없이 다시 읽는다. 우리 PoC 가 바꾼 것은 넷: config-network(입구), config-domain(도메인), config-deployment(태그 해석 건너뛰기), config-features(Pod 스펙 칸 허용). config-autoscaler 는 기본값 그대로다.</p>
+  <p>Knative 는 설정을 자기 CRD 가 아니라 <code>knative-serving</code> namespace 의 ConfigMap 여러 장에 둔다. ConfigMap 은 설정값을 key-value 로 담는 쿠버네티스 기본 객체이고, controller·webhook·autoscaler 가 이 ConfigMap 들을 지켜보고 있다가 바뀌면 재시작 없이 다시 읽는다. 우리 PoC 가 바꾼 것은 넷: config-network(입구), config-domain(도메인), config-deployment(태그 해석 건너뛰기), config-features(Pod 스펙 칸 허용). config-autoscaler 는 기본값 그대로다.</p>
   <div class="table-wrap"><table><thead><tr><th>ConfigMap</th><th>우리가 바꾼 키</th><th>어디서</th><th>이유</th></tr></thead><tbody>
   <tr><td>config-network</td><td><code>ingress-class: kourier.ingress.networking.knative.dev</code></td><td>setup.sh 3/5</td><td>입구 = Kourier</td></tr>
   <tr><td>config-domain</td><td><code>faas.local: ""</code></td><td>setup.sh 4/5</td><td>함수 주소 도메인</td></tr>
@@ -1151,7 +1303,11 @@ flowchart LR
 
 <div class="tier" data-tier="2">
   <h3>기능 플래그: 왜 nodeSelector 하나 쓰는 데 허락이 필요한가</h3>
-  <p>Knative 는 ksvc 의 Pod 스펙 중 "어떤 노드에서든 같은 방식으로 돌 수 있는" 칸만 기본 허용한다. nodeSelector(파드를 특정 라벨의 노드로만 보내는 조건)·tolerations·runtimeClassName·affinity(노드나 다른 파드와 가깝게·멀게 두는 조건) 같은 칸은 함수를 특정 노드에 묶거나 실행 방식을 바꾸므로 운영자가 명시적으로 켜야 한다. 플래그가 꺼져 있으면 webhook 이 저장 전에 거절한다. 거절은 "그 apply 한 번" 만 실패시키고, 이미 떠 있는 Revision 은 건드리지 않는다.</p>
+  <p>Knative 는 ksvc 의 Pod 스펙 중 "어떤 노드에서든 같은 방식으로 돌 수 있는" 칸만 기본 허용한다. <span class="t">nodeSelector</span>·tolerations·runtimeClassName·<span class="t">affinity</span> 같은 칸은 함수를 특정 노드에 묶거나 실행 방식을 바꾸므로 운영자가 명시적으로 켜야 한다. 플래그가 꺼져 있으면 webhook 이 저장 전에 거절한다. 거절은 "그 apply 한 번" 만 실패시키고, 이미 떠 있는 Revision 은 건드리지 않는다.</p>
+  <aside class="notes"><dl>
+  <div><dt>nodeSelector</dt><dd>파드를 특정 라벨의 노드로만 보내는 조건.</dd></div>
+  <div><dt>affinity</dt><dd>노드나 다른 파드와 가깝게·멀게 두는 조건. nodeSelector 보다 표현이 풍부하다.</dd></div>
+  </dl></aside>
   <figure>
   <pre class="mermaid">
 flowchart TD
@@ -1164,8 +1320,11 @@ flowchart TD
   G --> H["controller 가 새 Revision 생성"]
   E --> I["기존 Revision 은 그대로 응답<br/>Argo CD 는 SYNC FAILED"]
   </pre>
-  <figcaption><b>그림 5-24.</b> 기능 플래그 검사. etcd 는 쿠버네티스가 모든 객체를 저장하는 키-값 저장소다. 플래그 값은 <code>Enabled</code>(켜짐, 기본 동작에 반영), <code>Disabled</code>(쓸 수 없음), <code>Allowed</code>(켜지도 끄지도 않고, 사용자가 주석이나 spec 으로 쓰면 허용) 셋이고, <code>secure-pod-defaults</code> 만 <code>AllowRootBounded</code> 가 하나 더 있다(v1.23 <code>pkg/apis/config/features.go</code>). 우리 patch 처럼 소문자로 적어도 된다.</figcaption>
+  <figcaption><b>그림 5-24.</b> 기능 플래그 검사. 통과한 객체는 <span class="t">etcd</span> 에 저장된다. 플래그 값은 셋이다: <code>Enabled</code> 는 켜져서 기본 동작에 반영, <code>Disabled</code> 는 쓸 수 없음, <code>Allowed</code> 는 켜지도 끄지도 않되 사용자가 주석이나 spec 으로 쓰면 허용. <code>secure-pod-defaults</code> 만 <code>AllowRootBounded</code> 가 하나 더 있다(v1.23 <code>pkg/apis/config/features.go</code>). 우리 patch 처럼 소문자로 적어도 된다.</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>etcd</dt><dd>쿠버네티스가 모든 객체를 저장하는 키-값 저장소. API 서버만 여기에 쓴다.</dd></div>
+  </dl></aside>
   <div class="code-head"><span>poc/04-faas-runtime/platform/knative/config-features-patch.yaml</span><span>전체</span></div>
   <pre><code><span class="k">data</span>:
   <span class="c"># ksvc 에서 nodeSelector 쓰기 → 함수를 exec 풀에 고정</span>
@@ -1215,12 +1374,15 @@ flowchart TD
     </div>
     <figcaption><b>그림 5-25.</b> 태그 해석. 레지스트리 이름이 localhost·루프백·사설 IP·<code>.local</code> 로 끝나는 이름이 아니면 질의는 HTTPS 로 가므로(go-containerregistry 의 <code>Registry.Scheme</code>), TLS 없는 <code>kind-registry:5000</code> 은 실패한다. <code>localhost:5001</code> 은 http 로 가지만 controller 파드 자신의 localhost 에는 레지스트리가 없어 역시 실패한다. 그래서 setup.sh 가 둘 다 건너뛰기 목록에 더했다. 05 는 처음부터 digest 를 넣으니 이 단계가 필요 없다.</figcaption>
   </figure>
-  <p>건너뛰기의 대가는 04 의 함수 3개에 그대로 남는다. <code>kind-registry:5000/fn/hello:v1</code> 은 태그 그대로 Revision 에 들어가므로, 누군가 같은 <code>v1</code> 태그로 다시 빌드해 올리면, 다음에 0 → 1 로 뜨는 파드는 새 이미지를 받을 수 있다(노드에 옛 이미지가 캐시돼 있으면 옛 것을 쓸 수도 있다. imagePullPolicy(파드를 띄울 때 이미지를 다시 받을지 정하는 칸)의 기본값은 태그가 latest 가 아니면 IfNotPresent, 즉 "있으면 안 받음"). 같은 Revision 인데 파드마다 다른 코드가 돌 수 있다는 뜻이다. 그래서 04 README 는 "빌드마다 새 태그" 를 규칙으로 정했고, 05 는 kaniko 의 digest 를 받아 <code>@sha256</code> 으로 고정한다(<a href="ch06-build-runtime.html">06장</a>).</p>
-  <p>config-deployment 의 다른 키도 알아 둔다: <code>progress-deadline</code>(기본 600s, Revision 의 파드가 이 시간 안에 준비 안 되면 실패), <code>queue-sidecar-cpu-request</code>(기본 25m), <code>runtime-class-name</code>(라벨 셀렉터로 Revision 들에 RuntimeClass 를 일괄 지정하는 키. 값은 YAML 맵으로 <code>gvisor: {selector: {use-gvisor: "please"}}</code> 처럼 "RuntimeClass 이름: 그 이름을 받을 Revision 라벨 조건" 을 적고, 키가 빈 문자열이면 조건에 안 걸린 Revision 의 기본값이다. 우리는 ksvc 에 직접 <code>runtimeClassName</code> 을 적는 쪽을 골랐다).</p>
+  <p>건너뛰기의 대가는 04 의 함수 3개에 그대로 남는다. <code>kind-registry:5000/fn/hello:v1</code> 은 태그 그대로 Revision 에 들어가므로, 누군가 같은 <code>v1</code> 태그로 다시 빌드해 올리면, 다음에 0 → 1 로 뜨는 파드는 새 이미지를 받을 수 있다. 노드에 옛 이미지가 캐시돼 있으면 옛 것을 쓸 수도 있는데, <span class="t">imagePullPolicy</span> 의 기본값이 태그가 latest 가 아니면 IfNotPresent, 즉 "있으면 안 받음" 이기 때문이다. 같은 Revision 인데 파드마다 다른 코드가 돌 수 있다는 뜻이다. 그래서 04 README 는 "빌드마다 새 태그" 를 규칙으로 정했고, 05 는 kaniko 의 digest 를 받아 <code>@sha256</code> 으로 고정한다(<a href="ch06-build-runtime.html">06장</a>).</p>
+  <aside class="notes"><dl>
+  <div><dt>imagePullPolicy</dt><dd>파드를 띄울 때 이미지를 다시 받을지 정하는 칸. Always, IfNotPresent, Never 중 하나.</dd></div>
+  </dl></aside>
+  <p>config-deployment 의 다른 키도 알아 둔다. <code>progress-deadline</code>(기본 600s)은 Revision 의 파드가 이 시간 안에 준비 안 되면 실패로 보는 한도이고, <code>queue-sidecar-cpu-request</code>(기본 25m)는 queue-proxy 의 CPU 요청량이다. <code>runtime-class-name</code> 은 라벨 셀렉터로 Revision 들에 RuntimeClass 를 일괄 지정하는 키다. 값은 YAML 맵으로 <code>gvisor: {selector: {use-gvisor: "please"}}</code> 처럼 "RuntimeClass 이름: 그 이름을 받을 Revision 라벨 조건" 을 적고, 키가 빈 문자열이면 조건에 안 걸린 Revision 의 기본값이다. 우리는 ksvc 에 직접 <code>runtimeClassName</code> 을 적는 쪽을 골랐다.</p>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>config-features 를 켠 건 04 이고, 그걸 05 템플릿이 그대로 쓴다(RUN-ALL "이음새" 표: 04 patch 가 셋을 켜고 05 ksvc 가 앞의 둘을 씀). runtimeClassName 은 05 템플릿에서 주석 처리돼 있어 지금은 04 의 hello-gvisor 두 개만 쓴다.</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p>04 README 7단계 실험. <code>kubernetes.podspec-tolerations</code> 를 disabled 로 바꾸고 ksvc 를 바꿔 push 하면 Argo CD Application <code>faas-functions</code> 가 <code>Failed ... must not set the field(s): spec.template.spec.tolerations</code>. 기존 함수는 계속 응답한다. <strong>고치는 법</strong>: patch 를 다시 넣고 동기화를 다시 시킨다(같은 커밋에서 실패한 자동 동기화는 저절로 재시도하지 않을 수 있다).</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p>04 README 7단계 실험. <code>kubernetes.podspec-tolerations</code> 를 disabled 로 바꾸고 ksvc 를 바꿔 push 하면 Argo CD Application <code>faas-functions</code> 가 <code>Failed ... must not set the field(s): spec.template.spec.tolerations</code>. 기존 함수는 계속 응답한다. <strong>고치는 법</strong>: patch 를 다시 넣고 동기화를 다시 시킨다. 같은 커밋에서 실패한 자동 동기화는 저절로 재시도하지 않을 수 있다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/configuration/feature-flags/">Feature and extension flags</a> · <a href="https://knative.dev/docs/serving/configuration/deployment/">config-deployment</a> · <a href="https://knative.dev/docs/serving/tag-resolution/">Tag resolution</a> · <a href="https://knative.dev/docs/serving/configuration/config-defaults/">config-defaults</a> · <a href="https://github.com/knative/serving/tree/knative-v1.23.0/config/core/configmaps">ConfigMap 원본 (기본값)</a></p></aside>
 
 
@@ -1259,26 +1421,34 @@ flowchart TD
         <text x="820" y="30" class="d-lbl">응답 끝</text>
       </svg>
     </div>
-    <figcaption><b>그림 5-26.</b> 콜드 스타트 시간축 (막대 길이는 개념일 뿐 실측 비율이 아니다). 1 은 전 구간 동안 activator 가 요청을 쥐고 있는 시간이다. 4(이미지)는 노드에 이미지가 이미 있으면 사라지고, 5(샌드박스)는 gVisor 면 Sentry(gVisor 의 사용자 공간 커널 프로세스) 시작이 더해진다(06장). 6 은 언어에 따라 크게 다르다(Go 정적 바이너리(필요한 라이브러리를 다 안에 넣어 혼자 도는 실행 파일)는 짧고, JVM 은 클래스 로딩 때문에 길다).</figcaption>
+    <figcaption><b>그림 5-26.</b> 콜드 스타트 시간축 (막대 길이는 개념일 뿐 실측 비율이 아니다). 1 은 전 구간 동안 activator 가 요청을 쥐고 있는 시간이다. 4(이미지)는 노드에 이미지가 이미 있으면 사라지고, 5(샌드박스)는 gVisor 면 <span class="t">Sentry</span> 시작이 더해진다(06장). 6 은 언어에 따라 크게 다르다. Go <span class="t">정적 바이너리</span>는 짧고, JVM 은 클래스 로딩 때문에 길다.</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>Sentry</dt><dd>gVisor 의 사용자 공간 커널 프로세스. 컨테이너의 시스템 콜을 대신 받아 처리한다.</dd></div>
+  <div><dt>정적 바이너리</dt><dd>필요한 라이브러리를 다 안에 넣어 혼자 도는 실행 파일. 베이스 이미지가 필요 없다.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="2">
   <h3>구간마다 줄이는 수단</h3>
   <div class="table-wrap"><table><thead><tr><th>구간</th><th>무엇이 하나</th><th>줄이는 수단</th><th>대가</th></tr></thead><tbody>
   <tr><td>1·2 수요 감지</td><td>activator → autoscaler 신호, 2초 tick</td><td>2초 tick 을 기다리지 않는다: activator 는 한 Revision 의 첫 요청을 받으면 즉시 "동시 요청 1" 통계를 보내고(<code>concurrency_reporter.go</code>), autoscaler 는 파드 수가 0 인 Revision 에 요청 통계가 오면 바로 판단을 한 번 더 돌린다(<code>MultiScaler.Poke</code>)</td><td>-</td></tr>
-  <tr><td>3 스케줄</td><td>Deployment → ReplicaSet → 스케줄러</td><td>exec 풀에 자리가 남아 있게 (max-scale·quota)</td><td>노드 여유분 비용</td></tr>
-  <tr><td>4 이미지</td><td>노드의 containerd(컨테이너를 실제로 만들고 이미지를 받는 런타임 데몬)가 레지스트리에서 받기</td><td>scratch 정적 이미지(우리 hello), 이미지를 노드에 미리 받아 두기</td><td>디버깅 도구 없음, 노드 디스크</td></tr>
+  <tr><td>3 스케줄</td><td>Deployment → <span class="t">ReplicaSet</span> → 스케줄러</td><td>exec 풀에 자리가 남아 있게 (max-scale·quota)</td><td>노드 여유분 비용</td></tr>
+  <tr><td>4 이미지</td><td>노드의 <span class="t">containerd</span> 가 레지스트리에서 받기</td><td>scratch 정적 이미지(우리 hello), 이미지를 노드에 미리 받아 두기</td><td>디버깅 도구 없음, 노드 디스크</td></tr>
   <tr><td>5 샌드박스</td><td>런타임이 컨테이너 생성 (runc / runsc)</td><td>runc 사용, 또는 미리 만든 샌드박스(웜 풀)</td><td>격리 약화 / 구현 복잡</td></tr>
   <tr><td>6 앱 초기화</td><td>프로세스 시작, 의존성 로딩</td><td>Go·네이티브 이미지, 지연 초기화</td><td>언어 제약</td></tr>
   <tr><td>7 준비 확인</td><td>queue-proxy 의 촘촘한 확인</td><td>앱이 포트를 빨리 열게</td><td>-</td></tr>
   <tr><td>전체</td><td>-</td><td><code>min-scale: 1</code> 웜 파드, <code>scale-down-delay</code>, <code>scale-to-zero-pod-retention-period</code></td><td>쉬는 동안에도 파드 1개 몫 자원</td></tr>
   </tbody></table></div>
+  <aside class="notes"><dl>
+  <div><dt>ReplicaSet</dt><dd>Deployment 가 파드 수를 유지하려고 만드는 중간 객체. 실제 파드는 여기서 만들어진다.</dd></div>
+  <div><dt>containerd</dt><dd>노드에서 컨테이너를 실제로 만들고 이미지를 받는 런타임 데몬. kubelet 이 이것에게 시킨다.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="3">
   <h3>"진짜 콜드" 인지 판단하는 법</h3>
-  <p>함수 쪽에서 판단하는 법: <code>main.go</code> 는 프로세스가 받은 요청 수를 <code>atomic.Int64</code> 로 세서 첫 요청이면 <code>"cold": true</code> 를 돌려준다. 쿠버네티스 쪽에서 판단하는 법: 요청 직전 <code>serving.knative.dev/service=&lt;함수&gt;</code> 라벨 파드가 0개였나. coldstart.sh 는 둘 다 쓴다(앞에서 0개를 기다리고, 뒤에서 cold 칸을 기록).</p>
+  <p>함수 쪽에서 판단하는 법: <code>main.go</code> 는 프로세스가 받은 요청 수를 <code>atomic.Int64</code> 로 세서 첫 요청이면 <code>"cold": true</code> 를 돌려준다. 쿠버네티스 쪽에서 판단하는 법: 요청 직전 <code>serving.knative.dev/service=&lt;함수&gt;</code> 라벨 파드가 0개였나. coldstart.sh 는 둘 다 쓴다: 앞에서 0개를 기다리고, 뒤에서 cold 칸을 기록한다.</p>
   <div class="code-head"><span>poc/04-faas-runtime/functions/hello-src/main.go</span><span>발췌</span></div>
   <pre><code><span class="k">var</span> (
 	started = time.Now()
@@ -1299,7 +1469,10 @@ flowchart TD
   </ul>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>hello 함수 이미지는 <code>FROM scratch</code>(아무것도 없는 빈 베이스 이미지) + 정적 Go 바이너리라 4·6 구간이 작다(Dockerfile 주석: "이미지가 작을수록 콜드 스타트 때 이미지 받는 시간이 준다"). 그래서 runc 와 gVisor 의 차이는 주로 5 구간에서 나온다. 05 의 파이썬 함수는 베이스 이미지가 커서 4·6 이 더 길 것이다. 빌드는 <a href="ch06-build-runtime.html">06장</a>.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>hello 함수 이미지는 <span class="t"><code>FROM scratch</code></span> + 정적 Go 바이너리라 4·6 구간이 작다. Dockerfile 주석대로 "이미지가 작을수록 콜드 스타트 때 이미지 받는 시간이 준다". 그래서 runc 와 gVisor 의 차이는 주로 5 구간에서 나온다. 05 의 파이썬 함수는 베이스 이미지가 커서 4·6 이 더 길 것이다. 빌드는 <a href="ch06-build-runtime.html">06장</a>.</p>
+<aside class="notes"><dl>
+<div><dt><code>FROM scratch</code></dt><dd>아무것도 없는 빈 베이스 이미지. 안에는 우리 바이너리 하나뿐이다.</dd></div>
+</dl></aside></aside>
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: 콜드 스타트가 갑자기 몇 배 길어졌다. <strong>볼 곳</strong>: <code>kubectl describe pod</code> 의 Events 시각(Scheduled → Pulling → Pulled → Created → Started) 간격. Pulling 이 길면 이미지, Created 와 Started 사이가 길면 런타임, Started 뒤 Ready 까지가 길면 앱. <strong>고치는 법</strong>: 해당 구간의 수단(표)을 쓴다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/autoscaling/scale-bounds/">Scale bounds (min-scale, scale-down-delay)</a> · <a href="https://github.com/knative/specs/blob/main/specs/serving/runtime-contract.md">Runtime contract (PORT)</a> · <a href="https://knative.dev/docs/serving/services/configure-probing/">Probing</a></p></aside>
 
@@ -1396,16 +1569,22 @@ flowchart TD
   <div class="table-wrap"><table><thead><tr><th>줄</th><th>뜻</th><th>Knative 안에서 어디로 가나</th></tr></thead><tbody>
   <tr><td><code>spec.template.metadata.annotations</code></td><td>오토스케일링 손잡이. template 안이라서 바꾸면 새 Revision</td><td>Revision 주석 → PodAutoscaler spec</td></tr>
   <tr><td><code>min-scale: "0"</code></td><td>0 까지 내려감. 기본값이지만 결정을 보이게 적음</td><td>KPA 하한</td></tr>
-  <tr><td><code>max-scale: "5"</code></td><td>exec 풀을 한 함수가 다 먹지 않게 (노이지 네이버)</td><td>KPA 상한</td></tr>
+  <tr><td><code>max-scale: "5"</code></td><td>exec 풀을 한 함수가 다 먹지 않게 (<span class="t">노이지 네이버</span> 방지)</td><td>KPA 상한</td></tr>
   <tr><td><code>target: "10"</code></td><td>파드당 동시 요청 목표 10 × 70% = 7</td><td>decider 목표값</td></tr>
   <tr><td><code>window: "6s"</code></td><td>stable window 를 최소값으로. 측정 1회 기다림을 줄임</td><td>decider, scale-to-zero 판단</td></tr>
   <tr><td><code>nodeSelector</code>, <code>tolerations</code></td><td>exec 풀에만 가고(nodeSelector), exec 의 taint 를 통과(toleration). 기능 플래그가 켜져 있어야 webhook 통과</td><td>Deployment 의 파드 스펙 그대로</td></tr>
   <tr><td><code>image: ...:v1</code></td><td>태그. 건너뛰기 목록에 있어 digest 로 안 바뀜</td><td>Revision status, Deployment</td></tr>
   <tr><td><code>containerPort: 8080</code></td><td>queue-proxy 가 보낼 포트이자 <code>PORT</code> 값. 하나만 허용</td><td>user-container 포트, env PORT</td></tr>
   <tr><td><code>env FN_NAME</code></td><td>응답 JSON 의 <code>fn</code> 칸. 어느 함수가 응답했는지 구분</td><td>user-container env</td></tr>
-  <tr><td><code>securityContext</code></td><td>Pod Security(PSA: namespace 라벨로 파드 보안 수준 privileged·baseline·restricted 를 강제하는 쿠버네티스 기본 기능, <a href="ch03-tenancy.html#namespace-psa">03장</a>)의 restricted 수준을 미리 맞춤. 03 테넌트 namespace 는 enforce baseline, warn restricted 라 안 쓰면 경고</td><td>user-container</td></tr>
-  <tr><td><code>resources</code></td><td>requests(스케줄러가 노드에 자리를 잡을 때 세는 양)는 자리 계산, limits(컨테이너가 넘지 못하는 상한)는 상한. CPU limit 500m 가 동시 요청 때 throttling 원인(04 README 8단계)</td><td>user-container (queue-proxy 는 따로)</td></tr>
+  <tr><td><code>securityContext</code></td><td><span class="t">Pod Security</span> 의 restricted 수준을 미리 맞춤. 03 테넌트 namespace 는 enforce baseline, warn restricted 라 안 쓰면 경고</td><td>user-container</td></tr>
+  <tr><td><code>resources</code></td><td><span class="t">requests</span> 는 자리 계산, <span class="t">limits</span> 는 상한. CPU limit 500m 가 동시 요청 때 throttling 원인(04 README 8단계)</td><td>user-container (queue-proxy 는 따로)</td></tr>
   </tbody></table></div>
+  <aside class="notes"><dl>
+  <div><dt>노이지 네이버(noisy neighbor)</dt><dd>같은 노드를 쓰는 이웃 하나가 자원을 독차지해 남을 느리게 만드는 문제.</dd></div>
+  <div><dt>Pod Security(PSA)</dt><dd>Pod Security Admission. namespace 라벨로 파드 보안 수준 privileged·baseline·restricted 를 강제하는 쿠버네티스 기본 기능. <a href="ch03-tenancy.html#namespace-psa">03장</a>.</dd></div>
+  <div><dt>requests</dt><dd>스케줄러가 노드에 자리를 잡을 때 세는 양. 이 합이 노드 용량을 넘으면 그 노드엔 못 간다.</dd></div>
+  <div><dt>limits</dt><dd>컨테이너가 넘지 못하는 상한. CPU 는 넘으면 잠시 멈춰 세우고(throttling), 메모리는 넘으면 죽인다.</dd></div>
+  </dl></aside>
   <p>트래픽 칸이 없으므로 기본값 "최신 Ready Revision 100%" 다. 이 파일을 Git 에서 바꾸면(예: max-scale 5 → 4) Argo CD 가 apply 하고, template 이 바뀌었으니 <code>hello-runc-00002</code> 가 생기며 트래픽이 옮겨 간다.</p>
 </div>
 
@@ -1419,11 +1598,14 @@ flowchart TD
       <span class="c"># ---- 무엇으로 돌까: gVisor (platform/runtimeclass-gvisor.yaml 의 metadata.name) ----</span>
       <span class="k">runtimeClassName</span>: gvisor</code></pre>
   <ul>
-    <li><code>runtimeClassName: gvisor</code> 는 Knative 가 Deployment 로 그대로 넘기고, 파드가 만들어질 때 쿠버네티스의 RuntimeClass 승인 단계(admission: API 서버가 객체를 저장하기 전에 거치는 검사·수정 단계)가 RuntimeClass <code>gvisor</code> 의 <code>scheduling</code>(nodeSelector pool=exec, toleration)과 <code>overhead</code>(cpu 50m, memory 64Mi)를 파드에 붙인다. 그래서 hello-gvisor 파일 주석은 "nodeSelector·toleration 은 RuntimeClass 가 붙여 주지만 둘 다 써 둔다" 고 말한다. 빠뜨렸을 때를 위한 이중 장치다.</li>
+    <li><code>runtimeClassName: gvisor</code> 는 Knative 가 Deployment 로 그대로 넘기고, 파드가 만들어질 때 쿠버네티스의 RuntimeClass <span class="t">승인 단계</span>가 RuntimeClass <code>gvisor</code> 의 <code>scheduling</code>(nodeSelector pool=exec, toleration)과 <code>overhead</code>(cpu 50m, memory 64Mi)를 파드에 붙인다. 그래서 hello-gvisor 파일 주석은 "nodeSelector·toleration 은 RuntimeClass 가 붙여 주지만 둘 다 써 둔다" 고 말한다. 빠뜨렸을 때를 위한 이중 장치다.</li>
     <li>RuntimeClass 가 붙이는 nodeSelector·toleration 은 Knative webhook 을 지난 뒤(파드 생성 때) 붙으므로 Knative 기능 플래그와 상관이 없다. 반면 ksvc 에 직접 쓴 nodeSelector·toleration 은 플래그가 필요하다.</li>
     <li><code>min-scale: "1"</code>: 트래픽을 받는 Revision 은 요청이 없어도 파드 1개 유지. coldstart.sh 는 이 값을 읽어 "0개 기다리기" 대신 <code>IDLE</code>(기본 30초) 쉬고 요청한다. 그래서 이 함수의 숫자는 "오래 쉰 웜 파드의 첫 요청" 이다.</li>
     <li>gVisor 자체(Sentry, runsc 설치, overhead 값 근거)는 <a href="ch06-build-runtime.html">06장</a>.</li>
   </ul>
+  <aside class="notes"><dl>
+  <div><dt>승인 단계(admission)</dt><dd>API 서버가 객체를 저장하기 전에 거치는 검사·수정 단계. Knative webhook 도 이 단계에서 불린다.</dd></div>
+  </dl></aside>
   <div class="code-head"><span>poc/04-faas-runtime/gitops/faas-functions.yaml</span><span>발췌</span></div>
   <pre><code>  <span class="k">source</span>:
     <span class="k">repoURL</span>: https://github.com/Pionia5375/Softbank_Study_1
@@ -1435,11 +1617,17 @@ flowchart TD
   <span class="k">syncPolicy</span>:
     <span class="k">automated</span>: { <span class="k">prune</span>: true, <span class="k">selfHeal</span>: true }
     <span class="k">syncOptions</span>: [ CreateNamespace=true ]</code></pre>
-  <p>selfHeal(클러스터에서 손으로 바꾼 것을 Git 값으로 되돌리는 Argo CD 옵션. prune 은 Git 에서 지운 것을 클러스터에서도 지우는 옵션)이 켜져 있으므로, 측정 중에 <code>kubectl edit ksvc</code> 로 min-scale 을 바꾸면 Argo CD 가 Git 값으로 되돌린다. 04 함수를 실험적으로 바꾸려면 Git 을 고쳐 push 하는 게 정석이다. 05 사용자 함수는 반대로 Git 밖(컨트롤 플레인의 API 직접 적용)에 있다.</p>
+  <p><span class="t">selfHeal</span> 이 켜져 있으므로, 측정 중에 <code>kubectl edit ksvc</code> 로 min-scale 을 바꾸면 Argo CD 가 Git 값으로 되돌린다. 04 함수를 실험적으로 바꾸려면 Git 을 고쳐 push 하는 게 정석이다. 05 사용자 함수는 반대로 Git 밖(컨트롤 플레인의 API 직접 적용)에 있다.</p>
+  <aside class="notes"><dl>
+  <div><dt>selfHeal</dt><dd>클러스터에서 손으로 바꾼 것을 Git 값으로 되돌리는 Argo CD 옵션. 같이 적힌 prune 은 Git 에서 지운 것을 클러스터에서도 지우는 옵션.</dd></div>
+  </dl></aside>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>확인 명령: <code>kubectl -n fn-runtime get ksvc</code> (세 개 READY True), <code>kubectl -n fn-runtime get pods -o custom-columns=NAME:.metadata.name,NODE:.spec.nodeName,RUNTIME:.spec.runtimeClassName</code> (요청 없이 1분 뒤 warm 하나만, 노드 exec, RUNTIME gvisor).</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p>hello-gvisor 만 READY 가 안 되고 Argo CD 가 Degraded(건강 상태 "망가짐") 면 거의 늘 gVisor 쪽(<code>FailedCreatePodSandBox</code>, 파드의 격리 공간을 만들지 못했다는 kubelet 이벤트)이다. Knative 문제와 가르는 법: 같은 설정의 hello-runc 가 READY 면 Knative·노드 풀·이미지는 정상이다. 대처는 04 README 9절 보충과 06장.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p>hello-gvisor 만 READY 가 안 되고 Argo CD 가 Degraded(건강 상태 "망가짐") 면 거의 늘 gVisor 쪽(<span class="t"><code>FailedCreatePodSandBox</code></span>)이다. Knative 문제와 가르는 법: 같은 설정의 hello-runc 가 READY 면 Knative·노드 풀·이미지는 정상이다. 대처는 04 README 9절 보충과 06장.</p>
+<aside class="notes"><dl>
+<div><dt><code>FailedCreatePodSandBox</code></dt><dd>파드의 격리 공간(샌드박스)을 만들지 못했다는 kubelet 이벤트. gVisor 면 runsc 가 시작에 실패했다는 뜻.</dd></div>
+</dl></aside></aside>
 <aside class="callout why"><p class="callout-title">왜 이렇게 나눴나 (대안)</p><p>대안은 함수 하나에 주석만 바꿔 가며 재는 것이다. 그러면 Revision 이 바뀔 때마다 이미지 캐시·노드 상태가 달라져 비교가 흐려진다. 세 함수를 동시에 두면 같은 노드·같은 이미지로 한 변수만 다르게 잴 수 있다. 대가는 웜 함수 하나가 늘 자리를 차지한다는 점이다.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/services/creating-services/">Creating a Service</a> · <a href="https://knative.dev/docs/serving/autoscaling/scale-bounds/">Scale bounds</a> · <a href="https://kubernetes.io/docs/concepts/containers/runtime-class/#scheduling">RuntimeClass scheduling</a> · <a href="https://argo-cd.readthedocs.io/en/stable/user-guide/directory/">Argo CD directory 앱</a></p></aside>
 
@@ -1449,7 +1637,7 @@ flowchart TD
 
 <div class="tier" data-tier="1">
   <h3>사람이 아니라 컨트롤 플레인이 채우는 ksvc</h3>
-  <p>05 에서는 사용자가 코드를 HTTP POST 하면 컨트롤 플레인(05 의 Spring Boot 서비스. 그 안의 <code>FunctionDeployer</code> 클래스가 배포를 맡는다, <a href="ch07-control-plane.html#deployer">07장</a>)이 빌드를 시키고, 끝나면 이 템플릿의 <code>${TENANT}</code>, <code>${NAME}</code>, <code>${BUILD_ID}</code>, <code>${IMAGE}</code> 를 채워 테넌트 namespace 에 server-side apply 한다. 04 와 같은 Knative Service 지만 세 가지가 다르다: 이미지가 digest 로 고정되고, 빌드 ID 주석이 새 Revision 을 강제하고, traffic 과 동시성 상한을 명시한다.</p>
+  <p>05 에서는 사용자가 코드를 HTTP POST 하면 컨트롤 플레인의 <code>FunctionDeployer</code> 클래스(<a href="ch07-control-plane.html#deployer">07장</a>)가 빌드를 시키고, 끝나면 이 템플릿의 <code>${TENANT}</code>, <code>${NAME}</code>, <code>${BUILD_ID}</code>, <code>${IMAGE}</code> 를 채워 테넌트 namespace 에 server-side apply 한다. 04 와 같은 Knative Service 지만 세 가지가 다르다: 이미지가 digest 로 고정되고, 빌드 ID 주석이 새 Revision 을 강제하고, traffic 과 동시성 상한을 명시한다.</p>
 </div>
 
 <div class="tier" data-tier="2">
@@ -1587,7 +1775,10 @@ sequenceDiagram
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>확인: <code>kubectl -n tenant-a get ksvc hello -o yaml --show-managed-fields</code> 에서 manager 가 <code>faas-control-plane</code> 과 <code>ops-agent</code> 둘 보이고, <code>kubectl -n tenant-a get revisions</code> 에서 배포 횟수 + scale 횟수만큼 Revision 이 쌓인다.</p></aside>
-<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: 같은 코드를 다시 POST 했는데 Revision 이 안 늘어난다 → 정상이다. buildId 가 코드 해시라 template 이 똑같고, apply 가 아무것도 바꾸지 않는다(05 의 멱등성: 같은 요청을 몇 번 보내도 결과가 같은 성질). <strong>증상</strong>: 상태가 DEPLOYING 에서 안 넘어간다 → 새 Revision 이 Ready 가 안 됨(toleration·quota·이미지). <code>kubectl -n tenant-a describe revision</code>.</p></aside>
+<aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: 같은 코드를 다시 POST 했는데 Revision 이 안 늘어난다 → 정상이다. buildId 가 코드 해시라 template 이 똑같고, apply 가 아무것도 바꾸지 않는다. 05 가 지키는 <span class="t">멱등성</span>이다. <strong>증상</strong>: 상태가 DEPLOYING 에서 안 넘어간다 → 새 Revision 이 Ready 가 안 됨(toleration·quota·이미지). <code>kubectl -n tenant-a describe revision</code>.</p>
+<aside class="notes"><dl>
+<div><dt>멱등성(idempotency)</dt><dd>같은 요청을 몇 번 보내도 결과가 같은 성질.</dd></div>
+</dl></aside></aside>
 <aside class="callout why"><p class="callout-title">왜 이렇게 했나 (대안)</p><p>(가) 태그로 배포: 같은 태그가 다른 이미지를 가리키면 롤백이 거짓말이 된다. (나) min-scale 을 템플릿에 넣기: 배포마다 에이전트 결정이 지워진다. (다) traffic 을 생략: 롤백 후 다음 배포가 고정을 못 풀어, 새 코드가 트래픽 0% 로 남는다. 05 README 결정 2 와 3절.</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/reference/serving-api/#serving.knative.dev/v1.Service">Service 스펙</a> · <a href="https://knative.dev/docs/serving/autoscaling/concurrency/">Concurrency</a> · <a href="https://knative.dev/docs/serving/traffic-management/">Traffic management</a> · <a href="https://kubernetes.io/docs/reference/using-api/server-side-apply/">Server-Side Apply</a></p></aside>
 
@@ -1637,8 +1828,12 @@ flowchart TD
   REQ --> REC["시간, HTTP 코드, cold 칸,<br/>응답한 파드의 노드 기록"]
   REC --> L
   </pre>
-  <figcaption><b>그림 5-30.</b> coldstart.sh 순서도. p50 은 중앙값, p95 는 요청의 95% 가 그 안에 끝난 시간이다. 파드 수는 라벨 <code>serving.knative.dev/service=&lt;함수&gt;</code> 로 센다. Knative 가 함수 파드에 붙이는 라벨이다. 노드 기록은 "정말 exec 풀에서 떴나" 를 함께 증명한다.</figcaption>
+  <figcaption><b>그림 5-30.</b> coldstart.sh 순서도. 요약은 <span class="t">p50</span> 과 <span class="t">p95</span> 로 낸다. 파드 수는 라벨 <code>serving.knative.dev/service=&lt;함수&gt;</code> 로 센다. Knative 가 함수 파드에 붙이는 라벨이다. 노드 기록은 "정말 exec 풀에서 떴나" 를 함께 증명한다.</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>p50</dt><dd>중앙값. 요청의 절반이 그 안에 끝난 시간.</dd></div>
+  <div><dt>p95</dt><dd>요청의 95% 가 그 안에 끝난 시간. 느린 꼬리를 보는 값.</dd></div>
+  </dl></aside>
   <p>읽을 때 주의: 기다리는 시간(0개가 될 때까지)은 측정값에 들어가지 않는다. 측정값은 <code>curl</code> 의 <code>time_total</code> 뿐이고, 여기에 맥 → Docker → Kourier 구간이 포함된다. 1회에 window + grace + 종료만큼 기다리므로 회수가 많으면 오래 걸린다.</p>
 </div>
 
@@ -1682,7 +1877,10 @@ flowchart LR
 
 <div class="tier" data-tier="1">
   <h3>에이전트의 두 손잡이는 Knative 의 두 칸이다</h3>
-  <p>05 의 운영 MCP 서버(<code>poc/05-control-plane-mcp/mcp-server/ops_mcp</code>)는 AI 에이전트에게 도구 세 개를 준다. 그중 바꾸는 도구 둘이 Knative 의 두 칸에 정확히 대응한다. <strong>scale</strong> = Revision template 의 <code>min-scale</code> 주석, <strong>rollback</strong> = ksvc 의 <code>spec.traffic</code>. 에이전트가 파드 수를 직접 바꾸는 게 아니라 Knative 에게 "하한" 과 "트래픽 대상" 만 말하고, 나머지(파드 생성, 라우팅)는 Knative 가 한다. 권한도 그래서 "ksvc patch" 하나로 충분하다(RBAC: 누가 어떤 리소스에 어떤 동작을 할 수 있는지 Role 과 RoleBinding 으로 정하는 쿠버네티스 권한 체계, <a href="ch07-control-plane.html#rbac">07장</a>).</p>
+  <p>05 의 운영 MCP 서버(<code>poc/05-control-plane-mcp/mcp-server/ops_mcp</code>)는 AI 에이전트에게 도구 세 개를 준다. 그중 바꾸는 도구 둘이 Knative 의 두 칸에 정확히 대응한다. <strong>scale</strong> = Revision template 의 <code>min-scale</code> 주석, <strong>rollback</strong> = ksvc 의 <code>spec.traffic</code>. 에이전트가 파드 수를 직접 바꾸는 게 아니라 Knative 에게 "하한" 과 "트래픽 대상" 만 말하고, 나머지(파드 생성, 라우팅)는 Knative 가 한다. <span class="t">RBAC</span> 권한도 그래서 "ksvc patch" 하나로 충분하다(<a href="ch07-control-plane.html#rbac">07장</a>).</p>
+  <aside class="notes"><dl>
+  <div><dt>RBAC</dt><dd>누가 어떤 리소스에 어떤 동작을 할 수 있는지 Role 과 RoleBinding 으로 정하는 쿠버네티스 권한 체계.</dd></div>
+  </dl></aside>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 330" role="img" aria-labelledby="mcp-t">
@@ -1807,7 +2005,10 @@ sequenceDiagram
   </tbody></table></div>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>knative.py</code> 의 메서드 목록이 곧 필요한 권한 목록이다: services get/patch, revisions list, podautoscalers get(없으면 403 을 None 으로), pods list, metrics.k8s.io pods list. <code>patch_service(dry_run=True)</code> 는 <code>dry_run="All"</code>(dry-run: 저장하지 않고 검사만 하는 모드)로 API 서버(RBAC + Knative webhook)에 검사만 받는다. 그래서 dry-run 으로도 "기능 플래그 위반" 이나 "max-scale 위반" 을 미리 알 수 있다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>knative.py</code> 의 메서드 목록이 곧 필요한 권한 목록이다: services get/patch, revisions list, podautoscalers get(없으면 403 을 None 으로), pods list, metrics.k8s.io pods list. <code>patch_service(dry_run=True)</code> 는 <code>dry_run="All"</code> 로 보내 API 서버의 RBAC 와 Knative webhook 에 <span class="t">dry-run</span> 검사만 받는다. 그래서 dry-run 으로도 "기능 플래그 위반" 이나 "max-scale 위반" 을 미리 알 수 있다.</p>
+<aside class="notes"><dl>
+<div><dt>dry-run</dt><dd>저장하지 않고 검사만 하는 모드. API 서버가 승인 단계까지만 돌리고 결과를 돌려준다.</dd></div>
+</dl></aside></aside>
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><strong>증상</strong>: scale 이 "executed" 인데 파드가 안 는다 → 새 Revision 이 Ready 가 안 됨(quota) 이거나 traffic 이 고정 상태. <strong>볼 곳</strong>: get_metrics 의 <code>latest_ready_revision</code>, <code>autoscaler.desired/actual</code>, <code>traffic</code>. <strong>증상</strong>: scale 이 error 403 → ops-agent Role 에 patch 가 없다(ANALYSIS B11).</p></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/getting-started/first-traffic-split/">트래픽 분할 튜토리얼 (옛 Revision 으로 돌리기)</a> · <a href="https://knative.dev/docs/serving/traffic-management/">Traffic management</a> · <a href="https://kubernetes.io/docs/tasks/manage-kubernetes-objects/update-api-object-kubectl-patch/">kubectl patch (merge patch)</a></p></aside>
 
@@ -1817,18 +2018,24 @@ sequenceDiagram
 
 <div class="tier" data-tier="1">
   <h3>"READY" 와 "응답이 온다" 는 다르다</h3>
-  <p>Knative 장애의 대부분은 "겉보기 정상" 이다. 새 Revision 이 망가져도 옛 Revision 이 응답하고, ksvc 가 READY 여도 네트워크가 막혀 있으면 요청은 닿지 않는다. 그래서 확인은 언제나 세 층으로 한다: (1) 객체 상태(<code>get ksvc,revisions</code>), (2) 파드 상태(<code>get pods -o wide</code>, describe), (3) 실제 요청(<code>curl -H Host</code>, Hubble).</p>
+  <p>Knative 장애의 대부분은 "겉보기 정상" 이다. 새 Revision 이 망가져도 옛 Revision 이 응답하고, ksvc 가 READY 여도 네트워크가 막혀 있으면 요청은 닿지 않는다. 그래서 확인은 언제나 세 층으로 한다: (1) 객체 상태(<code>get ksvc,revisions</code>), (2) 파드 상태(<code>get pods -o wide</code>, describe), (3) 실제 요청(<code>curl -H Host</code>, <span class="t">Hubble</span>).</p>
+  <aside class="notes"><dl>
+  <div><dt>Hubble</dt><dd>Cilium 의 패킷 흐름 관찰 도구. <code>hubble observe</code> 로 어떤 패킷이 정책에 막혀 버려졌는지(DROPPED) 본다.</dd></div>
+  </dl></aside>
   <div class="table-wrap"><table><thead><tr><th>시나리오</th><th>증상</th><th>볼 곳</th><th>고치는 법</th></tr></thead><tbody>
   <tr><td>1. 기능 플래그 꺼짐</td><td>apply 실패 <code>must not set the field(s): spec.template.spec.tolerations</code>. Argo CD SYNC FAILED. 기존 함수는 응답</td><td><code>kubectl -n knative-serving get cm config-features -o yaml | grep podspec-</code></td><td>patch 다시, 동기화 다시</td></tr>
   <tr><td>2. toleration 빠짐</td><td>ksvc LATESTCREATED ≠ LATESTREADY. 새 파드 Pending <code>untolerated taint {pool: exec}</code>. 옛 Revision 이 계속 응답</td><td><code>kubectl get revisions</code>, <code>kubectl describe pod</code> Events</td><td>toleration 복구 후 다시 apply. progress-deadline 뒤 Revision 은 Failed 로 남음</td></tr>
-  <tr><td>3. NetworkPolicy 가 activator·Kourier 를 막음</td><td>ksvc READY True, curl 은 타임아웃(HTTP 000). 0 인 함수는 깨어나지도 못함</td><td><code>kubectl -n tenant-a get networkpolicy</code>, <code>hubble observe --namespace tenant-a --verdict DROPPED</code> (Hubble = Cilium 의 패킷 흐름 관찰 도구. DROPPED 는 정책에 막혀 버려진 패킷)</td><td>tenant values 에 <code>allowFromNamespaces: [knative-serving, kourier-system]</code></td></tr>
+  <tr><td>3. NetworkPolicy 가 activator·Kourier 를 막음</td><td>ksvc READY True, curl 은 타임아웃(HTTP 000). 0 인 함수는 깨어나지도 못함</td><td><code>kubectl -n tenant-a get networkpolicy</code>, <code>hubble observe --namespace tenant-a --verdict DROPPED</code></td><td>tenant values 에 <code>allowFromNamespaces: [knative-serving, kourier-system]</code></td></tr>
   <tr><td>4. http 레지스트리 태그 해석</td><td>Revision Ready False, 메시지에 digest 해석 실패(https 질의 실패)</td><td><code>kubectl describe revision</code>, controller 로그</td><td>config-deployment 건너뛰기 목록에 레지스트리 추가, 또는 digest 로 배포</td></tr>
   </tbody></table></div>
 </div>
 
 <div class="tier" data-tier="2">
   <h3>시나리오 3 자세히: 왜 READY 인데 안 닿나</h3>
-  <p>ksvc 의 Ready 는 "Revision 파드가 준비 확인을 통과했고 Route·KIngress 가 설정됐다" 는 뜻이다. 그런데 준비 확인은 kubelet → queue-proxy, 즉 파드가 도는 노드에서 파드로 가는 트래픽이다. 쿠버네티스 NetworkPolicy 문서는 "파드가 도는 노드와의 트래픽은 항상 허용" 이라고 못 박고 Cilium 도 그 규칙을 지키므로, default-deny 가 있어도 프로브는 통과한다(<a href="ch04-network.html#netpol">04장 8절</a>). 반면 실제 요청은 다른 namespace(kourier-system 의 Envoy, knative-serving 의 activator)에서 출발한다. 03 의 default-deny(모든 파드를 고르고 허용 규칙은 비운 정책. 그 위에 허용을 쌓는다)는 같은 namespace 와 DNS 만 열어 두므로 이 요청들이 떨어진다. autoscaler 의 지표 긁기(:9090)도 knative-serving 에서 출발하므로 같이 막힌다.</p>
+  <p>ksvc 의 Ready 는 "Revision 파드가 준비 확인을 통과했고 Route·KIngress 가 설정됐다" 는 뜻이다. 그런데 준비 확인은 kubelet → queue-proxy, 즉 파드가 도는 노드에서 파드로 가는 트래픽이다. 쿠버네티스 NetworkPolicy 문서는 "파드가 도는 노드와의 트래픽은 항상 허용" 이라고 못 박고 Cilium 도 그 규칙을 지키므로, default-deny 가 있어도 프로브는 통과한다(<a href="ch04-network.html#netpol">04장 8절</a>). 반면 실제 요청은 다른 namespace(kourier-system 의 Envoy, knative-serving 의 activator)에서 출발한다. 03 의 <span class="t">default-deny</span> 는 같은 namespace 와 DNS 만 열어 두므로 이 요청들이 떨어진다. autoscaler 의 지표 긁기(:9090)도 knative-serving 에서 출발하므로 같이 막힌다.</p>
+  <aside class="notes"><dl>
+  <div><dt>default-deny</dt><dd>모든 파드를 고르고 허용 규칙은 비운 NetworkPolicy. 그 위에 허용 규칙을 쌓는다.</dd></div>
+  </dl></aside>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 960 340" role="img" aria-labelledby="np-t">
@@ -1872,7 +2079,11 @@ sequenceDiagram
 <span class="c"># queue-proxy 지표를 긁으러 들어온다. 이 둘을 안 열면 default-deny 에 막혀 ksvc 가 READY 여도 curl 이 응답을 못 받는다.</span>
 <span class="k">network</span>:
   <span class="k">allowFromNamespaces</span>: [knative-serving, kourier-system]</code></pre>
-  <p>이 규칙은 namespace 단위로 연다(namespaceSelector = 상대 파드의 namespace 라벨로 고르는 조건. <code>kubernetes.io/metadata.name</code> 은 쿠버네티스가 모든 namespace 에 자동으로 붙이는 이름 라벨). 더 좁히려면 podSelector(상대 파드 자체의 라벨로 고르는 조건)를 붙여 activator·autoscaler·Envoy 파드만 열 수 있다. 다만 Knative 업그레이드로 라벨이 바뀌면 같이 깨진다는 대가가 있다.</p>
+  <p>이 규칙은 <span class="t">namespaceSelector</span> 로 namespace 단위로 연다. 더 좁히려면 <span class="t">podSelector</span> 를 붙여 activator·autoscaler·Envoy 파드만 열 수 있다. 다만 Knative 업그레이드로 라벨이 바뀌면 같이 깨진다는 대가가 있다.</p>
+  <aside class="notes"><dl>
+  <div><dt>namespaceSelector</dt><dd>상대 파드의 namespace 라벨로 고르는 조건. <code>kubernetes.io/metadata.name</code> 은 쿠버네티스가 모든 namespace 에 자동으로 붙이는 이름 라벨이다.</dd></div>
+  <div><dt>podSelector</dt><dd>상대 파드 자체의 라벨로 고르는 조건.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="3">
@@ -1904,13 +2115,16 @@ hello-runc.yaml 의 max-scale 5 → 4, push
 <span class="k">05 에서 같은 일이 나면</span>: 컨트롤 플레인의 server-side apply 가 400/422 계열로 실패
       → AUDIT 줄 deploy.apply error, 상태는 이전 Revision 그대로</code></pre>
   <h4>시나리오 2: toleration 빠짐 (ANALYSIS B7)</h4>
-  <p>ksvc 에서 tolerations 를 지우면 webhook 은 통과한다(칸이 없는 것은 위반이 아니다). 새 Revision 의 파드는 nodeSelector 로 exec 노드만 고르는데 그 노드의 taint 를 못 넘으니 Pending 이다. Revision 은 <code>progress-deadline</code>(기본 600s) 동안 Ready 를 기다리다 실패로 표시된다. 그동안 Route 의 latestRevision 은 옛 Ready Revision 을 가리키므로 트래픽은 끊기지 않는다. 단, 옛 Revision 이 0 으로 내려가 있으면 그 Revision 의 콜드 스타트는 정상 동작한다(옛 Revision 의 스펙엔 toleration 이 있다).</p>
+  <p>ksvc 에서 tolerations 를 지우면 webhook 은 통과한다(칸이 없는 것은 위반이 아니다). 새 Revision 의 파드는 nodeSelector 로 exec 노드만 고르는데 그 노드의 taint 를 못 넘으니 Pending 이다. Revision 은 <code>progress-deadline</code>(기본 600s) 동안 Ready 를 기다리다 실패로 표시된다. 그동안 Route 의 latestRevision 은 옛 Ready Revision 을 가리키므로 트래픽은 끊기지 않는다. 단, 옛 Revision 이 0 으로 내려가 있어도 그 Revision 의 콜드 스타트는 정상 동작한다. 옛 Revision 의 스펙엔 toleration 이 그대로 있기 때문이다.</p>
   <h4>시나리오 4: http 레지스트리와 태그 해석</h4>
   <p>setup.sh 4/5 의 patch 가 빠지면, 04 의 <code>kind-registry:5000/fn/hello:v1</code> 은 태그라서 controller 가 digest 를 물으러 간다. kind-registry 는 TLS 가 없으므로 질의가 실패하고, Revision 의 조건 <code>ContainerHealthy</code> 가 False(이유 <code>ContainerMissing</code>, 메시지 <code>Unable to fetch image "kind-registry:5000/fn/hello:v1": failed to resolve image to digest: …</code>)가 되어 Ready 가 되지 못한다(v1.23 <code>reconciler/revision/revision.go</code>, <code>revision_lifecycle.go</code>). 05 는 digest(<code>@sha256</code>) 로 주므로 이 문제를 겪지 않는다. 같은 문제가 본선 환경(사설 레지스트리, 자체 서명 인증서)에서도 날 수 있다: 해결은 건너뛰기 목록, controller Deployment 에 CA(인증 기관) 인증서를 마운트하고 <code>SSL_CERT_DIR</code> 로 알려 주기(공식 Tag resolution 문서), 또는 처음부터 digest 배포.</p>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>시나리오 1·2 는 04 함수로, 3 은 05 함수(tenant-a/hello)로 재현한다(ANALYSIS B4, B6, B7). 4 는 setup.sh 의 config-deployment patch 를 빼고 클러스터를 다시 만들어야 재현된다.</p></aside>
-<aside class="callout warn"><p class="callout-title">주의</p><p>시나리오 3 을 재현할 때 03 의 tenant values 를 Git 에서 지우면 Argo CD(ApplicationSet: 테넌트 파일마다 Application 을 찍어 내는 Argo CD 틀, <a href="ch03-tenancy.html#appset">03장</a>)가 prune 으로 NetworkPolicy 를 지운다. 되돌릴 때도 push 가 필요하고 폴링 때문에 몇 분 걸릴 수 있다. 데모 중이라면 <code>argocd.argoproj.io/refresh</code> 주석으로 당긴다.</p></aside>
+<aside class="callout warn"><p class="callout-title">주의</p><p>시나리오 3 을 재현할 때 03 의 tenant values 를 Git 에서 지우면 Argo CD 의 <span class="t">ApplicationSet</span> 이 prune 으로 NetworkPolicy 를 지운다. 되돌릴 때도 push 가 필요하고 폴링 때문에 몇 분 걸릴 수 있다. 데모 중이라면 <code>argocd.argoproj.io/refresh</code> 주석으로 당긴다.</p>
+<aside class="notes"><dl>
+<div><dt>ApplicationSet</dt><dd>테넌트 파일마다 Application 을 찍어 내는 Argo CD 틀. <a href="ch03-tenancy.html#appset">03장</a>.</dd></div>
+</dl></aside></aside>
 <aside class="callout fact"><p class="callout-title">공식 문서</p><p><a href="https://knative.dev/docs/serving/troubleshooting/debugging-application-issues/">Debugging application issues</a> · <a href="https://knative.dev/docs/serving/configuration/feature-flags/">Feature flags</a> · <a href="https://knative.dev/docs/serving/tag-resolution/">Tag resolution</a> · <a href="https://kubernetes.io/docs/concepts/services-networking/network-policies/">NetworkPolicy</a></p></aside>
 
 <!-- ============================================================ -->

@@ -30,12 +30,21 @@
 </header>
 
 <aside class="callout warn"><p class="callout-title">이 장의 전제: 코드만 있고, 실제로 만든 적은 없다</p>
-<p><code>poc/07-ec2-k3s</code> 는 클라우드 스레드에서 <code>terraform validate</code> 와 오프라인 렌더링(<code>scripts/render-k3s.sh</code>)까지만 검증했다. <code>terraform apply</code>(코드대로 AWS 리소스를 실제로 만드는 명령)·<code>destroy</code>(그것을 전부 지우는 명령)·FIS(AWS Fault Injection Service, 장애를 일부러 일으키는 AWS 서비스) 실험 시작은 <b>Jeong 의 승인 뒤, Jeong 의 맥(로컬 세션)에서만</b> 한다 (README 첫 줄, RUNBOOK 첫 줄). 그래서 이 장의 "이렇게 동작한다" 는 전부 코드와 공식 문서에서 읽어 낸 설계이고, 실측 숫자는 하나도 없다. 비용도 금액 대신 "무엇이 시간당으로 나가고 무엇이 아닌가" 의 구조로만 설명한다.</p></aside>
+<p><code>poc/07-ec2-k3s</code> 는 클라우드 스레드에서 <code>terraform validate</code> 와 오프라인 렌더링(<code>scripts/render-k3s.sh</code>)까지만 검증했다. <span class="t"><code>terraform apply</code></span>·<span class="t"><code>destroy</code></span>·<span class="t">FIS</span> 실험 시작은 <b>Jeong 의 승인 뒤, Jeong 의 맥(로컬 세션)에서만</b> 한다 (README 첫 줄, RUNBOOK 첫 줄). 그래서 이 장의 "이렇게 동작한다" 는 전부 코드와 공식 문서에서 읽어 낸 설계이고, 실측 숫자는 하나도 없다. 비용도 금액 대신 "무엇이 시간당으로 나가고 무엇이 아닌가" 의 구조로만 설명한다.</p>
+<aside class="notes"><dl>
+<div><dt><code>terraform apply</code></dt><dd>코드에 적힌 대로 AWS 리소스를 실제로 만드는 Terraform 명령.</dd></div>
+<div><dt><code>destroy</code></dt><dd>그 리소스를 전부 지우는 Terraform 명령. 둘 다 Terraform 절에서 다룬다.</dd></div>
+<div><dt>FIS(AWS Fault Injection Service)</dt><dd>장애를 일부러 일으키는 AWS 관리형 서비스. 여기서는 스팟 회수 예고를 보내는 데 쓴다.</dd></div>
+</dl></aside></aside>
 
 <!-- ============================================================ 지도 -->
 <h2 id="map">이 장의 지도</h2>
 
-<p>01~06 은 전부 맥 안의 kind(Kubernetes in Docker, 쿠버네티스 노드 하나를 Docker 컨테이너 하나로 띄워 주는 로컬용 도구)였다. kind 의 노드는 Docker 컨테이너라서 꺼지지도, 돈이 들지도, 인터넷에서 들어오지도 않았다. 07 은 같은 플랫폼(Git 을 보고 클러스터를 맞추는 Argo CD 와 그 위의 앱들, 그리고 노드를 역할별로 묶은 노드 풀(node pool) system·build·exec 구조)을 그대로 두고 <b>노드를 만드는 방법만</b> 바꾼다. 아래 그림에서 01~06 이 쌓은 층은 그대로 위에 얹히고, 맨 아래 "노드" 층이 Docker 컨테이너에서 EC2 가상 머신으로 바뀐다.</p>
+<p>01~06 은 전부 맥 안의 <span class="t">kind</span> 였다. kind 의 노드는 Docker 컨테이너라서 꺼지지도, 돈이 들지도, 인터넷에서 들어오지도 않았다. 07 은 플랫폼, 곧 Git 을 보고 클러스터를 맞추는 Argo CD 와 그 위의 앱들, 그리고 <span class="t">노드 풀</span> system·build·exec 구조는 그대로 두고 <b>노드를 만드는 방법만</b> 바꾼다. 아래 그림에서 01~06 이 쌓은 층은 그대로 위에 얹히고, 맨 아래 "노드" 층이 Docker 컨테이너에서 EC2 가상 머신으로 바뀐다.</p>
+<aside class="notes"><dl>
+<div><dt>kind(Kubernetes in Docker)</dt><dd>쿠버네티스 노드 하나를 Docker 컨테이너 하나로 띄워 주는 로컬용 클러스터 도구. 01~06 의 무대.</dd></div>
+<div><dt>노드 풀(node pool)</dt><dd>같은 역할의 노드를 라벨로 묶은 단위. 이 PoC 는 system·build·exec 세 풀을 쓴다.</dd></div>
+</dl></aside>
 
 <figure>
   <div class="fig scroll">
@@ -68,7 +77,7 @@
   <figcaption><b>그림 9-1.</b> 07 단계의 자리. 위 두 층(Git 과 워크로드)은 로컬과 같은 파일을 쓰고, 맨 아래 노드 층만 kind 컨테이너에서 EC2 로 바뀐다.</figcaption>
 </figure>
 
-<p>이 장의 절과 한 줄 요약이다. 표에 나오는 낯선 말(k3s 의 server·agent, Terraform 의 state, user_data, 인스턴스 프로파일, 시작 템플릿, NTH, FIS, SSM 같은 것)은 각 절에서 처음 나오는 자리에서 바로 설명하므로, 여기서는 "무슨 절이 있나" 만 보고 넘어가도 된다.</p>
+<p>이 장의 절과 한 줄 요약이다. 표에 나오는 낯선 말(k3s 의 server·agent, Terraform 의 state, user_data, 인스턴스 프로파일, 시작 템플릿, NTH, FIS, SSM 같은 것)은 각 절에서 처음 나오는 자리의 주석에서 설명하므로, 여기서는 "무슨 절이 있나" 만 보고 넘어가도 된다.</p>
 <div class="table-wrap"><table>
 <thead><tr><th>절</th><th>한 줄</th></tr></thead>
 <tbody>
@@ -96,19 +105,54 @@
 
 <div class="tier" data-tier="1">
   <h3>바뀌지 않는 것과 바뀌는 것</h3>
-  <p>쿠버네티스 API 위쪽은 거의 그대로다. 매니페스트(manifest, "이런 리소스가 있어야 한다" 를 적은 YAML 파일), Helm 차트(매니페스트 묶음을 변수와 함께 포장한 패키지), Argo CD Application(Git 의 폴더 하나를 클러스터에 맞추라고 Argo CD 에 등록하는 단위), 노드 풀 라벨 키 <code>pool</code> 은 같은 파일을 쓴다. 바뀌는 것은 "노드를 어떻게 만들고, 어떻게 들어가고, 언제 없어지나" 이다.</p>
+  <p>쿠버네티스 API 위쪽은 거의 그대로다. <span class="t">매니페스트</span>, <span class="t">Helm 차트</span>, <span class="t">Argo CD Application</span>, 노드 풀 라벨 키 <code>pool</code> 은 같은 파일을 쓴다. 바뀌는 것은 "노드를 어떻게 만들고, 어떻게 들어가고, 언제 없어지나" 이다.</p>
+  <aside class="notes"><dl>
+  <div><dt>매니페스트(manifest)</dt><dd>"이런 리소스가 있어야 한다" 를 적은 쿠버네티스 YAML 파일.</dd></div>
+  <div><dt>Helm 차트</dt><dd>매니페스트 묶음을 변수와 함께 포장한 패키지. 값만 바꿔 여러 클러스터에 깐다.</dd></div>
+  <div><dt>Argo CD Application</dt><dd>Git 의 폴더 하나를 클러스터에 맞추라고 Argo CD 에 등록하는 단위(<a href="ch01-gitops.html">01장</a>).</dd></div>
+  </dl></aside>
   <p>README 1.1절은 새로 생기는 문제를 셋으로 정리한다.</p>
   <ul>
     <li><b>돈</b>: VM 은 켜져 있는 동안 계속 과금된다. 끄는 걸 잊으면 계속 나간다.</li>
-    <li><b>사라짐</b>: 스팟 인스턴스(Spot Instance, EC2 의 남는 용량을 싸게 빌리는 구매 방식)는 AWS 가 그 용량이 필요해지면 2분 예고 뒤 회수한다. 노드가 진짜로 없어진다.</li>
-    <li><b>접속</b>: 맥에서 쿠버네티스 API 서버(kubectl 과 모든 구성 요소가 말을 거는 클러스터의 창구)까지 길을 내야 하고, 그 길을 아무나 못 쓰게 막아야 한다.</li>
+    <li><b>사라짐</b>: <span class="t">스팟 인스턴스</span>는 AWS 가 그 용량이 필요해지면 2분 예고 뒤 회수한다. 노드가 진짜로 없어진다.</li>
+    <li><b>접속</b>: 맥에서 쿠버네티스 <span class="t">API 서버</span>까지 길을 내야 하고, 그 길을 아무나 못 쓰게 막아야 한다.</li>
   </ul>
-  <p>이 장의 모든 장치는 이 셋 중 하나에 대한 답이다. 돈 → 예산 알람·야간 0대 예약·같은 날 destroy·<code>check-leftovers.sh</code>(남은 과금 리소스를 찾는 스크립트). 사라짐 → ASG(Auto Scaling Group, 정해진 대수의 EC2 를 유지해 주는 AWS 의 관리자)·NTH(aws-node-termination-handler, 회수 예고를 보고 파드를 미리 옮기는 작은 프로그램)·PDB(PodDisruptionBudget, "한 번에 이만큼은 남겨 두라" 는 약속)·graceful node shutdown(OS 가 꺼질 때 kubelet 이 파드를 정리할 시간을 버는 쿠버네티스 기능). 접속 → SSM(AWS Systems Manager, 포트를 열지 않고 VM 에 들어가게 해 주는 서비스) 포트 포워딩(22·6443 은 안 연다). 이름만 먼저 보고, 각각은 해당 절에서 다시 설명한다.</p>
+  <aside class="notes"><dl>
+  <div><dt>스팟 인스턴스(Spot Instance)</dt><dd>EC2 의 남는 용량을 할인된 값에 빌리는 구매 방식. 회수 흐름은 스팟 절.</dd></div>
+  <div><dt>API 서버</dt><dd>kubectl 과 모든 구성 요소가 말을 거는 클러스터의 창구. 리소스의 생성·조회가 전부 여기를 지난다.</dd></div>
+  </dl></aside>
+  <p>이 장의 모든 장치는 이 셋 중 하나에 대한 답이다. 돈 → 예산 알람·야간 0대 예약·같은 날 destroy·<span class="t"><code>check-leftovers.sh</code></span>. 사라짐 → <span class="t">ASG</span>·<span class="t">NTH</span>·<span class="t">PDB</span>·<span class="t">graceful node shutdown</span>. 접속 → <span class="t">SSM</span> 포트 포워딩(22·6443 은 안 연다). 이름만 먼저 보고, 각각은 해당 절에서 다시 설명한다.</p>
+  <aside class="notes"><dl>
+  <div><dt><code>check-leftovers.sh</code></dt><dd>destroy 뒤 남은 과금 리소스를 태그로 찾아 주는 스크립트(안전장치 절).</dd></div>
+  <div><dt>ASG(Auto Scaling Group)</dt><dd>정해진 대수의 EC2 를 유지해 주는 AWS 의 관리자. 사라진 노드 자리를 새 인스턴스로 채운다.</dd></div>
+  <div><dt>NTH(aws-node-termination-handler)</dt><dd>회수 예고를 보고 파드를 미리 다른 노드로 옮기는 작은 프로그램.</dd></div>
+  <div><dt>PDB(PodDisruptionBudget)</dt><dd>"한 번에 이만큼은 남겨 두라" 는 약속. 파드를 내보낼 때 최소 가동 수를 지킨다.</dd></div>
+  <div><dt>graceful node shutdown</dt><dd>OS 가 꺼질 때 kubelet 이 파드를 정리할 시간을 버는 쿠버네티스 기능.</dd></div>
+  <div><dt>SSM(AWS Systems Manager)</dt><dd>포트를 열지 않고 VM 에 들어가고 명령을 보내게 해 주는 AWS 서비스.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="2">
   <h3>한 장으로 비교</h3>
-  <p>그림과 표를 읽기 전에, 이 장 내내 쓰는 쿠버네티스 말 몇 개를 짚는다. <b>kubectl</b> 은 API 서버에 명령을 보내는 CLI 이고, 어느 클러스터에 어떤 자격으로 붙을지는 <b>kubeconfig</b> 파일에 적힌다. <b>컨트롤 플레인</b>은 API 서버·스케줄러(파드를 어느 노드에 둘지 정함)·컨트롤러 매니저(Deployment 같은 리소스가 원하는 상태를 유지하도록 돌리는 루프 모음)의 묶음이고(<a href="ch07-control-plane.html#cp-dp">07장</a>의 "컨트롤 플레인" Spring 서비스와는 다른 말), 그 상태는 <b>etcd</b> 라는 키-값 저장소에 들어간다. 노드마다 <b>kubelet</b> 이 있어 "이 노드에 이 파드를 띄워라" 를 실제로 실행하고, <b>CNI</b>(Container Network Interface) 플러그인이 파드에 IP 를 주고 노드 사이를 잇는다. <b>taint</b> 는 노드가 "이걸 견디는 파드만 와라" 고 거는 표시, <b>toleration</b> 은 파드가 "견딘다" 고 다는 표시다(세 낱말의 설계는 <a href="ch03-tenancy.html#taints">03장</a>, 이 장에서는 노드 풀 절). <b>인그레스(Ingress)</b> 는 "이 호스트·경로의 HTTP 요청은 이 Service 로" 라는 규칙이고, 그 규칙을 실제 프록시로 실행하는 것이 인그레스 컨트롤러(로컬은 Kourier, k3s 기본은 Traefik)다. <b>NodePort</b> 는 모든 노드의 같은 포트로 Service 를 여는 방식이다.</p>
+  <p>그림과 표를 읽기 전에, 이 장 내내 쓰는 쿠버네티스 말 몇 개를 짚는다. 맥의 <span class="t">kubectl</span> 은 <span class="t">kubeconfig</span> 에 적힌 주소와 자격으로 API 서버에 명령을 보낸다. API 서버·<span class="t">스케줄러</span>·<span class="t">컨트롤러 매니저</span>를 묶어 <span class="t">컨트롤 플레인</span>이라 부르고, 클러스터의 상태는 전부 <span class="t">etcd</span> 에 들어간다. <a href="ch07-control-plane.html#cp-dp">07장</a>의 "컨트롤 플레인" 서비스는 이름만 같은 다른 말이다.</p>
+  <aside class="notes"><dl>
+  <div><dt>kubectl</dt><dd>쿠버네티스 API 서버에 명령을 보내는 CLI.</dd></div>
+  <div><dt>kubeconfig</dt><dd>어느 클러스터에 어떤 자격으로 붙을지 적어 둔 파일. kubectl 이 읽는다.</dd></div>
+  <div><dt>스케줄러</dt><dd>새 파드를 어느 노드에 둘지 정하는 컨트롤 플레인 부품.</dd></div>
+  <div><dt>컨트롤러 매니저</dt><dd>Deployment 같은 리소스가 원하는 상태를 유지하도록 돌리는 루프(컨트롤러)들의 묶음.</dd></div>
+  <div><dt>컨트롤 플레인</dt><dd>API 서버·스케줄러·컨트롤러 매니저처럼 클러스터를 다스리는 부품들의 총칭. k3s 에서는 server 노드가 맡는다.</dd></div>
+  <div><dt>etcd</dt><dd>쿠버네티스가 모든 리소스의 상태를 저장하는 키-값 저장소. k3s 는 기본으로 SQLite 로 대신한다.</dd></div>
+  </dl></aside>
+  <p>노드 쪽에는 노드마다 <span class="t">kubelet</span> 이 있어 "이 노드에 이 파드를 띄워라" 를 실제로 실행하고, <span class="t">CNI</span> 플러그인이 파드에 IP 를 주고 노드 사이를 잇는다. 노드가 거는 <span class="t">taint</span> 를 파드가 <span class="t">toleration</span> 으로 견뎌야 그 노드에 갈 수 있다(설계는 <a href="ch03-tenancy.html#taints">03장</a>, 이 장에서는 노드 풀 절). HTTP 요청을 어느 Service 로 보낼지는 <span class="t">인그레스</span> 규칙에 적고, 그 규칙을 실제 프록시로 실행하는 것이 <span class="t">인그레스 컨트롤러</span>다. <span class="t">NodePort</span> 는 모든 노드의 같은 포트로 Service 를 여는 방식이다.</p>
+  <aside class="notes"><dl>
+  <div><dt>kubelet</dt><dd>노드마다 하나씩 있는 에이전트. API 서버가 정한 파드를 그 노드에서 실제로 띄우고 상태를 보고한다.</dd></div>
+  <div><dt>CNI(Container Network Interface)</dt><dd>파드에 IP 를 주고 노드 사이를 잇는 네트워크 플러그인 규격. 로컬은 Cilium, k3s 기본은 flannel.</dd></div>
+  <div><dt>taint</dt><dd>노드가 "이걸 견디는 파드만 와라" 고 거는 표시.</dd></div>
+  <div><dt>toleration</dt><dd>파드가 "그 taint 를 견딘다" 고 다는 표시.</dd></div>
+  <div><dt>인그레스(Ingress)</dt><dd>"이 호스트·경로의 HTTP 요청은 이 Service 로" 라는 규칙 리소스.</dd></div>
+  <div><dt>인그레스 컨트롤러</dt><dd>인그레스 규칙을 읽어 실제 프록시로 실행하는 부품. 로컬은 Kourier, k3s 기본은 Traefik.</dd></div>
+  <div><dt>NodePort</dt><dd>모든 노드의 같은 포트를 열어 클러스터 안 Service 로 넘겨 주는 Service 타입.</dd></div>
+  </dl></aside>
   <figure>
     <div class="fig scroll-l">
       <svg viewBox="0 0 1180 640" role="img" aria-labelledby="f2-t">
@@ -192,34 +236,61 @@
   <thead><tr><th>항목</th><th>로컬 kind (01~06)</th><th>EC2 k3s (07)</th><th>왜 달라졌나</th></tr></thead>
   <tbody>
   <tr><td>노드의 정체</td><td>Docker 컨테이너 (<code>kindest/node</code>)</td><td>EC2 가상 머신, Ubuntu 24.04</td><td>스팟·과금·네트워크를 진짜로 겪으려고</td></tr>
-  <tr><td>쿠버네티스 배포판</td><td>kubeadm(쿠버네티스 공식 설치 도구) 기반 kind</td><td>k3s (server 1 + agent 3. server 는 컨트롤 플레인을 가진 노드, agent 는 파드만 돌리는 노드)</td><td>설치가 스크립트 한 줄, 부품이 다 들어 있음 (결정 1)</td></tr>
+  <tr><td>쿠버네티스 배포판</td><td><span class="t">kubeadm</span> 기반 kind</td><td>k3s (<span class="t">server</span> 1 + <span class="t">agent</span> 3)</td><td>설치가 스크립트 한 줄, 부품이 다 들어 있음 (결정 1)</td></tr>
   <tr><td>컨트롤 플레인</td><td>전용 control-plane 노드</td><td>system 노드가 겸함 (server)</td><td>노드 하나를 아낀다. taint 로 일반 파드는 막음</td></tr>
-  <tr><td>CNI</td><td>Cilium + Hubble (<a href="ch04-network.html#cilium">04장</a>)</td><td>k3s 기본 flannel (VXLAN, 노드 사이에 가상 터널을 뚫어 파드 패킷을 실어 나르는 방식)</td><td>기본값으로 시작. Cilium 은 server-config 주석의 선택 과제</td></tr>
-  <tr><td>저장소(데이터스토어)</td><td>etcd (kind 내부)</td><td>SQLite (파일 하나짜리 내장 DB. k3s 단일 server 기본)</td><td>server 1대에는 etcd 가 과하다</td></tr>
-  <tr><td>노드 만들기</td><td><code>kind create cluster --config</code></td><td><code>terraform apply</code> → user_data(EC2 를 만들 때 넣어 두는 텍스트. 첫 부팅 때 스크립트로 실행된다)로 k3s 설치</td><td>클라우드 리소스를 코드로 만들고 같은 날 지우려고</td></tr>
+  <tr><td>CNI</td><td>Cilium + Hubble (<a href="ch04-network.html#cilium">04장</a>)</td><td>k3s 기본 <span class="t">flannel</span> (VXLAN)</td><td>기본값으로 시작. Cilium 은 server-config 주석의 선택 과제</td></tr>
+  <tr><td>저장소(데이터스토어)</td><td>etcd (kind 내부)</td><td><span class="t">SQLite</span> (k3s 단일 server 기본)</td><td>server 1대에는 etcd 가 과하다</td></tr>
+  <tr><td>노드 만들기</td><td><code>kind create cluster --config</code></td><td><code>terraform apply</code> → <span class="t">user_data</span> 로 k3s 설치</td><td>클라우드 리소스를 코드로 만들고 같은 날 지우려고</td></tr>
   <tr><td>라벨·taint 붙이기</td><td><code>kind-config.yaml</code> 의 kubeadm 패치</td><td>k3s <code>config.yaml</code> 의 <code>node-label</code>·<code>node-taint</code></td><td>노드가 부팅할 때 스스로 붙임 → 스팟 교체 노드도 같은 라벨</td></tr>
   <tr><td>exec 풀 taint</td><td><code>pool=exec:NoSchedule</code></td><td>없음</td><td>결정 3: 앞 단계 앱을 고치지 않고 그대로 따라오게</td></tr>
-  <tr><td>입구</td><td>맥 8081 → NodePort 31080 → Kourier</td><td>노드 퍼블릭 IP:80 → ServiceLB(k3s 내장 로드밸런서 대용) → Traefik</td><td>k3s 기본 인그레스 사용. 80/443 은 내 IP 만 허용</td></tr>
+  <tr><td>입구</td><td>맥 8081 → NodePort 31080 → Kourier</td><td>노드 퍼블릭 IP:80 → <span class="t">ServiceLB</span> → Traefik</td><td>k3s 기본 인그레스 사용. 80/443 은 내 IP 만 허용</td></tr>
   <tr><td>API 접속</td><td>kind 가 kubeconfig 를 써 줌</td><td>SSM 포트 포워딩 + SSM 으로 k3s.yaml 가져오기</td><td>6443·22 를 인터넷에 안 연다</td></tr>
   <tr><td>이미지 레지스트리</td><td><code>kind-registry:5000</code></td><td>공개 레지스트리 (gVisor 측정만 ttl.sh)</td><td>로컬 레지스트리 컨테이너가 없다</td></tr>
   <tr><td>노드가 사라지는 일</td><td>06 에서 <code>docker pause</code> 로 흉내</td><td>스팟 회수 (진짜), FIS 로 연습</td><td>스팟 채택의 대가를 재려고</td></tr>
-  <tr><td>죽은 노드 오브젝트</td><td>해당 없음</td><td>NotReady 로 남음 → 손으로 <code>kubectl delete node</code></td><td>k3s 의 내장 클라우드 컨트롤러(cloud controller manager, 클라우드 API 를 보고 사라진 VM 의 Node 오브젝트를 지우는 등 클라우드와 클러스터를 맞추는 구성 요소)는 AWS 를 모른다</td></tr>
+  <tr><td>죽은 노드 오브젝트</td><td>해당 없음</td><td>NotReady 로 남음 → 손으로 <code>kubectl delete node</code></td><td>k3s 의 내장 <span class="t">클라우드 컨트롤러</span>는 AWS 를 모른다</td></tr>
   <tr><td>돈</td><td>없음</td><td>인스턴스 시간, EBS, 퍼블릭 IPv4, FIS 실행</td><td>destroy 가 본체, 예산 알람은 보조</td></tr>
   </tbody></table></div>
+  <aside class="notes"><dl>
+  <div><dt>kubeadm</dt><dd>쿠버네티스 공식 설치 도구. kind 가 컨테이너 안에서 이것으로 클러스터를 세운다.</dd></div>
+  <div><dt>server</dt><dd>k3s 에서 컨트롤 플레인과 데이터스토어를 가진 노드. 파드도 받을 수 있다.</dd></div>
+  <div><dt>agent</dt><dd>k3s 에서 컨트롤 플레인 없이 파드만 돌리는 노드. server 주소와 토큰으로 붙는다.</dd></div>
+  <div><dt>flannel</dt><dd>k3s 가 내장한 CNI 플러그인. 기본 백엔드 VXLAN 은 노드 사이에 가상 터널을 뚫어 파드 패킷을 실어 나른다.</dd></div>
+  <div><dt>SQLite</dt><dd>파일 하나짜리 내장 데이터베이스. k3s 는 kine 변환층을 거쳐 etcd 대신 쓴다.</dd></div>
+  <div><dt>user_data</dt><dd>EC2 를 만들 때 함께 넣어 두는 텍스트. 첫 부팅 때 cloud-init 이 스크립트로 한 번 실행한다.</dd></div>
+  <div><dt>ServiceLB</dt><dd>k3s 내장 로드밸런서 대용. <code>type: LoadBalancer</code> Service 마다 노드 포트를 열어 넘겨 주는 작은 컨트롤러.</dd></div>
+  <div><dt>클라우드 컨트롤러(cloud controller manager)</dt><dd>클라우드 API 를 보고 사라진 VM 의 Node 오브젝트를 지우는 등 클라우드와 클러스터를 맞추는 구성 요소.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="3">
   <h3>세부: "노드" 라는 말이 가리키는 것이 바뀐다</h3>
   <p>kind 노드는 맥의 Docker Desktop VM 하나 안에 있는 컨테이너다. 네 노드가 같은 커널, 같은 디스크, 같은 메모리 한도를 나눠 쓴다. 그래서 06 의 "노드 다운" 은 <code>docker pause</code> 로 컨테이너를 얼리는 흉내였고, 노드 하나가 메모리를 다 먹으면 다른 노드도 같이 느려졌다. 04 의 gVisor 함수 실행이 실패한 것도 kind 노드가 "컨테이너 안의 컨테이너 런타임" 이라 권한 제약이 있었기 때문이다 (04 README 9절 보충).</p>
-  <p>EC2 노드는 각자 하이퍼바이저(한 물리 서버를 여러 VM 으로 나누는 소프트웨어) 위 독립된 VM 이다. 커널·디스크(EBS, EC2 에 붙는 네트워크 블록 디스크)·네트워크 인터페이스(ENI)·퍼블릭 IP 가 노드마다 따로 있다. 그 결과 아래가 달라진다.</p>
+  <p>EC2 노드는 각자 <span class="t">하이퍼바이저</span> 위 독립된 VM 이다. 커널·<span class="t">EBS</span> 디스크·네트워크 인터페이스 <span class="t">ENI</span>·퍼블릭 IP 가 노드마다 따로 있다. 그 결과 아래가 달라진다.</p>
+  <aside class="notes"><dl>
+  <div><dt>하이퍼바이저</dt><dd>한 물리 서버를 여러 VM 으로 나누어 돌리는 소프트웨어.</dd></div>
+  <div><dt>EBS(Elastic Block Store)</dt><dd>EC2 에 붙는 네트워크 블록 디스크. 루트 볼륨도 이것이다.</dd></div>
+  <div><dt>ENI(Elastic Network Interface)</dt><dd>VPC 안의 가상 네트워크 카드. 사설 IP 와 보안 그룹이 여기에 붙는다.</dd></div>
+  </dl></aside>
   <ul>
     <li><b>장애 단위</b>: 노드 하나가 진짜로 사라질 수 있다 (스팟 회수, 하드웨어 점검 이벤트). 대신 다른 노드에는 영향이 없다.</li>
-    <li><b>부팅 경로</b>: 노드는 AMI(Amazon Machine Image, 디스크 이미지)에서 부팅하고, user_data 스크립트(EC2 를 만들 때 함께 넣어 두는 텍스트. 우분투의 cloud-init 이 첫 부팅 때 root 로 실행한다)가 첫 부팅에 한 번 k3s 를 설치하고 조인한다. 새 노드는 사람 손 없이 같은 모양이 되어야 한다 → 라벨·taint 는 노드 스스로 붙인다.</li>
-    <li><b>메타데이터</b>: 노드 안에서 <code>169.254.169.254</code> 의 IMDS(Instance Metadata Service)를 읽을 수 있다. 스팟 회수 예고가 여기에 올라온다.</li>
-    <li><b>네트워크 경계</b>: 노드가 인터넷 주소를 가진다. 보안 그룹(security group, 인스턴스 앞에 붙는 허용 규칙 목록 = 방화벽)이 문을 닫지 않으면 인터넷 전체가 노드의 포트에 닿는다.</li>
-    <li><b>수명 관리</b>: 노드는 "만든 뒤 지우기" 까지가 한 세트다. Terraform state(Terraform 이 지금까지 만든 리소스의 목록과 실제 ID 를 적어 둔 파일)가 무엇을 만들었는지 기억하고, destroy 가 같은 목록을 지운다.</li>
+    <li><b>부팅 경로</b>: 노드는 <span class="t">AMI</span> 에서 부팅하고, user_data 스크립트가 첫 부팅에 한 번 k3s 를 설치하고 조인한다. 새 노드는 사람 손 없이 같은 모양이 되어야 한다 → 라벨·taint 는 노드 스스로 붙인다.</li>
+    <li><b>메타데이터</b>: 노드 안에서 <code>169.254.169.254</code> 의 <span class="t">IMDS</span> 를 읽을 수 있다. 스팟 회수 예고가 여기에 올라온다.</li>
+    <li><b>네트워크 경계</b>: 노드가 인터넷 주소를 가진다. <span class="t">보안 그룹</span>이 문을 닫지 않으면 인터넷 전체가 노드의 포트에 닿는다.</li>
+    <li><b>수명 관리</b>: 노드는 "만든 뒤 지우기" 까지가 한 세트다. <span class="t">Terraform state</span> 가 무엇을 만들었는지 기억하고, destroy 가 같은 목록을 지운다.</li>
   </ul>
-  <p>아래 의사코드의 VPC(내 전용 사설 네트워크)·서브넷(VPC 를 나눈 주소 구간)·IGW(인터넷 게이트웨이, VPC 와 인터넷 사이의 문)·IAM(AWS 의 권한 체계)은 뒤의 네트워크·IAM 절에서 하나씩 다룬다.</p>
+  <aside class="notes"><dl>
+  <div><dt>AMI(Amazon Machine Image)</dt><dd>EC2 가 부팅하는 디스크 이미지. 여기서는 Canonical 의 Ubuntu 24.04.</dd></div>
+  <div><dt>IMDS(Instance Metadata Service)</dt><dd>인스턴스 안에서만 닿는 주소로 자기 ID·역할 자격·스팟 예고 같은 정보를 주는 EC2 서비스.</dd></div>
+  <div><dt>보안 그룹(security group)</dt><dd>인스턴스 앞에 붙는 허용 규칙 목록, 곧 방화벽.</dd></div>
+  <div><dt>Terraform state</dt><dd>Terraform 이 지금까지 만든 리소스의 목록과 실제 ID 를 적어 둔 파일.</dd></div>
+  </dl></aside>
+  <p>아래 의사코드의 <span class="t">VPC</span>·<span class="t">서브넷</span>·<span class="t">IGW</span>·<span class="t">IAM</span> 은 뒤의 네트워크·IAM 절에서 하나씩 다룬다.</p>
+  <aside class="notes"><dl>
+  <div><dt>VPC(Virtual Private Cloud)</dt><dd>AWS 안에 만드는 내 전용 사설 네트워크.</dd></div>
+  <div><dt>서브넷</dt><dd>VPC 를 나눈 주소 구간. 가용 영역 하나에 속한다.</dd></div>
+  <div><dt>IGW(인터넷 게이트웨이)</dt><dd>VPC 와 인터넷 사이의 문.</dd></div>
+  <div><dt>IAM(Identity and Access Management)</dt><dd>AWS 의 권한 체계. 누가 어떤 API 를 부를 수 있나를 정한다.</dd></div>
+  </dl></aside>
   <pre class="pseudo"><code><span class="k">로컬</span>:  kind create cluster  → 컨테이너 4개 → kubeadm init/join → 라벨·taint 패치
 <span class="k">EC2</span>:   terraform apply
         → VPC·서브넷·IGW·보안 그룹·IAM          <span class="c">// 네트워크와 권한</span>
@@ -229,7 +300,12 @@
         <span class="c">// 라벨·taint 는 config.yaml 안에. 스팟 교체 노드도 같은 user_data 라 같은 모양</span></code></pre>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>노드 풀 라벨 키는 로컬과 같은 <code>pool</code> 을 쓰고 값도 <code>system</code>·<code>build</code>·<code>exec</code> 로 같다. 그래서 05 의 빌드 Job(한 번 돌고 끝나는 파드를 만드는 리소스) 템플릿이나 04 의 ksvc(Knative Service, 함수 하나를 뜻하는 Knative 리소스)처럼 <code>nodeSelector: pool: exec</code>(파드가 "이 라벨이 있는 노드로만" 가게 하는 필드)를 쓰는 매니페스트를 고치지 않고 가져올 수 있다. 새로 붙는 라벨은 <code>capacity-type</code>(spot / on-demand) 하나로, NTH 를 스팟 노드에만 띄우는 데 쓴다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>노드 풀 라벨 키는 로컬과 같은 <code>pool</code> 을 쓰고 값도 <code>system</code>·<code>build</code>·<code>exec</code> 로 같다. 그래서 05 의 빌드 <span class="t">Job</span> 템플릿이나 04 의 <span class="t">ksvc</span> 처럼 <span class="t">nodeSelector</span> 가 <code>pool: exec</code> 인 매니페스트를 고치지 않고 가져올 수 있다. 새로 붙는 라벨은 <code>capacity-type</code>(spot / on-demand) 하나로, NTH 를 스팟 노드에만 띄우는 데 쓴다.</p>
+<aside class="notes"><dl>
+<div><dt>Job</dt><dd>한 번 돌고 끝나는 파드를 만드는 쿠버네티스 리소스. 빌드처럼 끝이 있는 작업에 쓴다.</dd></div>
+<div><dt>ksvc(Knative Service)</dt><dd>함수 하나를 뜻하는 Knative 리소스. 트래픽에 따라 파드 수가 0 까지 줄어든다.</dd></div>
+<div><dt>nodeSelector</dt><dd>파드가 "이 라벨이 있는 노드로만" 가게 하는 파드 스펙 필드.</dd></div>
+</dl></aside></aside>
 
 <aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>목적은 "작년 본선 우승팀 구성(EC2 위 직접 쿠버네티스, 스팟 실행 노드, 빌드 노드 분리)을 우리 손으로 세우고, 생성·파괴·스팟 복구를 직접 겪는 것" 이다 (README 로드맵 줄). 관리형 EKS 는 노드 아래를 감춰서 이 목적에 맞지 않고, 로컬에서 스팟을 흉내 내는 것(06 의 <code>docker pause</code>)은 IMDS·ASG·NTH 경로를 전혀 지나지 않는다.</p></aside>
 
@@ -240,7 +316,13 @@
 
 <div class="tier" data-tier="1">
   <h3>k3s 는 무엇이고 왜 쓰나</h3>
-  <p>k3s 는 Rancher(현재 SUSE)가 만든 CNCF(쿠버네티스를 관리하는 재단) 인증 쿠버네티스 배포판(distribution)이다. 핵심은 <b>바이너리 하나</b>에 API 서버, 스케줄러, 컨트롤러 매니저, kubelet, kube-proxy(Service 의 가상 IP 를 노드의 네트워크 규칙으로 풀어 주는 부품), containerd(컨테이너를 실제로 실행하는 런타임), flannel(CNI 플러그인), 그리고 클러스터 기본 부품을 넣어 둔 것이다. 설치는 <code>curl -sfL https://get.k3s.io | sh -</code> 한 줄이고, 설정은 <code>/etc/rancher/k3s/config.yaml</code> 파일 하나다.</p>
+  <p>k3s 는 Rancher(현재 SUSE)가 만든 <span class="t">CNCF</span> 인증 쿠버네티스 <span class="t">배포판</span>이다. 핵심은 <b>바이너리 하나</b>에 API 서버, 스케줄러, 컨트롤러 매니저, kubelet, <span class="t">kube-proxy</span>, <span class="t">containerd</span>, flannel, 그리고 클러스터 기본 부품을 넣어 둔 것이다. 설치는 <code>curl -sfL https://get.k3s.io | sh -</code> 한 줄이고, 설정은 <code>/etc/rancher/k3s/config.yaml</code> 파일 하나다.</p>
+  <aside class="notes"><dl>
+  <div><dt>CNCF(Cloud Native Computing Foundation)</dt><dd>쿠버네티스를 관리하는 재단. "인증 배포판" 은 그 적합성 시험을 통과했다는 뜻.</dd></div>
+  <div><dt>배포판(distribution)</dt><dd>쿠버네티스 부품들을 골라 묶고 설치 방법을 정해 둔 패키지. kubeadm·k3s·EKS 가 각각 하나다.</dd></div>
+  <div><dt>kube-proxy</dt><dd>Service 의 가상 IP 를 노드의 네트워크 규칙으로 풀어 주는 부품.</dd></div>
+  <div><dt>containerd</dt><dd>컨테이너를 실제로 실행하는 런타임. kubelet 이 이것에게 "띄워라" 고 한다.</dd></div>
+  </dl></aside>
   <p>노드 역할은 둘뿐이다.</p>
   <dl class="terms">
     <dt>server</dt><dd><code>k3s server</code> 를 실행하는 호스트. 컨트롤 플레인과 데이터스토어를 k3s 가 관리한다. server 도 kubelet·컨테이너 런타임·CNI 를 돌리므로 파드를 받을 수 있다.</dd>
@@ -302,14 +384,23 @@
         <text x="596" y="270" class="d-lbl" transform="rotate(-90 596 270)">VXLAN 8472/udp</text>
       </svg>
     </div>
-    <figcaption><b>그림 9-3.</b> k3s server 와 agent. 회색 화살표는 agent → server 6443 (조인과 API 호출, agent 가 먼저 연결을 연다). 보라 점선은 노드 사이 flannel VXLAN 오버레이(실제 네트워크 위에 가상 터널을 깔아 파드끼리 직접 통신하는 것처럼 보이게 하는 층). 패키지 부품은 server 의 manifests 폴더에서 AddOn 으로 자동 배포된다.</figcaption>
+    <figcaption><b>그림 9-3.</b> k3s server 와 agent. 회색 화살표는 agent → server 6443 (조인과 API 호출, agent 가 먼저 연결을 연다). 보라 점선은 노드 사이 flannel VXLAN <span class="t">오버레이</span>. 패키지 부품은 server 의 manifests 폴더에서 AddOn 으로 자동 배포된다.</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>오버레이(overlay) 네트워크</dt><dd>실제 네트워크 위에 가상 터널을 깔아 파드끼리 직접 통신하는 것처럼 보이게 하는 층. flannel VXLAN 이 그것이다.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="2">
   <h3>k3s 는 안에서 어떻게 도나</h3>
   <h4>(1) 바이너리 하나, 프로세스 하나</h4>
-  <p>kubeadm 클러스터는 kube-apiserver·etcd·scheduler 를 각각 정적 파드(static pod, kubelet 이 API 서버 없이 노드의 파일에서 직접 띄우는 파드)로 띄운다. k3s server 는 이것들을 <b>한 프로세스 안의 고루틴</b>(Go 언어의 경량 스레드)으로 돌린다. 그래서 <code>kubectl -n kube-system get pods</code> 에 API 서버 파드가 안 보인다. 대신 systemd(리눅스가 부팅 때 서비스들을 띄우고 관리하는 기본 관리자) 서비스 <code>k3s</code>(server) 또는 <code>k3s-agent</code>(agent) 하나가 노드의 쿠버네티스 전부다. 로그도 <code>journalctl -u k3s</code> / <code>journalctl -u k3s-agent</code>(systemd 의 로그 보기 명령) 한 곳에 모인다.</p>
+  <p>kubeadm 클러스터는 kube-apiserver·etcd·scheduler 를 각각 <span class="t">정적 파드</span>로 띄운다. k3s server 는 이것들을 <b>한 프로세스 안의 <span class="t">고루틴</span></b>으로 돌린다. 그래서 <code>kubectl -n kube-system get pods</code> 에 API 서버 파드가 안 보인다. 대신 <span class="t">systemd</span> 서비스 <code>k3s</code>(server) 또는 <code>k3s-agent</code>(agent) 하나가 노드의 쿠버네티스 전부다. 로그도 <span class="t">journalctl</span> 로 한 곳에서 본다(<code>journalctl -u k3s</code> 또는 <code>journalctl -u k3s-agent</code>).</p>
+  <aside class="notes"><dl>
+  <div><dt>정적 파드(static pod)</dt><dd>kubelet 이 API 서버 없이 노드의 파일(<code>/etc/kubernetes/manifests</code>)에서 직접 띄우는 파드.</dd></div>
+  <div><dt>고루틴(goroutine)</dt><dd>Go 언어의 경량 스레드. 한 프로세스 안에서 여러 일을 동시에 돈다.</dd></div>
+  <div><dt>systemd</dt><dd>리눅스가 부팅 때 서비스들을 띄우고 관리하는 기본 관리자.</dd></div>
+  <div><dt>journalctl</dt><dd>systemd 가 모아 둔 서비스 로그를 보는 명령. <code>-u</code> 로 서비스 이름을 고른다.</dd></div>
+  </dl></aside>
 
   <h4>(2) 데이터스토어: kine 과 SQLite, 그리고 etcd</h4>
   <p>쿠버네티스 API 서버는 etcd API 로 상태를 저장한다. k3s 는 kine 이라는 변환층을 넣어 etcd API 호출을 SQLite·MySQL·PostgreSQL 같은 일반 데이터베이스 호출로 바꾼다. 공식 문서의 구성은 셋이다.</p>
@@ -384,17 +475,29 @@ sequenceDiagram
   </figure>
 
   <h4>(4) 패키지 부품과 자동 배포 매니페스트</h4>
-  <p>server 는 <code>/var/lib/rancher/k3s/server/manifests</code> 에 있는 YAML 을 <code>kubectl apply</code> 처럼 자동 적용하고, 각각을 <code>AddOn</code> 커스텀 리소스(CRD 로 추가한 사용자 정의 리소스 종류)로 추적한다. coredns, traefik, local-storage, metrics-server 가 이 폴더에 들어 있다. servicelb 는 매니페스트 파일 없이 내장 컨트롤러로 돌지만 끌 때는 같은 방식으로 끈다. 끄는 법은 <code>--disable=traefik</code> (config.yaml 에서는 <code>disable: [traefik]</code>). 끌 수 있는 이름은 <code>coredns</code>, <code>servicelb</code>, <code>traefik</code>, <code>local-storage</code>, <code>metrics-server</code>, 그리고 containerd 의 추가 런타임 자동 감지를 끄는 <code>runtimes</code> 다. 같은 폴더에 내 YAML 을 두면 그것도 AddOn 으로 적용되고, 같은 이름에 <code>.skip</code> 을 붙인 빈 파일(<code>traefik.yaml.skip</code>)을 두면 그 매니페스트는 건너뛴다. 패키지 부품과 별개로 <code>--disable-cloud-controller</code>, <code>--disable-kube-proxy</code>, <code>--disable-network-policy</code>, <code>--flannel-backend=none</code> 같은 플래그가 k3s 안의 다른 부품을 끈다.</p>
+  <p>server 는 <code>/var/lib/rancher/k3s/server/manifests</code> 에 있는 YAML 을 <code>kubectl apply</code> 처럼 자동 적용하고, 각각을 <code>AddOn</code> <span class="t">커스텀 리소스</span>로 추적한다. coredns, traefik, local-storage, metrics-server 가 이 폴더에 들어 있다. servicelb 는 매니페스트 파일 없이 내장 컨트롤러로 돌지만 끌 때는 같은 방식으로 끈다. 끄는 법은 <code>--disable=traefik</code> (config.yaml 에서는 <code>disable: [traefik]</code>). 끌 수 있는 이름은 <code>coredns</code>, <code>servicelb</code>, <code>traefik</code>, <code>local-storage</code>, <code>metrics-server</code>, 그리고 containerd 의 추가 런타임 자동 감지를 끄는 <code>runtimes</code> 다. 같은 폴더에 내 YAML 을 두면 그것도 AddOn 으로 적용되고, 같은 이름에 <code>.skip</code> 을 붙인 빈 파일(<code>traefik.yaml.skip</code>)을 두면 그 매니페스트는 건너뛴다. 패키지 부품과 별개로 <code>--disable-cloud-controller</code>, <code>--disable-kube-proxy</code>, <code>--disable-network-policy</code>, <code>--flannel-backend=none</code> 같은 플래그가 k3s 안의 다른 부품을 끈다.</p>
+  <aside class="notes"><dl>
+  <div><dt>커스텀 리소스(custom resource)</dt><dd>CRD(CustomResourceDefinition)로 쿠버네티스 API 에 새로 추가한 리소스 종류. k3s 의 AddOn, Argo CD 의 Application 이 그 예.</dd></div>
+  </dl></aside>
   <ul>
-    <li><b>Traefik</b>: 인그레스 컨트롤러(Ingress 규칙을 실행하는 HTTP 프록시). k3s 는 이것을 Helm 차트로 깔며, 차트 값을 바꾸려면 <code>HelmChartConfig</code> 리소스를 쓴다(아래 "깨지면" 에 예). 07 의 <code>fn-sample</code> Ingress 가 <code>ingressClassName: traefik</code> 으로 쓴다.</li>
-    <li><b>ServiceLB(klipper-lb)</b>: <code>type: LoadBalancer</code> 서비스(클라우드라면 외부 로드밸런서를 붙여 달라는 뜻의 Service 타입)마다 <code>svclb-*</code> DaemonSet(노드마다 파드 하나씩 두는 리소스)을 <code>kube-system</code> 에 만들어 노드의 호스트 포트(Traefik 이면 80/443)를 서비스로 넘긴다. 클라우드 로드밸런서가 없는 환경의 "가난한 LB" 다. 특정 노드에만 두려면 노드에 <code>svccontroller.k3s.cattle.io/enablelb=true</code> 라벨을 붙인다(라벨이 하나라도 있으면 그 노드들에만 뜬다).</li>
-    <li><b>local-path-provisioner</b>: PVC(PersistentVolumeClaim, 파드가 디스크를 요청하는 리소스)를 노드 로컬 디스크 폴더로. 07 에서는 쓰지 않는다.</li>
-    <li><b>metrics-server</b>: <code>kubectl top</code>(파드·노드의 CPU·메모리 사용량 보기). gVisor 오버헤드를 볼 때 쓴다.</li>
+    <li><b>Traefik</b>: 인그레스 컨트롤러. k3s 는 이것을 Helm 차트로 깔며, 차트 값을 바꾸려면 <code>HelmChartConfig</code> 리소스를 쓴다(아래 "깨지면" 에 예). 07 의 <code>fn-sample</code> Ingress 가 <code>ingressClassName: traefik</code> 으로 쓴다.</li>
+    <li><b>ServiceLB(klipper-lb)</b>: <span class="t"><code>type: LoadBalancer</code></span> 서비스마다 <code>svclb-*</code> <span class="t">DaemonSet</span> 을 <code>kube-system</code> 에 만들어 노드의 호스트 포트(Traefik 이면 80/443)를 서비스로 넘긴다. 클라우드 로드밸런서가 없는 환경의 "가난한 LB" 다. 특정 노드에만 두려면 노드에 <code>svccontroller.k3s.cattle.io/enablelb=true</code> 라벨을 붙인다(라벨이 하나라도 있으면 그 노드들에만 뜬다).</li>
+    <li><b>local-path-provisioner</b>: <span class="t">PVC</span> 를 노드 로컬 디스크 폴더로. 07 에서는 쓰지 않는다.</li>
+    <li><b>metrics-server</b>: <span class="t"><code>kubectl top</code></span> 의 뒷단. gVisor 오버헤드를 볼 때 쓴다.</li>
     <li><b>CoreDNS</b>: 클러스터 DNS. 파드가 <code>my-svc.my-ns.svc</code> 같은 이름을 물으면 Service IP 로 답한다.</li>
   </ul>
+  <aside class="notes"><dl>
+  <div><dt><code>type: LoadBalancer</code></dt><dd>클라우드라면 외부 로드밸런서를 붙여 달라는 뜻의 Service 타입. k3s 에서는 ServiceLB 가 노드 포트로 대신한다.</dd></div>
+  <div><dt>DaemonSet</dt><dd>노드마다 파드 하나씩 두는 리소스. 노드가 늘면 파드도 따라 생긴다.</dd></div>
+  <div><dt>PVC(PersistentVolumeClaim)</dt><dd>파드가 "이만한 디스크를 달라" 고 요청하는 리소스. 프로비저너가 실제 볼륨을 만들어 붙인다.</dd></div>
+  <div><dt><code>kubectl top</code></dt><dd>파드·노드의 현재 CPU·메모리 사용량을 보는 명령. metrics-server 가 없으면 동작하지 않는다.</dd></div>
+  </dl></aside>
 
   <h4>(5) 네트워크: flannel, 네트워크 정책 컨트롤러, 노드 사이 포트</h4>
-  <p>k3s 는 CNI 로 flannel 을 내장하고 기본 백엔드는 VXLAN 이다(노드 사이 UDP 8472 로 캡슐화). 다른 백엔드(<code>host-gw</code>, <code>wireguard-native</code>)는 <code>flannel-backend</code> 로 고르고, Cilium 같은 외부 CNI 를 쓰려면 <code>flannel-backend: none</code> 으로 끈 뒤 직접 깐다(server-config 템플릿 마지막 주석이 그 얘기다). flannel 자체는 NetworkPolicy(파드 사이 통신을 라벨 기준으로 허용·차단하는 쿠버네티스 리소스)를 집행하지 못하므로, k3s 는 kube-router 의 정책 부분만 떼어 낸 <b>내장 네트워크 정책 컨트롤러</b>를 함께 돌린다. 끄려면 <code>disable-network-policy: true</code>. PoC 에서는 NetworkPolicy 를 쓰지 않는다(03 의 테넌트 울타리는 Cilium 정책이라 EC2 에는 오지 않는다, <a href="ch04-network.html#netpol">04장</a>). 본선에서 flannel 을 그대로 두고 표준 NetworkPolicy 만 쓴다면 이 내장 컨트롤러로 충분하고, L7 정책이나 Hubble 같은 관측이 필요해지면 그때 Cilium 으로 바꾼다.</p>
+  <p>k3s 는 CNI 로 flannel 을 내장하고 기본 백엔드는 VXLAN 이다(노드 사이 UDP 8472 로 캡슐화). 다른 백엔드(<code>host-gw</code>, <code>wireguard-native</code>)는 <code>flannel-backend</code> 로 고르고, Cilium 같은 외부 CNI 를 쓰려면 <code>flannel-backend: none</code> 으로 끈 뒤 직접 깐다(server-config 템플릿 마지막 주석이 그 얘기다). flannel 자체는 <span class="t">NetworkPolicy</span> 를 집행하지 못하므로, k3s 는 kube-router 의 정책 부분만 떼어 낸 <b>내장 네트워크 정책 컨트롤러</b>를 함께 돌린다. 끄려면 <code>disable-network-policy: true</code>. PoC 에서는 NetworkPolicy 를 쓰지 않는다(03 의 테넌트 울타리는 Cilium 정책이라 EC2 에는 오지 않는다, <a href="ch04-network.html#netpol">04장</a>). 본선에서 flannel 을 그대로 두고 표준 NetworkPolicy 만 쓴다면 이 내장 컨트롤러로 충분하고, L7 정책이나 Hubble 같은 관측이 필요해지면 그때 Cilium 으로 바꾼다.</p>
+  <aside class="notes"><dl>
+  <div><dt>NetworkPolicy</dt><dd>파드 사이 통신을 라벨 기준으로 허용·차단하는 쿠버네티스 리소스. 집행은 CNI 나 별도 컨트롤러가 한다.</dd></div>
+  </dl></aside>
   <p>노드 사이에 열려 있어야 하는 포트는 공식 문서 "Requirements" 의 표 그대로다. 우리 보안 그룹은 "같은 그룹끼리 전부" 한 줄로 이것을 덮는다(네트워크 절).</p>
   <div class="table-wrap"><table>
   <thead><tr><th>포트</th><th>방향</th><th>용도</th><th>우리 클러스터</th></tr></thead>
@@ -421,10 +524,16 @@ sequenceDiagram
   </ul>
 
   <h4>토큰</h4>
-  <p>server 의 <code>token</code> 은 클러스터 조인용 공유 비밀이다. agent 는 같은 값을 <code>token</code> 에 넣는다. 공식 문서(<code>k3s token</code>)는 토큰 형식을 둘로 나눈다. <b>보안 토큰</b>은 <code>K10&lt;CA 인증서의 해시&gt;::&lt;사용자&gt;:&lt;비밀&gt;</code> 꼴로, 앞의 해시 덕분에 agent 가 "내가 붙은 server 의 CA(인증 기관, 클러스터 인증서를 서명하는 루트)가 진짜인가" 를 검증할 수 있다. server 가 만든 <code>/var/lib/rancher/k3s/server/token</code> 파일이 이 형식이다. <b>짧은 토큰</b>은 비밀 문자열뿐이라 CA 해시가 없고, agent 는 처음 연결한 server 의 CA 를 검증 없이 그대로 믿는다. 우리는 Terraform 의 <code>random_password</code> 로 만든 48자 문자열을 server·agent 양쪽 <code>token</code> 에 넣으니 짧은 토큰 방식이다. 같은 VPC 사설 IP 로만 붙으므로 중간자 위험은 낮다고 보고 받아들였다. 그 밖에 <code>k3s token create</code> 로 유효 기간이 있는 임시 조인 토큰(bootstrap token)을 만들 수 있고, <code>k3s token rotate</code> 로 server 토큰을 바꿀 수 있다. PoC 에서는 안 쓰고, 본선에서 "노드를 추가하는 사람에게 영구 토큰을 주고 싶지 않을 때" 쓴다.</p>
+  <p>server 의 <code>token</code> 은 클러스터 조인용 공유 비밀이다. agent 는 같은 값을 <code>token</code> 에 넣는다. 공식 문서(<code>k3s token</code>)는 토큰 형식을 둘로 나눈다. <b>보안 토큰</b>은 <code>K10&lt;CA 인증서의 해시&gt;::&lt;사용자&gt;:&lt;비밀&gt;</code> 꼴로, 앞의 해시 덕분에 agent 가 "내가 붙은 server 의 <span class="t">CA</span> 가 진짜인가" 를 검증할 수 있다. server 가 만든 <code>/var/lib/rancher/k3s/server/token</code> 파일이 이 형식이다. <b>짧은 토큰</b>은 비밀 문자열뿐이라 CA 해시가 없고, agent 는 처음 연결한 server 의 CA 를 검증 없이 그대로 믿는다. 우리는 Terraform 의 <code>random_password</code> 로 만든 48자 문자열을 server·agent 양쪽 <code>token</code> 에 넣으니 짧은 토큰 방식이다. 같은 VPC 사설 IP 로만 붙으므로 중간자 위험은 낮다고 보고 받아들였다. 그 밖에 <code>k3s token create</code> 로 유효 기간이 있는 임시 조인 토큰(bootstrap token)을 만들 수 있고, <code>k3s token rotate</code> 로 server 토큰을 바꿀 수 있다. PoC 에서는 안 쓰고, 본선에서 "노드를 추가하는 사람에게 영구 토큰을 주고 싶지 않을 때" 쓴다.</p>
+  <aside class="notes"><dl>
+  <div><dt>CA(Certificate Authority, 인증 기관)</dt><dd>클러스터의 인증서를 서명하는 루트. k3s server 가 처음 뜰 때 스스로 만든다.</dd></div>
+  </dl></aside>
 
   <h4>노드 비밀번호 (node-password)</h4>
-  <p>agent 는 처음 붙을 때 무작위 노드 비밀번호를 만들어 <code>/etc/rancher/node/password</code> 에 두고, 클러스터는 그 해시를 <code>kube-system</code> 의 Secret(비밀값을 담는 쿠버네티스 리소스) <code>&lt;노드이름&gt;.node-password.k3s</code> 에 저장한다. 같은 노드 이름으로 다시 등록하려면 같은 비밀번호여야 한다. 다른 VM 이 같은 이름으로 들어와 그 노드 행세를 하는 것을 막는 장치다. Node 오브젝트를 지우면 이 Secret 도 같이 지워진다.</p>
+  <p>agent 는 처음 붙을 때 무작위 노드 비밀번호를 만들어 <code>/etc/rancher/node/password</code> 에 두고, 클러스터는 그 해시를 <code>kube-system</code> 의 <span class="t">Secret</span> <code>&lt;노드이름&gt;.node-password.k3s</code> 에 저장한다. 같은 노드 이름으로 다시 등록하려면 같은 비밀번호여야 한다. 다른 VM 이 같은 이름으로 들어와 그 노드 행세를 하는 것을 막는 장치다. Node 오브젝트를 지우면 이 Secret 도 같이 지워진다.</p>
+  <aside class="notes"><dl>
+  <div><dt>Secret</dt><dd>비밀번호·토큰·인증서 같은 비밀값을 담는 쿠버네티스 리소스.</dd></div>
+  </dl></aside>
   <pre class="pseudo"><code><span class="k">조인 요청</span>(노드이름 N, 토큰 T, 비밀번호 P):
   <span class="k">만약</span> T 가 server 토큰과 다름 → 거절
   <span class="k">만약</span> Secret "N.node-password.k3s" 가 있음:
@@ -444,7 +553,10 @@ sequenceDiagram
   <span class="c">// toleration 만 있고 nodeSelector 가 없으면: 테인트 노드와 무테인트 노드 둘 다 후보</span></code></pre>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>k3s 는 기본 부품을 하나도 끄지 않는다 (<code>server-config.yaml.tftpl</code> 마지막 주석). flannel 그대로, Traefik 그대로, ServiceLB 그대로. 로컬의 Cilium·Kourier 와 다르지만, 07 의 목표는 "노드 풀이 진짜 VM 에서 동작하나" 이지 "네트워크 정책이 같은가" 가 아니라서 기본값으로 시작한다. gVisor 측정용 <code>gvisor-ec2.sh platform</code> 은 Kourier 서비스를 ClusterIP(클러스터 안에서만 닿는 Service 타입)로 바꿔서 ServiceLB 가 노드 80 번을 두고 Traefik 과 다투지 않게 한다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>k3s 는 기본 부품을 하나도 끄지 않는다 (<code>server-config.yaml.tftpl</code> 마지막 주석). flannel 그대로, Traefik 그대로, ServiceLB 그대로. 로컬의 Cilium·Kourier 와 다르지만, 07 의 목표는 "노드 풀이 진짜 VM 에서 동작하나" 이지 "네트워크 정책이 같은가" 가 아니라서 기본값으로 시작한다. gVisor 측정용 <code>gvisor-ec2.sh platform</code> 은 Kourier 서비스를 <span class="t">ClusterIP</span> 로 바꿔서 ServiceLB 가 노드 80 번을 두고 Traefik 과 다투지 않게 한다.</p>
+<aside class="notes"><dl>
+<div><dt>ClusterIP</dt><dd>클러스터 안에서만 닿는 가상 IP 를 받는 기본 Service 타입. 밖에서는 보이지 않는다.</dd></div>
+</dl></aside></aside>
 
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
 <ul>
@@ -491,7 +603,11 @@ user_data 로 넣으려면 server 템플릿에 heredoc 한 개를 더 쓰면 된
 
 <div class="tier" data-tier="2">
   <h3>첫 부팅에 무엇이 어떤 순서로 도나</h3>
-  <p>EC2 의 우분투 AMI 에는 cloud-init(첫 부팅 때 user_data 를 읽어 실행하는 표준 프로그램)이 들어 있다. 아래 순서의 heredoc 은 셸에서 여러 줄 텍스트를 파일에 그대로 쓰는 문법이다.</p>
+  <p>EC2 의 우분투 AMI 에는 <span class="t">cloud-init</span> 이 들어 있어 아래 순서를 시작한다. 그림의 <span class="t">heredoc</span> 단계가 config.yaml 을 쓰는 곳이다.</p>
+  <aside class="notes"><dl>
+  <div><dt>cloud-init</dt><dd>클라우드 VM 의 첫 부팅 때 user_data 를 읽어 실행하는 표준 초기화 프로그램.</dd></div>
+  <div><dt>heredoc</dt><dd>셸에서 여러 줄 텍스트를 파일에 그대로 쓰는 문법(<code>cat &gt; 파일 &lt;&lt;'끝표시'</code>).</dd></div>
+  </dl></aside>
   <figure>
   <pre class="mermaid">
 flowchart TD
@@ -557,8 +673,12 @@ flowchart TD
         <path d="M820 295 L900 295 L900 222" class="d-e-prov" marker-end="url(#f7-m-prov)"/>
       </svg>
     </div>
-    <figcaption><b>그림 9-7.</b> 두 겹 템플릿. ① 설정 템플릿을 채운 YAML 이 ② 설치 스크립트의 <code>${config}</code> 에 들어가고, exec 풀이면서 gVisor 를 켰으면 gVisor 스크립트가 뒤에 이어 붙는다. server 는 같은 과정에서 server-config 와 <code>role = "server"</code> 를 쓴다. 맨 오른쪽의 base64 는 여러 줄 텍스트를 영숫자 한 줄로 바꾸는 인코딩으로, 시작 템플릿(Launch Template, "이런 모양의 EC2" 설계도. 노드 풀 절)이 user_data 를 이 형식으로 요구한다.</figcaption>
+    <figcaption><b>그림 9-7.</b> 두 겹 템플릿. ① 설정 템플릿을 채운 YAML 이 ② 설치 스크립트의 <code>${config}</code> 에 들어가고, exec 풀이면서 gVisor 를 켰으면 gVisor 스크립트가 뒤에 이어 붙는다. server 는 같은 과정에서 server-config 와 <code>role = "server"</code> 를 쓴다. 맨 오른쪽의 <span class="t">base64</span> 는 <span class="t">시작 템플릿</span>이 user_data 에 요구하는 형식이다.</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>base64</dt><dd>임의의 바이트열을 영숫자 한 줄로 바꾸는 인코딩. 여러 줄 스크립트를 API 필드 하나에 넣기 위해 쓴다.</dd></div>
+  <div><dt>시작 템플릿(Launch Template)</dt><dd>"이런 모양의 EC2" 를 적어 둔 설계도. ASG 가 이것을 보고 인스턴스를 만든다(노드 풀 절).</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="3">
@@ -575,9 +695,9 @@ flowchart TD
 <span class="c"># Cilium 으로 바꾸려면 flannel-backend: "none", disable-network-policy: true 가 필요하다</span></code></pre>
   <dl class="terms">
     <dt><code>token</code></dt><dd>조인 비밀. <code>k3s.tf</code> 가 <code>random_password.k3s_token.result</code> 를 넣는다. 큰따옴표로 감싸 YAML 이 특수문자를 오해하지 않게 한다 (생성 시 <code>special = false</code> 라 실제로는 영숫자뿐).</dd>
-    <dt><code>write-kubeconfig-mode</code></dt><dd><code>/etc/rancher/k3s/k3s.yaml</code> 파일 권한. <code>0600</code> = root 만. <code>get-kubeconfig.sh</code> 는 SSM Run Command(노드에 들어가지 않고 명령 한 줄을 원격 실행하는 SSM 기능. 접속 절)로 root 권한으로 읽으므로 이 값으로 충분하고, 노드 안 일반 사용자에게 관리자 kubeconfig 를 노출하지 않는다.</dd>
+    <dt><code>write-kubeconfig-mode</code></dt><dd><code>/etc/rancher/k3s/k3s.yaml</code> 파일 권한. <code>0600</code> = root 만. <code>get-kubeconfig.sh</code> 는 SSM Run Command(접속 절)로 root 권한으로 읽으므로 이 값으로 충분하고, 노드 안 일반 사용자에게 관리자 kubeconfig 를 노출하지 않는다.</dd>
     <dt><code>node-label</code></dt><dd><code>pool=system</code> 은 Argo CD 가 nodeSelector 로 고르는 이름표. <code>capacity-type=on-demand</code> 는 NTH 를 이 노드에 안 띄우는 기준(NTH 는 <code>capacity-type: spot</code> 만 고른다).</dd>
-    <dt><code>node-taint</code></dt><dd><code>CriticalAddonsOnly=true:NoExecute</code>. NoSchedule 은 "새로 못 온다" 만, NoExecute 는 "이미 있던 것도 쫓아낸다" 까지다. k3s 는 이 값을 kubelet 의 <code>--register-with-taints</code> 로 넘겨 Node 오브젝트가 생기는 순간 taint 가 함께 붙으므로 "taint 가 붙기 전 파드가 들어오는 틈" 은 없다. NoExecute 의 실제 효과는 누군가 나중에 taint 를 지웠다가 다시 붙이거나 toleration 을 뺀 파드가 남아 있을 때도 내보낸다는 것이고, 평소에는 NoSchedule 과 같다. 목적은 일반 파드가 컨트롤 플레인 노드의 메모리를 먹다가 API 서버가 OOM(Out of Memory, 메모리가 모자라 커널이 프로세스를 죽이는 일)으로 죽는 걸 막는 것이다.</dd>
+    <dt><code>node-taint</code></dt><dd><code>CriticalAddonsOnly=true:NoExecute</code>. NoSchedule 은 "새로 못 온다" 만, NoExecute 는 "이미 있던 것도 쫓아낸다" 까지다. k3s 는 이 값을 kubelet 의 <code>--register-with-taints</code> 로 넘겨 Node 오브젝트가 생기는 순간 taint 가 함께 붙으므로 "taint 가 붙기 전 파드가 들어오는 틈" 은 없다. NoExecute 의 실제 효과는 누군가 나중에 taint 를 지웠다가 다시 붙이거나 toleration 을 뺀 파드가 남아 있을 때도 내보낸다는 것이고, 평소에는 NoSchedule 과 같다. 목적은 일반 파드가 컨트롤 플레인 노드의 메모리를 먹다가 API 서버가 메모리 부족(OOM)으로 죽는 걸 막는 것이다.</dd>
   </dl>
 
   <div class="code-head"><span>poc/07-ec2-k3s/k3s/agent-config.yaml.tftpl</span><span>주석 일부 생략</span></div>
@@ -716,7 +836,11 @@ kubelet-arg:
 
 <div class="tier" data-tier="1">
   <h3>Terraform 은 무엇이고 왜 쓰나</h3>
-  <p>Terraform 은 HashiCorp 의 IaC(Infrastructure as Code, 인프라를 코드 파일로 선언하고 도구가 맞추게 하는 방식) 도구다. 파일 문법은 HCL(HashiCorp Configuration Language)이다. 01 의 Argo CD 가 "Git 의 매니페스트 = 클러스터의 정답" 이었다면, Terraform 은 "<code>.tf</code> 파일 = 클라우드 리소스의 정답" 이다. 둘 다 <b>선언형</b>이다: "VPC 를 만들어라" 가 아니라 "VPC 가 이런 모양으로 있어야 한다" 를 적고, 도구가 현재 상태와 비교해 차이를 메운다.</p>
+  <p>Terraform 은 HashiCorp 의 <span class="t">IaC</span> 도구다. 파일 문법은 <span class="t">HCL</span> 이다. 01 의 Argo CD 가 "Git 의 매니페스트 = 클러스터의 정답" 이었다면, Terraform 은 "<code>.tf</code> 파일 = 클라우드 리소스의 정답" 이다. 둘 다 <b>선언형</b>이다: "VPC 를 만들어라" 가 아니라 "VPC 가 이런 모양으로 있어야 한다" 를 적고, 도구가 현재 상태와 비교해 차이를 메운다.</p>
+  <aside class="notes"><dl>
+  <div><dt>IaC(Infrastructure as Code)</dt><dd>인프라를 코드 파일로 선언하고 도구가 그대로 맞추게 하는 방식.</dd></div>
+  <div><dt>HCL(HashiCorp Configuration Language)</dt><dd>Terraform 의 설정 파일 문법. <code>.tf</code> 파일이 이것으로 쓰인다.</dd></div>
+  </dl></aside>
   <p>Argo CD 와 크게 다른 점 하나: Argo CD 는 클러스터를 계속 감시하며 맞추지만(조정 루프), Terraform 은 <b>사람이 명령할 때만</b> 한 번 비교하고 바꾼다. 그 사이의 "내가 무엇을 만들었나" 기억은 <b>state 파일</b>에 둔다.</p>
   <figure>
     <div class="fig scroll">
@@ -755,8 +879,11 @@ kubelet-arg:
         <text x="300" y="10" class="d-lbl">apply 결과 → state 기록</text>
       </svg>
     </div>
-    <figcaption><b>그림 9-9.</b> plan 은 설정·state·실제 리소스 셋을 읽어 차이를 계산하고, apply 는 그 차이를 provider 로 실행한 뒤 결과를 state 에 쓴다. 주황 = 프로비저닝(실제로 무언가 만들거나 지움).</figcaption>
+    <figcaption><b>그림 9-9.</b> plan 은 설정·state·실제 리소스 셋을 읽어 차이를 계산하고, apply 는 그 차이를 provider 로 실행한 뒤 결과를 state 에 쓴다. 주황 = <span class="t">프로비저닝</span>.</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>프로비저닝(provisioning)</dt><dd>클라우드 API 를 불러 리소스를 실제로 만들거나 지우는 일.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="2">
@@ -768,7 +895,7 @@ kubelet-arg:
     <dt>variable / output</dt><dd>입력 손잡이와 결과값. <code>variables.tf</code> 의 기본값이 곧 "기본 구성" 이다. <code>outputs.tf</code> 의 <code>server_instance_id</code>, <code>region</code>, <code>fis_template_id</code> 를 스크립트들이 <code>terraform output -raw</code> 로 읽는다.</dd>
     <dt>locals</dt><dd>이름 붙인 계산식. <code>local.azs</code>, <code>local.server_user_data</code>, <code>local.agent_user_data</code>.</dd>
     <dt>module</dt><dd>재사용 가능한 <code>.tf</code> 묶음. <code>modules/node-pool</code> 을 <code>pools.tf</code> 에서 값만 바꿔 두 번 부른다. 루트 모듈(<code>terraform/cluster</code>) 안의 자식 모듈이다.</dd>
-    <dt>state</dt><dd>주소(<code>module.exec_pool.aws_autoscaling_group.this</code>)와 실제 ID(ASG 이름 등)·속성의 대응표. 우리는 원격 백엔드(backend, state 를 어디에 두나: 로컬 파일 또는 S3 같은 원격 저장소) 없이 로컬 파일 <code>terraform.tfstate</code>. <b>민감 값이 평문으로</b> 들어간다(k3s 토큰). 그래서 <code>.gitignore</code> 에 <code>*.tfstate</code> 가 있다.</dd>
+    <dt>state</dt><dd>주소(<code>module.exec_pool.aws_autoscaling_group.this</code>)와 실제 ID(ASG 이름 등)·속성의 대응표. backend(state 를 두는 곳)는 S3 같은 원격 저장소도 되지만, 우리는 로컬 파일 <code>terraform.tfstate</code> 다. <b>민감 값이 평문으로</b> 들어간다(k3s 토큰). 그래서 <code>.gitignore</code> 에 <code>*.tfstate</code> 가 있다.</dd>
   </dl>
   <figure>
   <pre class="mermaid">
@@ -789,8 +916,11 @@ stateDiagram-v2
   Managed --> ToDelete: .tf 에서 지움 또는 destroy
   ToDelete --> [*]: apply 로 삭제, state 에서 제거
   </pre>
-  <figcaption><b>그림 9-10.</b> 리소스 하나가 Terraform 안에서 겪는 상태. "드리프트(drift)" 는 코드 밖(콘솔 클릭 등)에서 실제 리소스가 바뀌어 state 와 달라진 것으로, 다음 plan 의 refresh 가 알아챈다. 우리 <code>aws_instance.server</code> 는 <code>user_data_replace_on_change = true</code> 라서 user_data 가 바뀌면 "변경" 이 아니라 "교체" 로 간다.</figcaption>
+  <figcaption><b>그림 9-10.</b> 리소스 하나가 Terraform 안에서 겪는 상태. 그림 가운데의 <span class="t">드리프트</span>는 다음 plan 의 refresh 가 알아채 "변경 예정" 으로 잡는다. 우리 <code>aws_instance.server</code> 는 <code>user_data_replace_on_change = true</code> 라서 user_data 가 바뀌면 "변경" 이 아니라 "교체" 로 간다.</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>드리프트(drift)</dt><dd>코드 밖(콘솔 클릭 등)에서 실제 리소스가 바뀌어 state 와 달라진 상태.</dd></div>
+  </dl></aside>
   <h4>plan / apply / destroy 수명 주기</h4>
   <ol>
     <li><code>terraform init</code>: provider 와 모듈을 <code>.terraform/</code> 에 받고 잠금 파일 생성. 한 번만.</li>
@@ -956,8 +1086,17 @@ flowchart LR
 
 <div class="tier" data-tier="1">
   <h3>무엇을 만들고 왜</h3>
-  <p><code>terraform/cluster/network.tf</code> 와 <code>security.tf</code> 가 만드는 것은 단순하다. VPC(Virtual Private Cloud, 내 전용 사설 네트워크) 하나, 그 안에 가용 영역(AZ, 같은 리전 안 서로 다른 데이터센터) 두 곳에 퍼블릭 서브넷 하나씩, 인터넷 게이트웨이(IGW) 하나, 보안 그룹 하나. NAT 게이트웨이(사설 IP 만 가진 노드가 밖으로 나갈 때 주소를 바꿔 주는 관리형 장치)와 프라이빗 서브넷(인터넷에서 직접 닿지 않는 서브넷)은 <b>만들지 않는다</b>.</p>
-  <p>원칙 두 줄: <b>나가는 길은 열고</b>(k3s 설치, 이미지, GitHub, SSM 엔드포인트), <b>들어오는 길은 80/443 만, 내 IP 만</b>(허용 범위는 CIDR, 즉 <code>1.2.3.4/32</code> 처럼 "IP 범위" 로 적는다). SSH(22)와 k3s API(6443)는 인터넷에 열지 않고 SSM 으로 들어간다.</p>
+  <p><code>terraform/cluster/network.tf</code> 와 <code>security.tf</code> 가 만드는 것은 단순하다. VPC 하나, 그 안에 <span class="t">가용 영역</span> 두 곳에 <span class="t">퍼블릭 서브넷</span> 하나씩, 인터넷 게이트웨이(IGW) 하나, 보안 그룹 하나. <span class="t">NAT 게이트웨이</span>와 <span class="t">프라이빗 서브넷</span>은 <b>만들지 않는다</b>.</p>
+  <aside class="notes"><dl>
+  <div><dt>가용 영역(AZ, Availability Zone)</dt><dd>같은 리전 안에서 전원·네트워크가 분리된 서로 다른 데이터센터 묶음.</dd></div>
+  <div><dt>퍼블릭 서브넷</dt><dd>라우트 테이블이 인터넷 게이트웨이를 가리켜 인터넷과 직접 오가는 서브넷.</dd></div>
+  <div><dt>NAT 게이트웨이</dt><dd>사설 IP 만 가진 노드가 밖으로 나갈 때 주소를 바꿔 주는 관리형 장치. 켜 둔 시간과 처리량으로 과금된다.</dd></div>
+  <div><dt>프라이빗 서브넷</dt><dd>인터넷에서 직접 닿지 않는 서브넷. 밖으로 나가려면 NAT 가 필요하다.</dd></div>
+  </dl></aside>
+  <p>원칙 두 줄: <b>나가는 길은 열고</b>(k3s 설치, 이미지, GitHub, SSM 엔드포인트), <b>들어오는 길은 80/443 만, 내 IP 만</b>. 허용 범위는 <span class="t">CIDR</span> 로 적는다. SSH(22)와 k3s API(6443)는 인터넷에 열지 않고 SSM 으로 들어간다.</p>
+  <aside class="notes"><dl>
+  <div><dt>CIDR</dt><dd><code>1.2.3.4/32</code> 처럼 "주소/비트 수" 로 IP 범위를 적는 표기. /32 는 주소 하나.</dd></div>
+  </dl></aside>
   <figure>
     <div class="fig scroll-l">
       <svg viewBox="0 0 1180 700" role="img" aria-labelledby="f12-t">
@@ -1119,8 +1258,11 @@ flowchart TD
 <ul>
 <li><b><code>curl &lt;IP&gt;/fn</code> 응답 없음 (타임아웃)</b>: 내 IP 가 바뀌어 <code>ingress_cidrs</code> 와 다름. <code>curl -s https://checkip.amazonaws.com</code> 으로 확인 → tfvars 수정 → apply (SG 규칙만 바뀜).</li>
 <li><b>build 노드 IP 로 curl 하면 연결 거부</b>: build 노드에는 svclb 파드가 없다(taint). 정상. exec 노드 IP 를 쓴다.</li>
-<li><b>노드가 클러스터에 안 붙고 SSM 에도 안 보임</b>: 라우트 테이블(서브넷의 패킷이 어디로 갈지 적은 표) 연결 전에 부팅해 바깥에 못 나갔을 수 있다. server 는 <code>depends_on = [aws_route_table_association.public]</code> 로 막아 두었다.</li>
-</ul></aside>
+<li><b>노드가 클러스터에 안 붙고 SSM 에도 안 보임</b>: <span class="t">라우트 테이블</span> 연결 전에 부팅해 바깥에 못 나갔을 수 있다. server 는 <code>depends_on = [aws_route_table_association.public]</code> 로 막아 두었다.</li>
+</ul>
+<aside class="notes"><dl>
+<div><dt>라우트 테이블</dt><dd>서브넷에서 나가는 패킷이 어디로 갈지 적은 표. <code>0.0.0.0/0 → IGW</code> 한 줄이 인터넷 길이다.</dd></div>
+</dl></aside></aside>
 
 <aside class="callout why"><p class="callout-title">왜 이렇게 했나 (대안)</p><p><b>프라이빗 서브넷 + NAT</b>: 노드가 인터넷 주소를 안 가져 정석이지만, NAT 의 고정 비용이 하루짜리 실습 전체보다 크다. <b>프라이빗 + VPC 엔드포인트(SSM, ECR, S3)</b>: NAT 없이 AWS 서비스엔 닿지만 GitHub·get.k3s.io 같은 외부엔 못 나간다. <b>IPv6 전용 + Egress-only IGW</b>: 퍼블릭 IPv4 비용이 없지만 k3s·flannel·외부 레지스트리의 IPv6 지원을 하나하나 확인해야 한다. 본선(팀 계정, 며칠 운영)에서는 프라이빗 + NAT 를 다시 검토한다 (README 7절 비교 시나리오).</p></aside>
 
@@ -1194,7 +1336,11 @@ flowchart TD
     <li><b>권한 정책</b>: 역할을 맡은 뒤 할 수 있는 것. <code>aws_iam_role_policy_attachment</code> 로 관리형 정책을 붙인다.</li>
     <li><b>임시 자격 증명</b>: 노드 안의 프로그램(SSM 에이전트)은 IMDS 의 <code>iam/security-credentials/</code> 경로에서 자동으로 갱신되는 임시 키를 받는다. 키를 파일에 넣거나 user_data 에 적을 일이 없다.</li>
   </ol>
-  <p>IMDS 설정도 같이 본다. server 와 Launch Template 모두 <code>http_tokens = "required"</code>(IMDSv2 강제)와 <code>http_put_response_hop_limit = 2</code> 다. IMDSv2 는 PUT 으로 세션 토큰을 먼저 받아야 해서 SSRF(Server-Side Request Forgery, 서버가 공격자 대신 내부 주소로 요청을 보내게 만드는 공격) 같은 단순 GET 공격으로 자격을 빼가기 어렵다. hop limit(기본값 1)을 2 로 올리면 그 토큰 응답이 네트워크 홉 하나를 더 넘을 수 있어서, 호스트 네트워크를 안 쓰는 파드(노드 안에서 한 번 더 라우팅되는 파드 네트워크)에서도 IMDS 에 닿게 한다. 반대로 말하면 아무 파드나 노드 역할 자격을 읽을 수 있다는 뜻이고, 그래서 노드 역할 권한을 SSM 하나로 좁게 둔 것이 중요하다.</p>
+  <p>IMDS 설정도 같이 본다. server 와 Launch Template 모두 <code>http_tokens = "required"</code>(IMDSv2 강제)와 <code>http_put_response_hop_limit = 2</code> 다. IMDSv2 는 PUT 으로 세션 토큰을 먼저 받아야 해서 <span class="t">SSRF</span> 같은 단순 GET 공격으로 자격을 빼가기 어렵다. hop limit(기본값 1)을 2 로 올리면 그 토큰 응답이 네트워크 홉 하나를 더 넘을 수 있어서, <span class="t">호스트 네트워크</span>를 안 쓰는 파드에서도 IMDS 에 닿게 한다. 반대로 말하면 아무 파드나 노드 역할 자격을 읽을 수 있다는 뜻이고, 그래서 노드 역할 권한을 SSM 하나로 좁게 둔 것이 중요하다.</p>
+  <aside class="notes"><dl>
+  <div><dt>SSRF(Server-Side Request Forgery)</dt><dd>서버 안의 프로그램을 속여 공격자 대신 내부 주소로 요청을 보내게 만드는 공격. IMDS 가 대표 표적이다.</dd></div>
+  <div><dt>호스트 네트워크(hostNetwork)</dt><dd>파드가 자기 네트워크 네임스페이스 대신 노드의 네트워크를 그대로 쓰는 설정. 안 쓰는 파드는 노드 안에서 한 번 더 라우팅된다.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="3">
@@ -1214,9 +1360,13 @@ flowchart TD
 <span class="k">resource</span> <span class="s">"aws_iam_instance_profile"</span> <span class="s">"node"</span> { name = <span class="s">"${var.project}-node"</span>  role = aws_iam_role.node.name }</code></pre>
   <ul>
     <li>IAM 은 리전이 없는 전역 서비스라서, 같은 계정에서 <code>project</code> 값을 안 바꾸고 다른 리전에 한 번 더 apply 하면 이름 충돌(<code>poc07-node</code> 이미 있음)로 실패한다.</li>
-    <li>새로 만든 역할·프로파일은 전파에 시간이 걸린다(최종 일관성). 막 만든 프로파일로 인스턴스를 띄우면 EC2 가 "Invalid IAM Instance Profile" 을 돌려주는데, aws provider 는 <code>aws_instance</code> 생성에서 이 오류를 잡아 잠시 뒤 다시 시도한다(provider 소스 <code>internal/service/ec2/ec2_instance.go</code>). 시작 템플릿 경로(ASG)는 ASG 가 알아서 재시도한다. 그래도 실패하면 다시 apply.</li>
-    <li>SSM 에이전트(amazon-ssm-agent)는 Ubuntu Server 22.04·24.04 공식 AMI 에 snap(우분투의 패키지 형식)으로 미리 설치돼 있어(AWS 공식 문서 "Find SSM Agent on … Ubuntu") user_data 에서 따로 깔지 않는다.</li>
+    <li>새로 만든 역할·프로파일은 <span class="t">최종 일관성</span> 때문에 전파에 시간이 걸린다. 막 만든 프로파일로 인스턴스를 띄우면 EC2 가 "Invalid IAM Instance Profile" 을 돌려주는데, aws provider 는 <code>aws_instance</code> 생성에서 이 오류를 잡아 잠시 뒤 다시 시도한다(provider 소스 <code>internal/service/ec2/ec2_instance.go</code>). 시작 템플릿 경로(ASG)는 ASG 가 알아서 재시도한다. 그래도 실패하면 다시 apply.</li>
+    <li>SSM 에이전트(amazon-ssm-agent)는 Ubuntu Server 22.04·24.04 공식 AMI 에 <span class="t">snap</span> 으로 미리 설치돼 있어(AWS 공식 문서 "Find SSM Agent on … Ubuntu") user_data 에서 따로 깔지 않는다.</li>
   </ul>
+  <aside class="notes"><dl>
+  <div><dt>최종 일관성(eventual consistency)</dt><dd>변경이 모든 서버에 바로 반영되지 않고 잠시 뒤 맞춰지는 성질. IAM 이 그렇다.</dd></div>
+  <div><dt>snap</dt><dd>우분투가 미는 자체 완결형 패키지 형식. 설치된 프로그램을 스스로 갱신한다.</dd></div>
+  </dl></aside>
   <pre class="pseudo"><code><span class="k">SSM 에 등록되기까지</span> (get-kubeconfig.sh 1/2 단계가 기다리는 것):
   부팅 → amazon-ssm-agent 시작
   → IMDSv2 로 토큰 → 역할 임시 자격
@@ -1225,11 +1375,17 @@ flowchart TD
   <span class="k">실패 조건</span>: 프로파일 없음 / 나가는 길 없음(라우트·SG) / 에이전트 미설치</code></pre>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>노드 역할에 ECR 읽기, CloudWatch, EBS CSI 같은 권한이 하나도 없다. 이미지는 공개 레지스트리에서 받고, 로그는 노드 파일에 두고, 볼륨은 안 쓴다. NTH 도 IMDS 모드라서 AWS API 권한이 필요 없다. 권한을 더하는 순간이 곧 설계가 바뀌는 순간이다 (예: 큐 프로세서 모드 NTH → SQS·ASG 권한).</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>노드 역할에 ECR 읽기, CloudWatch, EBS CSI 같은 권한이 하나도 없다. 이미지는 공개 레지스트리에서 받고, 로그는 노드 파일에 두고, 볼륨은 안 쓴다. NTH 도 IMDS 모드라서 AWS API 권한이 필요 없다. 권한을 더하는 순간이 곧 설계가 바뀌는 순간이다 (예: 큐 프로세서 모드 NTH → <span class="t">SQS</span>·ASG 권한).</p>
+<aside class="notes"><dl>
+<div><dt>SQS(Simple Queue Service)</dt><dd>AWS 의 관리형 메시지 큐. NTH 큐 프로세서 모드는 EventBridge 가 넣어 준 이벤트를 여기서 읽는다.</dd></div>
+</dl></aside></aside>
 
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p><p><code>get-kubeconfig.sh</code> 가 "SSM 등록 안 됨" 으로 끝난다. 볼 곳: 콘솔 EC2 → 인스턴스의 IAM 역할 칸, Systems Manager → Fleet Manager. 흔한 원인: 프로파일이 안 붙음, 부팅 직후라 아직 등록 전(조금 기다림), 아웃바운드가 막힘 (README 8절).</p></aside>
 
-<aside class="callout why"><p class="callout-title">왜 이렇게 했나 (대안)</p><p><b>SSH 키 페어 + 22 포트</b>: 키 관리, IP 허용 목록, 키 유출 위험이 생긴다. SSM 은 IAM 권한으로 접속을 통제하고 세션 기록도 남는다. <b>노드 역할에 넓은 권한</b>(예: EC2 전체): 클라우드 컨트롤러나 cluster-autoscaler 를 붙이기 쉬워지지만, 파드가 IMDS 로 그 자격을 쓸 수 있다. 필요해지면 IRSA(IAM Roles for Service Accounts, EKS 에서 파드 단위로 IAM 역할을 주는 방식)나 EKS Pod Identity 같은 파드 단위 자격이 없는 k3s 에서는 노드 역할이 넓어진다는 점을 설계 문서에 적는다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이렇게 했나 (대안)</p><p><b>SSH 키 페어 + 22 포트</b>: 키 관리, IP 허용 목록, 키 유출 위험이 생긴다. SSM 은 IAM 권한으로 접속을 통제하고 세션 기록도 남는다. <b>노드 역할에 넓은 권한</b>(예: EC2 전체): 클라우드 컨트롤러나 cluster-autoscaler 를 붙이기 쉬워지지만, 파드가 IMDS 로 그 자격을 쓸 수 있다. 필요해지면, <span class="t">IRSA</span> 나 EKS Pod Identity 같은 파드 단위 자격이 없는 k3s 에서는 노드 역할이 넓어질 수밖에 없다는 점을 설계 문서에 적는다.</p>
+<aside class="notes"><dl>
+<div><dt>IRSA(IAM Roles for Service Accounts)</dt><dd>EKS 에서 쿠버네티스 서비스 어카운트에 IAM 역할을 매어 파드 단위로 권한을 주는 방식.</dd></div>
+</dl></aside></aside>
 
 <aside class="callout fact"><p class="callout-title">공식 문서</p>
 <p><a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2.html">IAM roles for EC2 (instance profile)</a> · <a href="https://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_use_switch-role-ec2_instance-profiles.html">Using instance profiles</a><br>
@@ -1386,19 +1542,25 @@ flowchart TD
     <dt><code>max = desired + 1</code></dt><dd>회수 직전 교체 노드가 잠깐 겹칠 수 있는 여유 한 대. capacity rebalance 는 새 인스턴스를 먼저 띄우고 옛 것을 지우므로 이 여유가 필요하다. 여유가 없어도 AWS 는 리밸런스 교체에 한해 max 를 desired 의 10% 까지(최소 1대) 잠깐 넘길 수 있지만, 명시해 두는 편이 읽기 쉽다.</dd>
     <dt><code>wait_for_capacity_timeout = "0"</code></dt><dd>Terraform 이 ASG 인스턴스가 InService 가 될 때까지 기다리지 않는다. ASG 는 k3s 를 모르므로 "노드 Ready" 판단은 <code>measure.sh ready</code> 가 kubectl 로 한다. 그래서 apply 가 짧게 끝나고 노드 준비는 따로 잰다.</dd>
     <dt>건강 검사 (코드에 없음 = 기본값)</dt><dd><code>health_check_type</code> 기본 <code>EC2</code>: ASG 는 EC2 의 인스턴스 상태 검사(하드웨어·OS 응답)로만 건강을 판단하고, 불건강하면 종료 후 교체한다. 쿠버네티스 쪽 NotReady 는 모른다. 그래서 agent 가 조인에 실패한 노드(고치기 전의 kubelet 플래그 버그 같은 경우)는 EC2 로서는 멀쩡하므로 ASG 가 교체하지 않는다. 스팟 회수는 인스턴스가 사라지므로 ASG 가 대수 부족을 보고 채운다.</dd>
-    <dt><code>version = "$Latest"</code></dt><dd>ASG 가 늘 최신 Launch Template 버전으로 새 인스턴스를 만든다. 기존 인스턴스는 바뀌지 않는다 → 새 user_data 를 적용하려면 <code>aws autoscaling start-instance-refresh</code>(ASG 의 인스턴스를 새 템플릿으로 하나씩 갈아 끼우는 기능) (README 8.5 의 gVisor 켜기 절차).</dd>
+    <dt><code>version = "$Latest"</code></dt><dd>ASG 가 늘 최신 Launch Template 버전으로 새 인스턴스를 만든다. 기존 인스턴스는 바뀌지 않는다 → 새 user_data 를 적용하려면 <code>aws autoscaling start-instance-refresh</code> 로 ASG 의 인스턴스를 새 템플릿으로 하나씩 갈아 끼운다 (README 8.5 의 gVisor 켜기 절차).</dd>
     <dt><code>dynamic "override"</code></dt><dd><code>for_each</code> 로 타입마다 블록 하나. 블록 반복을 HCL 로 쓰는 방법.</dd>
     <dt><code>capacity_rebalance</code></dt><dd>스팟 풀에서만 켠다. EC2 가 "회수 위험이 높아짐" 신호(rebalance recommendation)를 보내면 ASG 가 교체 스팟을 먼저 띄운다. 아래 스팟 절에서 NTH 와의 관계를 본다.</dd>
     <dt><code>tag … propagate_at_launch</code></dt><dd>ASG 태그를 새 인스턴스에 붙인다. provider 의 <code>default_tags</code> 는 ASG 리소스에는 붙어도 ASG 가 띄운 인스턴스에는 자동으로 안 붙으므로 모듈이 <code>Project</code> 를 직접 넣는다. FIS 대상 선택과 <code>check-leftovers.sh</code> 가 이 태그에 기댄다.</dd>
   </dl>
   <h4>Launch Template 의 디스크와 크레딧</h4>
   <ul>
-    <li><code>device_name = "/dev/sda1"</code>, gp3(EBS 의 범용 SSD 종류), <code>delete_on_termination = true</code>, <code>encrypted = true</code>. 스팟이 회수될 때 루트 볼륨이 같이 지워져야 볼륨 과금이 남지 않는다.</li>
+    <li><code>device_name = "/dev/sda1"</code>, <span class="t">gp3</span>, <code>delete_on_termination = true</code>, <code>encrypted = true</code>. 스팟이 회수될 때 루트 볼륨이 같이 지워져야 볼륨 과금이 남지 않는다.</li>
     <li><code>cpu_credits = "standard"</code>: t 계열은 평소 CPU 를 조금 쓰며 크레딧을 모으고, 바쁠 때 크레딧을 써서 전력으로 도는 "버스트" 인스턴스다. standard 는 크레딧을 다 쓰면 느려질 뿐 추가 요금이 없고, <code>unlimited</code> 는 안 느려지는 대신 초과분이 과금된다. T3·T3a 의 <b>기본값은 unlimited</b> 라서(T2 만 standard) 모듈이 standard 를 명시하는 것이 비용 통제상 의미가 있고, 스팟 인스턴스도 unlimited 를 쓸 수 있지만 초과 크레딧 요금은 똑같이 붙는다. 빌드 노드가 오래 CPU 를 다 쓰면 standard 에서 느려질 수 있다 → 빌드 시간 측정에 섞이는 변수.</li>
   </ul>
+  <aside class="notes"><dl>
+  <div><dt>gp3</dt><dd>EBS 의 범용 SSD 볼륨 종류. 용량과 성능을 따로 정하며 루트 볼륨의 기본 선택이다.</dd></div>
+  </dl></aside>
 
   <h4>taint 를 어디에 거나: 로컬과 EC2 가 다른 이유</h4>
-  <p>아래 그림의 "Pending" 은 스케줄러가 둘 노드를 하나도 못 찾아 시작하지 못하고 기다리는 파드 상태다. taint 와 toleration 의 뜻은 <a href="#kind-to-vm">첫 절</a>에서, 스케줄러가 노드를 거르는 순서는 <a href="#k3s">k3s 절</a>의 의사코드에서 봤다.</p>
+  <p>아래 그림과 의사코드에서 파드가 <span class="t">Pending</span> 에 머무는지 어느 노드로 가는지는 taint 와 toleration 이 정한다. 두 낱말의 뜻은 <a href="#kind-to-vm">첫 절</a>에서, 스케줄러가 노드를 거르는 순서는 <a href="#k3s">k3s 절</a>의 의사코드에서 봤다.</p>
+  <aside class="notes"><dl>
+  <div><dt>Pending</dt><dd>스케줄러가 둘 노드를 하나도 못 찾아 파드가 시작하지 못하고 기다리는 상태. Events 에 FailedScheduling 이 찍힌다.</dd></div>
+  </dl></aside>
   <figure>
     <div class="fig scroll-l">
       <svg viewBox="0 0 1180 470" role="img" aria-labelledby="f17-t">
@@ -1457,7 +1619,10 @@ flowchart TD
   <span class="c">// 반대로 하면: 모든 파드에 toleration 을 달아야 하고, 하나만 빠져도 그 파드는 Pending</span></code></pre>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>pools.tf</code> 가 같은 모듈을 <code>exec_pool</code>, <code>build_pool</code> 로 두 번 부르고, 바뀌는 건 <code>name</code>, <code>instance_types</code>, <code>capacity_type</code>, <code>desired</code>, <code>user_data</code> 뿐이다. 둘 다 <code>nightly_scale_down_cron</code>(기본 <code>0 23 * * *</code>)을 받는다. 04 의 RuntimeClass·ksvc 에 있는 <code>pool=exec</code> toleration 은 EC2 에서는 견딜 taint 가 없어 그냥 무시되므로 그대로 써도 된다 (README 8.5).</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p><code>pools.tf</code> 가 같은 모듈을 <code>exec_pool</code>, <code>build_pool</code> 로 두 번 부르고, 바뀌는 건 <code>name</code>, <code>instance_types</code>, <code>capacity_type</code>, <code>desired</code>, <code>user_data</code> 뿐이다. 둘 다 <code>nightly_scale_down_cron</code>(기본 <code>0 23 * * *</code>)을 받는다. 04 의 <span class="t">RuntimeClass</span>·ksvc 에 있는 <code>pool=exec</code> toleration 은 EC2 에서는 견딜 taint 가 없어 그냥 무시되므로 그대로 써도 된다 (README 8.5).</p>
+<aside class="notes"><dl>
+<div><dt>RuntimeClass</dt><dd>파드가 어느 컨테이너 런타임(runc, runsc …)으로 돌지 고르는 쿠버네티스 리소스. gVisor 절에서 쓴다.</dd></div>
+</dl></aside></aside>
 
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
 <ul>
@@ -1467,7 +1632,10 @@ flowchart TD
 <li><b>Launch Template 을 바꿨는데 노드가 그대로</b>: <code>$Latest</code> 는 새로 뜨는 인스턴스에만. instance refresh 를 한다.</li>
 </ul></aside>
 
-<aside class="callout why"><p class="callout-title">왜 이렇게 했나 (대안)</p><p><b>풀별 구매</b>: system 온디맨드(회수 = 클러스터 API 증발), exec 스팟(무상태 함수, 2대라 하나 빠져도 응답), build 온디맨드(빌드 도중 회수되면 처음부터 다시라 빌드 시간 측정이 흔들림). <b>대안</b>: 전부 온디맨드(단순하지만 스팟 절감과 회수 경험을 잃음), 빌드도 스팟(빌드가 짧고 재시도 가능하면 합리적, README 셀프 연습에서 판단), Karpenter(노드를 파드 요구에 맞춰 즉석 생성. EKS 중심이라 k3s 에선 무거움). <b>aws_instance × N</b> 대신 ASG 인 이유는 회수된 자리를 자동으로 채우기 위해서다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이렇게 했나 (대안)</p><p><b>풀별 구매</b>: system 온디맨드(회수 = 클러스터 API 증발), exec 스팟(무상태 함수, 2대라 하나 빠져도 응답), build 온디맨드(빌드 도중 회수되면 처음부터 다시라 빌드 시간 측정이 흔들림). <b>대안</b>: 전부 온디맨드(단순하지만 스팟 절감과 회수 경험을 잃음), 빌드도 스팟(빌드가 짧고 재시도 가능하면 합리적, README 셀프 연습에서 판단), <span class="t">Karpenter</span>(EKS 중심이라 k3s 에선 무거움). <b>aws_instance × N</b> 대신 ASG 인 이유는 회수된 자리를 자동으로 채우기 위해서다.</p>
+<aside class="notes"><dl>
+<div><dt>Karpenter</dt><dd>파드의 요구에 맞는 노드를 즉석에서 만들고 지우는 오토스케일러. AWS 가 만들었고 EKS 에서 주로 쓴다.</dd></div>
+</dl></aside></aside>
 
 <aside class="callout fact"><p class="callout-title">공식 문서</p>
 <p><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-launch-templates.html">Launch templates</a> · <a href="https://docs.aws.amazon.com/autoscaling/ec2/userguide/auto-scaling-groups.html">Auto Scaling groups</a><br>
@@ -1483,16 +1651,24 @@ flowchart TD
 
 <div class="tier" data-tier="1">
   <h3>스팟은 싸지만 사라진다</h3>
-  <p>스팟 인스턴스는 EC2 의 남는 용량을 할인된 값에 빌리는 구매 방식이다. AWS 가 그 용량이 필요해지면 <b>2분 전에 예고(Spot Instance interruption notice)</b>하고 인스턴스를 회수한다(우리 ASG 기본 동작은 종료). 그보다 앞서 "회수 위험이 높아졌다" 는 <b>리밸런스 권고(rebalance recommendation)</b>가 올 수도 있다. 둘 다 인스턴스 메타데이터(IMDS)와 EventBridge(AWS 의 이벤트 버스. 서비스가 내는 사건을 규칙으로 골라 다른 서비스로 보낸다) 이벤트로 알 수 있다. 회수 때 인스턴스를 종료할지, 중지할지, 최대 절전할지는 스팟 요청의 "중단 동작" 으로 고르는데 ASG 가 만든 스팟은 종료만 쓴다.</p>
+  <p>스팟 인스턴스는 EC2 의 남는 용량을 할인된 값에 빌리는 구매 방식이다. AWS 가 그 용량이 필요해지면 <b>2분 전에 예고(Spot Instance interruption notice)</b>하고 인스턴스를 회수한다(우리 ASG 기본 동작은 종료). 그보다 앞서 "회수 위험이 높아졌다" 는 <b>리밸런스 권고(rebalance recommendation)</b>가 올 수도 있다. 둘 다 인스턴스 메타데이터(IMDS)와 <span class="t">EventBridge</span> 이벤트로 알 수 있다. 회수 때 인스턴스를 종료할지, 중지할지, 최대 절전할지는 스팟 요청의 "중단 동작" 으로 고르는데 ASG 가 만든 스팟은 종료만 쓴다.</p>
+  <aside class="notes"><dl>
+  <div><dt>EventBridge</dt><dd>AWS 의 이벤트 버스. 서비스가 내는 사건을 규칙으로 골라 다른 서비스(SQS, Lambda …)로 보낸다.</dd></div>
+  </dl></aside>
   <p>우리 설계는 이 2분을 쓰는 장치와, 2분을 못 쓰더라도 마지막에 정리하는 장치를 겹쳐 둔다.</p>
   <ol>
-    <li><b>NTH(aws-node-termination-handler)</b>: AWS 가 만든 작은 프로그램. 스팟 노드마다 DaemonSet 파드 하나가 IMDS 를 지켜보다가 회수 예고가 뜨면 노드를 cordon(새 파드 금지) + drain(파드를 PDB 를 지키며 내보내기).</li>
+    <li><b>NTH(aws-node-termination-handler)</b>: AWS 가 만든 작은 프로그램. 스팟 노드마다 DaemonSet 파드 하나가 IMDS 를 지켜보다가 회수 예고가 뜨면 노드를 <span class="t">cordon</span> + <span class="t">drain</span>.</li>
     <li><b>PDB(PodDisruptionBudget)</b>: drain 같은 "자발적 중단" 때 지켜야 할 최소 파드 수. <code>fn-sample</code> 을 한꺼번에 내보내지 않게 "최소 1개는 살아 있게" (<a href="ch08-resilience.html#defense">08장 방어 3종</a>).</li>
-    <li><b>topologySpreadConstraints</b>(파드를 노드마다 고르게 흩는 규칙): 애초에 두 파드를 서로 다른 exec 노드에 흩어 둔다. 한 노드가 빠져도 한쪽은 응답한다. <code>fn-sample</code> 은 06 단계가 고른 최종 조합(<code>DoNotSchedule</code> + <code>nodeTaintsPolicy: Honor</code> + <code>matchLabelKeys</code>)을 그대로 쓴다(<a href="ch08-resilience.html#defense">08장</a>).</li>
+    <li><b><span class="t">topologySpreadConstraints</span></b>: 애초에 두 파드를 서로 다른 exec 노드에 흩어 둔다. 한 노드가 빠져도 한쪽은 응답한다. <code>fn-sample</code> 은 06 단계가 고른 최종 조합(<code>DoNotSchedule</code> + <code>nodeTaintsPolicy: Honor</code> + <code>matchLabelKeys</code>)을 그대로 쓴다(<a href="ch08-resilience.html#defense">08장</a>).</li>
     <li><b>tolerationSeconds 20</b>: 노드가 갑자기 죽었을 때(NTH 가 못 본 경우) 파드가 쫓겨나기까지 기다리는 시간을 기본 300초에서 20초로 줄인다. 역시 06 의 방어 조합이다.</li>
     <li><b>ASG</b>: 줄어든 대수를 새 스팟으로 채운다(capacity rebalance 면 미리).</li>
     <li><b>graceful node shutdown</b>: 그래도 남은 파드는 OS 가 꺼질 때 kubelet 이 최대 60초 동안 정상 종료시킨다(값은 <a href="#k3s-templates">템플릿 절</a>의 kubelet 설정 파일에서 온다).</li>
   </ol>
+  <aside class="notes"><dl>
+  <div><dt>cordon</dt><dd>노드에 "새 파드를 받지 말라" 표시(<code>spec.unschedulable</code>)를 거는 것. 이미 있는 파드는 그대로다.</dd></div>
+  <div><dt>drain</dt><dd>노드의 파드를 PDB 를 지키며 하나씩 내보내는 것. 보통 cordon 뒤에 한다.</dd></div>
+  <div><dt>topologySpreadConstraints</dt><dd>같은 앱의 파드를 노드(또는 영역)마다 고르게 흩으라는 파드 스펙 규칙.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="2">
@@ -1521,8 +1697,11 @@ sequenceDiagram
   Note over API: 노드 오브젝트는 NotReady 로 남음 (k3s 클라우드 컨트롤러가 AWS 를 모름)
   ASG->>API: 새 노드가 user_data 로 조인, pool=exec 라벨
   </pre>
-  <figcaption><b>그림 9-19.</b> 스팟 회수 시퀀스. NTH 는 IMDS 모드라 EventBridge 를 쓰지 않는다. ASG 쪽 교체 시점: capacity rebalance 를 켠 우리 exec 풀은 리밸런스 권고(늦어도 2분 예고와 함께 온다. EC2 는 예고를 보낼 때 권고도 같이 보낸다)를 받는 즉시 교체 인스턴스를 먼저 띄우고, 새것이 InService(ASG 가 보는 "정상 투입" 상태)가 되면 옛것을 종료한다(launch-first). 끄면 ASG 는 인스턴스가 실제로 사라진 뒤에야 대수 부족을 보고 채운다.</figcaption>
+  <figcaption><b>그림 9-19.</b> 스팟 회수 시퀀스. NTH 는 IMDS 모드라 EventBridge 를 쓰지 않는다. ASG 쪽 교체 시점: capacity rebalance 를 켠 우리 exec 풀은 리밸런스 권고(2분 예고보다 먼저 올 수도, 예고와 함께 올 수도 있다)를 받는 즉시 교체 인스턴스를 먼저 띄우고, 새것이 <span class="t">InService</span> 가 되면 옛것을 종료한다(launch-first). 끄면 ASG 는 인스턴스가 실제로 사라진 뒤에야 대수 부족을 보고 채운다.</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>InService</dt><dd>ASG 가 보는 인스턴스 상태 중 "띄우기가 끝나 정상 투입됨". 건강 검사를 통과한 뒤 들어간다.</dd></div>
+  </dl></aside>
   <figure>
     <div class="fig scroll-l">
       <svg viewBox="0 0 1180 380" role="img" aria-labelledby="f19-t">
@@ -1659,10 +1838,14 @@ stateDiagram-v2
     <li>차트 values.yaml(GitHub 저장소 <code>config/helm/aws-node-termination-handler/values.yaml</code>)에서 확인한 사실: <code>daemonsetNodeSelector</code> 키가 있다(README 4.2 의 【추정】은 맞다). <code>enableSpotInterruptionDraining</code> 기본값은 이미 <code>true</code>, <code>enableRebalanceMonitoring</code> 기본값 <code>false</code>. 즉 우리 값은 기본값을 "명시" 한 것이다.</li>
     <li>같은 파일의 기본 <code>daemonsetTolerations</code> 는 <code>operator: Exists</code>(모든 taint 견딤)이다. 그래서 nodeSelector 가 없으면 system·build 노드에도 뜬다. <code>capacity-type: spot</code> 이 꼭 필요한 이유다.</li>
     <li><code>useHostNetwork</code> 기본 <code>true</code>: NTH 파드가 호스트 네트워크로 IMDS 에 닿는다. 그래서 Launch Template 의 hop limit 2 는 NTH 에는 엄밀히 필요 없다 (values 주석: hostNetwork 를 끌 때 hop limit 2 가 필요). 다른 파드를 위한 설정으로 남는다.</li>
-    <li><code>enableASGLifecycleDraining</code> 기본 <code>true</code>: IMDS 모드에서도 ASG 가 인스턴스의 목표 수명 주기 상태를 <code>Terminated</code> 로 바꾸면(IMDS <code>autoscaling/target-lifecycle-state</code>) cordon·drain 한다. 이 경로가 쓸모 있으려면 ASG 에 종료 라이프사이클 훅(<code>autoscaling:EC2_INSTANCE_TERMINATING</code>, 종료를 잠시 붙들어 두는 장치)이 있어야 한다. 훅이 없는 우리 ASG 는 capacity rebalance 로 옛 인스턴스를 지울 때 상태를 바꾸자마자 종료하므로 NTH 가 반응할 시간이 사실상 없고, 그 노드는 "NTH 없는 회수" 와 같은 경로(graceful shutdown 과 300초 축출)로 정리된다. PoC 에서는 훅을 두지 않고, 본선에서 리밸런스 교체까지 깔끔히 비우려면 훅(하트비트 시간 포함)을 둔다.</li>
+    <li><code>enableASGLifecycleDraining</code> 기본 <code>true</code>: IMDS 모드에서도 ASG 가 인스턴스의 목표 수명 주기 상태를 <code>Terminated</code> 로 바꾸면(IMDS <code>autoscaling/target-lifecycle-state</code>) cordon·drain 한다. 이 경로가 쓸모 있으려면 ASG 에 종료 <span class="t">라이프사이클 훅</span>이 있어야 한다. 훅이 없는 우리 ASG 는 capacity rebalance 로 옛 인스턴스를 지울 때 상태를 바꾸자마자 종료하므로 NTH 가 반응할 시간이 사실상 없고, 그 노드는 "NTH 없는 회수" 와 같은 경로(graceful shutdown 과 300초 축출)로 정리된다. PoC 에서는 훅을 두지 않고, 본선에서 리밸런스 교체까지 깔끔히 비우려면 훅(하트비트 시간 포함)을 둔다.</li>
     <li><code>nodeTerminationGracePeriod</code> 기본 120, <code>podTerminationGracePeriod</code> 기본 -1(파드 자체 값), <code>ignoreDaemonSets</code>·<code>deleteLocalData</code> 기본 true.</li>
-    <li>저장소: 공식 README 는 이제 OCI 차트(컨테이너 이미지와 같은 방식으로 Helm 차트를 두는 레지스트리) <code>oci://public.ecr.aws/aws-ec2/helm/aws-node-termination-handler</code> 만 안내하고 eks-charts 는 언급하지 않는다. eks-charts 의 <code>index.yaml</code> 을 직접 읽어 보면 aws-node-termination-handler 의 마지막 항목은 차트 0.21.0(앱 v1.19.0)에서 멈춰 있고, 레포의 <code>Chart.yaml</code> 은 0.27.6(앱 v1.25.6)이다(이 가이드를 쓰는 시점). 고치기 전 레포는 <code>repoURL: https://aws.github.io/eks-charts</code> + <code>targetRevision: "0.*"</code> 라서 동작은 해도 몇 년 묵은 버전을 골랐을 것이고, 이 검수에서 위 발췌처럼 OCI 주소 + 정확한 버전으로 고쳤다. Argo CD 가 <code>oci://</code> 소스를 어떻게 다루는지와 안 될 때의 대안은 GitOps 절의 "깨지면".</li>
+    <li>저장소: 공식 README 는 이제 <span class="t">OCI 차트</span> <code>oci://public.ecr.aws/aws-ec2/helm/aws-node-termination-handler</code> 만 안내하고 eks-charts 는 언급하지 않는다. eks-charts 의 <code>index.yaml</code> 을 직접 읽어 보면 aws-node-termination-handler 의 마지막 항목은 차트 0.21.0(앱 v1.19.0)에서 멈춰 있고, 레포의 <code>Chart.yaml</code> 은 0.27.6(앱 v1.25.6)이다(이 가이드를 쓰는 시점). 고치기 전 레포는 <code>repoURL: https://aws.github.io/eks-charts</code> + <code>targetRevision: "0.*"</code> 라서 동작은 해도 몇 년 묵은 버전을 골랐을 것이고, 이 검수에서 위 발췌처럼 OCI 주소 + 정확한 버전으로 고쳤다. Argo CD 가 <code>oci://</code> 소스를 어떻게 다루는지와 안 될 때의 대안은 GitOps 절의 "깨지면".</li>
   </ul>
+  <aside class="notes"><dl>
+  <div><dt>라이프사이클 훅(lifecycle hook)</dt><dd>ASG 가 인스턴스를 띄우거나 끄는 도중 잠시 멈춰 사용자 작업을 기다리게 하는 장치. 종료 훅은 <code>autoscaling:EC2_INSTANCE_TERMINATING</code>.</dd></div>
+  <div><dt>OCI 차트</dt><dd>Helm 차트를 컨테이너 이미지와 같은 OCI 레지스트리 형식으로 올려 둔 것. 주소가 <code>oci://</code> 로 시작한다.</dd></div>
+  </dl></aside>
 
   <h4>drain 과 PDB 의 계산</h4>
   <div class="code-head"><span>poc/07-ec2-k3s/gitops/workloads/placement-check/fn-sample.yaml</span><span>발췌</span></div>
@@ -1696,15 +1879,25 @@ stateDiagram-v2
 <span class="c">// DoNotSchedule 이라 평소엔 두 파드가 서로 다른 노드에 있다 → 회수 노드의 파드 하나만 나가면 끝</span>
 <span class="c">// 예외: exec 가 1대뿐이면(재고 부족) 둘째 파드는 Pending 으로 기다린다. ScheduleAnyway 였다면 같은 노드에 몰렸다가</span>
 <span class="c">//       회수 때 둘째가 대체 Ready 를 기다려야 했다. 06 이 이 조합을 고른 이유가 그것이다</span></code></pre>
-  <p>의사코드의 Eviction 은 "PDB 를 지키면서 이 파드를 내보내 달라" 는 API 요청이고, SIGTERM 은 "곧 끝내라" 는 신호, SIGKILL 은 강제 종료, 그 사이 기다리는 시간이 파드의 <code>terminationGracePeriodSeconds</code>(기본 30초)다. 06 단계에서 본 함정도 여기 그대로다: PDB <code>minAvailable</code> 을 replicas 와 같게(2) 두면 허용 중단 수가 늘 0 이라 drain 이 끝나지 않고, 2분 뒤 노드가 그냥 꺼진다 = 예고 없는 장애와 같아진다 (06 README 4.4, ANALYSIS B12). 흩어 놓기의 세 필드 뜻: <code>whenUnsatisfiable: DoNotSchedule</code> 은 "고르게 못 흩으면 아예 안 띄운다"(ScheduleAnyway 는 "그래도 띄운다"), <code>nodeTaintsPolicy: Honor</code> 는 파드가 못 견디는 taint 가 붙은 노드(죽어서 unreachable taint 가 붙은 노드, cordon 된 노드)를 "흩을 자리" 로 세지 않게 하고, <code>matchLabelKeys: [pod-template-hash]</code> 는 롤링 배포 중 옛 ReplicaSet 의 파드를 안 세서 새 파드끼리만 고르게 흩는다. 세 필드가 왜 같이 있어야 하는지는 <a href="ch08-resilience.html#defense">08장 방어 3종</a>이 실험으로 보여 준다.</p>
+  <p>의사코드의 <span class="t">Eviction</span> 이 허용되면 파드는 <span class="t">SIGTERM</span> 을 받고, <span class="t"><code>terminationGracePeriodSeconds</code></span> 안에 끝나지 않으면 <span class="t">SIGKILL</span> 로 죽는다. 06 단계에서 본 함정도 여기 그대로다: PDB <code>minAvailable</code> 을 replicas 와 같게(2) 두면 허용 중단 수가 늘 0 이라 drain 이 끝나지 않고, 2분 뒤 노드가 그냥 꺼진다 = 예고 없는 장애와 같아진다 (06 README 4.4, ANALYSIS B12). 흩어 놓기의 세 필드 뜻: <code>whenUnsatisfiable: DoNotSchedule</code> 은 "고르게 못 흩으면 아예 안 띄운다"(ScheduleAnyway 는 "그래도 띄운다"), <code>nodeTaintsPolicy: Honor</code> 는 파드가 못 견디는 taint 가 붙은 노드(죽어서 unreachable taint 가 붙은 노드, cordon 된 노드)를 "흩을 자리" 로 세지 않게 하고, <code>matchLabelKeys: [pod-template-hash]</code> 는 롤링 배포 중 옛 ReplicaSet 의 파드를 안 세서 새 파드끼리만 고르게 흩는다. 세 필드가 왜 같이 있어야 하는지는 <a href="ch08-resilience.html#defense">08장 방어 3종</a>이 실험으로 보여 준다.</p>
+  <aside class="notes"><dl>
+  <div><dt>Eviction</dt><dd>"PDB 를 지키면서 이 파드를 내보내 달라" 는 API 요청. <code>kubectl drain</code> 이 파드마다 보낸다.</dd></div>
+  <div><dt>SIGTERM</dt><dd>프로세스에 "곧 끝내라" 고 알리는 신호. 받은 쪽이 정리할 기회가 있다.</dd></div>
+  <div><dt><code>terminationGracePeriodSeconds</code></dt><dd>SIGTERM 뒤 SIGKILL 까지 기다려 주는 시간. 파드 스펙 필드이고 기본 30초.</dd></div>
+  <div><dt>SIGKILL</dt><dd>즉시 강제 종료 신호. 프로세스가 거부할 수 없다.</dd></div>
+  </dl></aside>
 
   <h4>graceful node shutdown</h4>
   <ul>
-    <li>kubelet 은 systemd-logind 의 <b>inhibitor lock</b>(지연 잠금: "끄기 전에 나한테 시간을 달라")을 잡아 OS 종료를 <code>shutdownGracePeriod</code>(우리 60s)까지 늦춘다. 종료 이벤트를 받으면 일반 파드를 먼저, 그다음 중요 파드(<code>system-cluster-critical</code>·<code>system-node-critical</code> 우선순위 클래스)를 종료한다. 중요 파드 몫이 <code>shutdownGracePeriodCriticalPods</code>(우리 10s) 이고, 일반 파드는 그 차이(50초) 안에 끝나야 한다. 두 값은 install.sh 가 쓰는 <code>/etc/rancher/k3s/kubelet.yaml</code>(KubeletConfiguration)의 필드이지 플래그가 아니다(템플릿 절).</li>
-    <li>systemd-logind 의 <code>InhibitDelayMaxSec</code>(기본 5초)가 이보다 짧으면 kubelet 이 스스로 <code>/etc/systemd/logind.conf.d/99-kubelet.conf</code> 에 더 큰 값을 쓰고 logind 를 다시 읽게 한다(kubelet 소스 <code>nodeshutdown_manager_linux.go</code>). 그래서 따로 손볼 것은 없다. 다만 공식 문서는 우분투·데비안의 <code>unattended-upgrades</code> 패키지가 이 값을 30초로 바꿔 둘 수 있다고 경고하니, 당일 <code>systemd-inhibit --list</code> 로 kubelet 의 잠금이 보이는지 확인한다. 이 관리자가 시작에 실패해도 kubelet 은 그냥 계속 뜬다(치명적이지 않은 부품으로 취급).</li>
+    <li>kubelet 은 systemd-logind 의 <b><span class="t">inhibitor lock</span></b> 을 잡아 OS 종료를 <code>shutdownGracePeriod</code>(우리 60s)까지 늦춘다. 종료 이벤트를 받으면 일반 파드를 먼저, 그다음 중요 파드(<code>system-cluster-critical</code>·<code>system-node-critical</code> 우선순위 클래스)를 종료한다. 중요 파드 몫이 <code>shutdownGracePeriodCriticalPods</code>(우리 10s) 이고, 일반 파드는 그 차이(50초) 안에 끝나야 한다. 두 값은 install.sh 가 쓰는 <code>/etc/rancher/k3s/kubelet.yaml</code>(KubeletConfiguration)의 필드이지 플래그가 아니다(템플릿 절).</li>
+    <li>systemd-logind 의 <code>InhibitDelayMaxSec</code>(기본 5초)가 이보다 짧으면 kubelet 이 스스로 <code>/etc/systemd/logind.conf.d/99-kubelet.conf</code> 에 더 큰 값을 쓰고 logind 를 다시 읽게 한다(kubelet 소스 <code>nodeshutdown_manager_linux.go</code>). 그래서 따로 손볼 것은 없다. 다만 공식 문서는 우분투·데비안의 <code>unattended-upgrades</code> 패키지가 <code>/etc/systemd/logind.conf.d/unattended-upgrades-logind-maxdelay.conf</code> 로 이 상한을 30초로 두어 30초보다 긴 <code>shutdownGracePeriod</code>(우리 60s)와 충돌할 수 있다고 경고하니, 당일 <code>systemd-inhibit --list</code> 로 kubelet 의 잠금이 보이는지 확인한다. 이 관리자가 시작에 실패해도 kubelet 은 그냥 계속 뜬다(치명적이지 않은 부품으로 취급).</li>
     <li>이렇게 종료된 파드는 <code>Failed</code> 상태, 사유(reason) <code>Terminated</code>, 메시지 <code>Pod was terminated in response to imminent node shutdown.</code> 로 남는다(공식 문서). Deployment 는 새 파드를 다른 노드에 만든다.</li>
-    <li>EC2 가 스팟을 회수할 때 OS 에 ACPI(하드웨어가 OS 에 "전원을 끈다" 고 알리는 표준) 종료 신호를 주어 systemd 종료 절차가 돌고 inhibitor 가 효과를 내는지, 아니면 하이퍼바이저가 바로 끄는지는 【확인 필요: AWS 문서 "Spot Instance interruptions" 의 종료 절차 설명과, 당일 회수된 노드의 <code>journalctl -u k3s-agent</code> 에 shutdown manager 로그가 남는지로 확정】. 그래서 README 도 이걸 "이중 안전장치" 로만 둔다.</li>
+    <li>EC2 가 스팟을 회수할 때 OS 에 <span class="t">ACPI</span> 종료 신호를 주어 systemd 종료 절차가 돌고 inhibitor 가 효과를 내는지, 아니면 하이퍼바이저가 바로 끄는지는 【확인 필요: AWS 문서 "Spot Instance interruptions" 의 종료 절차 설명과, 당일 회수된 노드의 <code>journalctl -u k3s-agent</code> 에 shutdown manager 로그가 남는지로 확정】. 그래서 README 도 이걸 "이중 안전장치" 로만 둔다.</li>
   </ul>
+  <aside class="notes"><dl>
+  <div><dt>inhibitor lock</dt><dd>systemd-logind 에 "끄기 전에 나한테 시간을 달라" 고 거는 지연 잠금. kubelet 이 종료를 늦추는 수단.</dd></div>
+  <div><dt>ACPI</dt><dd>하드웨어가 OS 에 전원 버튼·종료 같은 사건을 알리는 표준. 이 신호가 오면 systemd 가 종료 절차를 시작한다.</dd></div>
+  </dl></aside>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>exec 를 2대로 둔 것(<code>exec_desired = 2</code>)과 <code>fn-sample</code> replicas 2 + 흩어 놓기 + PDB 1 이 한 세트다. 하나가 회수돼도 다른 하나가 응답하는 모양을 FIS 로 확인하고, <code>measure.sh spot</code> 이 cordon / 파드 이동 / 교체 노드 Ready 시점과 실패 요청 수를 잰다. 단, 외부 진입점이 "노드 IP 하나" 라서 그 노드가 회수 대상이 되면 curl 은 전부 실패한다. 설계 문서에 "본선에선 앞단에 NLB/ALB" 를 적는다 (RUNBOOK D).</p></aside>
@@ -1835,12 +2028,15 @@ sequenceDiagram
 }</code></pre>
   <ul>
     <li><code>count = var.enable_fis ? 1 : 0</code>: 조건부 리소스. 그래서 참조가 <code>aws_iam_role.fis[0]</code>, output 도 <code>var.enable_fis ? …[0].id : ""</code>. <code>measure.sh</code> 는 빈 문자열이면 "enable_fis=false 로 만들어졌다" 로 멈춘다.</li>
-    <li><code>durationBeforeInterruption = "PT2M"</code>: ISO 8601 기간 표기(PT2M = 2분). 액션 시작부터 실제 회수까지의 시간으로, 허용 범위는 2분(<code>PT2M</code>)에서 15분(<code>PT15M</code>)까지다. 공식 액션 문서: 액션이 시작되면 <b>리밸런스 권고를 즉시</b> 보내고, 회수 <b>2분 전에</b> 회수 예고를 보낸다. 우리는 2분이라 권고와 예고가 사실상 동시에 간다. 길게 주면 "권고 → 예고" 사이의 capacity rebalance 동작을 따로 볼 수 있다.</li>
+    <li><code>durationBeforeInterruption = "PT2M"</code>: <span class="t">ISO 8601</span> 기간 표기. 액션 시작부터 실제 회수까지의 시간으로, 허용 범위는 2분(<code>PT2M</code>)에서 15분(<code>PT15M</code>)까지다. 공식 액션 문서: 액션이 시작되면 <b>리밸런스 권고를 즉시</b> 보내고, 회수 <b>2분 전에</b> 회수 예고를 보낸다. 우리는 2분이라 권고와 예고가 사실상 동시에 간다. 길게 주면 "권고 → 예고" 사이의 capacity rebalance 동작을 따로 볼 수 있다.</li>
     <li><code>selection_mode = "COUNT(1)"</code>: 조건에 맞는 것 중 1대만 무작위로. <code>ALL</code> 이면 exec 2대를 동시에 회수해 함수가 완전히 끊긴다.</li>
     <li><code>resource_tag</code> 두 개: 설계 의도는 "두 태그를 모두 가진 인스턴스만" 이다 【확인 필요: 여러 resource_tag 가 AND 로 묶이는지는 FIS 사용자 가이드 Targets 페이지의 "Resource tags" 절 문구로 확정한다. 이번 검수에서는 그 문구를 직접 보지 못했다】. 어느 쪽이든 Project 태그는 같은 계정의 다른 실습 인스턴스를 건드리지 않게 하는 안전장치이고, 실험 전 <code>aws ec2 describe-instances --filters Name=tag:Pool,Values=exec Name=tag:Project,Values=poc07</code> 로 후보를 눈으로 확인하면 된다.</li>
     <li><code>filter State.Name = running</code>: 막 종료 중인 인스턴스를 고르지 않게.</li>
     <li><code>stop_condition source = "none"</code>: FIS 는 중지 조건을 최소 하나 요구해서, "없음" 을 명시적으로 쓴다. 운영에서는 CloudWatch 알람(예: 오류율)을 걸어 실험이 선을 넘으면 자동 중단한다.</li>
   </ul>
+  <aside class="notes"><dl>
+  <div><dt>ISO 8601</dt><dd>날짜·시간·기간을 적는 국제 표준. 기간은 <code>PT2M</code>(2분), <code>PT15M</code>(15분)처럼 P 와 T 뒤에 단위를 붙인다.</dd></div>
+  </dl></aside>
   <pre class="pseudo"><code><span class="k">실험 한 번</span>:
   대상 후보 = 태그 Pool=exec ∧ Project=poc07 ∧ 상태 running 인 스팟 인스턴스
   <span class="k">만약</span> 후보 0 → 실험 실패 (대상 없음)
@@ -1912,8 +2108,11 @@ sequenceDiagram
         <path d="M1000 144 L1000 158" class="d-e-api" marker-end="url(#f25-m-api)"/>
       </svg>
     </div>
-    <figcaption><b>그림 9-25.</b> 접속 경로. 보라 점선은 노드 쪽 에이전트가 먼저 밖으로 연 연결이다. 맥에서 들어가는 쪽도 443 으로 SSM 서비스에 갈 뿐이라, 노드의 보안 그룹에는 들어오는 규칙이 필요 없다. k3s 가 만든 kubeconfig 의 서버 주소가 원래 <code>https://127.0.0.1:6443</code> 이라 터널과 딱 맞고, 인증서의 SAN(Subject Alternative Name, 이 인증서가 유효한 호스트 이름·IP 목록)에도 127.0.0.1 이 들어 있다.</figcaption>
+    <figcaption><b>그림 9-25.</b> 접속 경로. 보라 점선은 노드 쪽 에이전트가 먼저 밖으로 연 연결이다. 맥에서 들어가는 쪽도 443 으로 SSM 서비스에 갈 뿐이라, 노드의 보안 그룹에는 들어오는 규칙이 필요 없다. k3s 가 만든 kubeconfig 의 서버 주소가 원래 <code>https://127.0.0.1:6443</code> 이라 터널과 딱 맞고, 인증서의 <span class="t">SAN</span> 에도 127.0.0.1 이 들어 있다.</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>SAN(Subject Alternative Name)</dt><dd>이 인증서가 유효한 호스트 이름·IP 목록. 접속 주소가 여기 없으면 x509 오류가 난다.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="2">
@@ -1944,8 +2143,11 @@ sequenceDiagram
   G->>G: ./kubeconfig 저장 chmod 600, 컨텍스트 이름 default 를 poc07 로
   U->>U: export KUBECONFIG 후 kubectl get nodes
   </pre>
-  <figcaption><b>그림 9-26.</b> 접속 준비. 터널은 켜 둔 채로 두고, kubeconfig 는 SSM Run Command 로 파일 내용을 읽어 온다. 둘 다 노드에 들어오는 포트를 열지 않는다.</figcaption>
+  <figcaption><b>그림 9-26.</b> 접속 준비. 터널은 켜 둔 채로 두고, kubeconfig 는 SSM <span class="t">Run Command</span> 로 파일 내용을 읽어 온다. 둘 다 노드에 들어오는 포트를 열지 않는다.</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>Run Command</dt><dd>노드에 들어가지 않고 SSM 에이전트를 통해 명령 한 줄을 원격 실행하는 SSM 기능. 결과는 API 로 돌아온다.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="3">
@@ -1980,7 +2182,10 @@ STATUS=$(aws ssm get-command-invocation … --query <span class="s">'Status'</sp
   </ul>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>로컬의 8080(Argo CD UI)·8081(Kourier) port-forward(kubectl 이 맥의 포트를 클러스터 안 Service 로 이어 주는 기능) 습관을 그대로 가져온다. Argo CD UI 는 <code>kubectl -n argocd port-forward svc/argocd-server 8080:80</code>, gVisor 측정의 Kourier 는 <code>port-forward svc/kourier 8081:80</code>. 둘 다 SSM 터널 위의 kubectl 위에서 돈다 (그래서 절대 지연값엔 터널 비용이 섞인다).</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>로컬의 8080(Argo CD UI)·8081(Kourier) <span class="t">port-forward</span> 습관을 그대로 가져온다. Argo CD UI 는 <code>kubectl -n argocd port-forward svc/argocd-server 8080:80</code>, gVisor 측정의 Kourier 는 <code>port-forward svc/kourier 8081:80</code>. 둘 다 SSM 터널 위의 kubectl 위에서 돈다 (그래서 절대 지연값엔 터널 비용이 섞인다).</p>
+<aside class="notes"><dl>
+<div><dt>port-forward</dt><dd>kubectl 이 내 컴퓨터의 포트를 클러스터 안 파드·Service 포트로 이어 주는 기능. API 서버를 거쳐 흐른다.</dd></div>
+</dl></aside></aside>
 
 <aside class="callout break"><p class="callout-title">깨지면 이렇게 보인다</p>
 <ul>
@@ -2000,7 +2205,10 @@ STATUS=$(aws ssm get-command-invocation … --query <span class="s">'Status'</sp
 <!-- ============================================================ GitOps -->
 <h2 id="gitops">k3s 위 GitOps 부트스트랩</h2>
 
-<p>접속이 되면 다음은 앱이다. 01장의 Argo CD 와 App of Apps(Application 들을 만드는 Application: 폴더 하나에 Application YAML 을 모아 두고 루트 Application 이 그 폴더를 가리킨다, <a href="ch01-gitops.html#app-of-apps">01장</a>)를 그대로 가져오되, 노드 배치만 EC2 에 맞춘다.</p>
+<p>접속이 되면 다음은 앱이다. 01장의 Argo CD 와 <span class="t">App of Apps</span> 를 그대로 가져오되, 노드 배치만 EC2 에 맞춘다.</p>
+<aside class="notes"><dl>
+<div><dt>App of Apps</dt><dd>Application 들을 만드는 Application. 폴더 하나에 Application YAML 을 모아 두고 루트 Application 이 그 폴더를 가리킨다(<a href="ch01-gitops.html#app-of-apps">01장</a>).</dd></div>
+</dl></aside>
 
 <div class="tier" data-tier="1">
   <h3>같은 Git, 다른 클러스터</h3>
@@ -2082,8 +2290,11 @@ flowchart TD
   I --> J["Argo CD 가 Git 의 apps 폴더를 읽고<br/>Application 3개 생성"]
   J --> K["local-stage-apps 가 01 apps 폴더 → hello-fn, bye-fn"]
   </pre>
-  <figcaption><b>그림 9-28.</b> <code>bootstrap-argocd.sh</code>. 1단계와 같은 차트·버전·values 를 쓰고, EC2 에서 다른 점(노드 배치)만 두 번째 <code>-f</code> 로 얹는다. values(차트의 변수 값 파일)를 여러 개 주면 Helm 은 뒤 파일의 같은 키가 이긴다.</figcaption>
+  <figcaption><b>그림 9-28.</b> <code>bootstrap-argocd.sh</code>. 1단계와 같은 차트·버전·values 를 쓰고, EC2 에서 다른 점(노드 배치)만 두 번째 <code>-f</code> 로 얹는다. <span class="t">values</span> 를 여러 개 주면 Helm 은 뒤 파일의 같은 키가 이긴다.</figcaption>
   </figure>
+  <aside class="notes"><dl>
+  <div><dt>values</dt><dd>Helm 차트의 변수 값을 담는 YAML 파일. 차트의 기본값 위에 <code>-f</code> 순서대로 덧씌운다.</dd></div>
+  </dl></aside>
   <div class="code-head"><span>poc/07-ec2-k3s/gitops/bootstrap/argocd-values-k3s.yaml</span><span>전부 (주석 생략)</span></div>
   <pre><code><span class="k">global</span>:
   <span class="k">nodeSelector</span>:
@@ -2134,10 +2345,13 @@ flowchart TD
             - name: NODE_NAME
               valueFrom: { fieldRef: { fieldPath: spec.nodeName } }</code></pre>
   <ul>
-    <li>Downward API(<code>fieldRef: spec.nodeName</code>)로 자기가 뜬 노드 이름을 로그에 찍는다. <code>kubectl logs job/fake-build</code> 한 줄로 배치 확인.</li>
+    <li><span class="t">Downward API</span>(<code>fieldRef: spec.nodeName</code>)로 자기가 뜬 노드 이름을 로그에 찍는다. <code>kubectl logs job/fake-build</code> 한 줄로 배치 확인.</li>
     <li>toleration 의 key·value·effect 가 taint(<code>pool=build:NoSchedule</code>)와 글자 하나까지 같아야 한다.</li>
     <li>Job 은 완료되면 다시 돌지 않는다. 그래서 README 6절의 깨뜨리기 실험은 이름을 <code>fake-build-2</code> 로 바꿔 새 Job 을 만든다.</li>
   </ul>
+  <aside class="notes"><dl>
+  <div><dt>Downward API</dt><dd>파드가 자기 자신의 정보(노드 이름, 파드 IP, 라벨 …)를 환경 변수나 파일로 받는 쿠버네티스 기능.</dd></div>
+  </dl></aside>
   <div class="table-wrap"><table>
   <thead><tr><th>워크로드</th><th>nodeSelector</th><th>toleration</th><th>기대 위치</th><th>확인</th></tr></thead>
   <tbody>
@@ -2177,11 +2391,18 @@ flowchart TD
 <!-- ============================================================ gVisor -->
 <h2 id="gvisor">EC2 위 gVisor: 진짜 커널에서 runc 와 비교</h2>
 
-<p>선택 과제다. 06장에서 kind 노드 안에 깔다 만 gVisor(runsc, 컨테이너의 시스템 호출을 사용자 공간 커널이 가로채 호스트 커널을 보호하는 샌드박스 런타임, <a href="ch06-build-runtime.html#gvisor">06장</a>)를 진짜 VM 에서 끝까지 돌려 본다.</p>
+<p>선택 과제다. 06장에서 kind 노드 안에 깔다 만 <span class="t">gVisor</span> 를 진짜 VM 에서 끝까지 돌려 본다.</p>
+<aside class="notes"><dl>
+<div><dt>gVisor(runsc)</dt><dd>컨테이너의 시스템 호출을 사용자 공간 커널이 가로채 호스트 커널을 보호하는 샌드박스 런타임(<a href="ch06-build-runtime.html#gvisor">06장</a>).</dd></div>
+</dl></aside>
 
 <div class="tier" data-tier="1">
   <h3>왜 여기서 다시 하나</h3>
-  <p>04 단계에서 gVisor(runsc)는 kind 노드에 설치까지는 됐지만, kind 노드가 "컨테이너 안의 컨테이너 런타임" 이라 함수 실행이 권한 문제로 실패했다 (04 README 9절 보충). EC2 노드는 진짜 리눅스 VM 이라 그 제약이 없을 것이다(README 도 추정으로 적었고, 당일 <code>gvisor-ec2.sh check</code> 로 확인한다). 그래서 runc(표준 컨테이너 런타임) 대 gVisor 콜드 스타트(함수 파드가 0개일 때 첫 요청이 파드가 뜨기까지 기다리는 시간, <a href="ch05-knative.html#coldstart">05장</a>) 비교는 07 의 선택 과제(RUNBOOK H)로 옮겼다. 켜는 손잡이는 <code>enable_gvisor = true</code> 하나다.</p>
+  <p>04 단계에서 gVisor(runsc)는 kind 노드에 설치까지는 됐지만, kind 노드가 "컨테이너 안의 컨테이너 런타임" 이라 함수 실행이 권한 문제로 실패했다 (04 README 9절 보충). EC2 노드는 진짜 리눅스 VM 이라 그 제약이 없을 것이다(README 도 추정으로 적었고, 당일 <code>gvisor-ec2.sh check</code> 로 확인한다). 그래서 <span class="t">runc</span> 대 gVisor <span class="t">콜드 스타트</span> 비교는 07 의 선택 과제(RUNBOOK H)로 옮겼다. 켜는 손잡이는 <code>enable_gvisor = true</code> 하나다.</p>
+  <aside class="notes"><dl>
+  <div><dt>runc</dt><dd>OCI 표준 컨테이너 런타임. containerd 가 기본으로 쓰며 호스트 커널을 그대로 쓴다.</dd></div>
+  <div><dt>콜드 스타트</dt><dd>함수 파드가 0개일 때 첫 요청이 파드가 뜨기까지 기다리는 시간(<a href="ch05-knative.html#coldstart">05장</a>).</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="2">
@@ -2208,7 +2429,11 @@ flowchart TD
   </pre>
   <figcaption><b>그림 9-29.</b> <code>gvisor.sh.tftpl</code> 흐름. k3s 는 containerd 설정 파일을 시작할 때마다 새로 만들기 때문에 손으로 고치면 사라진다. 그래서 k3s 가 읽는 <b>템플릿 파일</b>에 "기본 설정 전부(<code>{{ template "base" . }}</code>) + runsc" 를 쓴다.</figcaption>
   </figure>
-  <p>스팟이 회수돼 ASG 가 새 노드를 띄워도 같은 user_data 라서 gVisor 가 다시 깔린다. 04 의 RuntimeClass(파드가 어느 컨테이너 런타임으로 돌지 고르는 리소스. <code>handler: runsc</code>, <code>scheduling.nodeSelector: pool=exec</code>)와 ksvc 는 그대로 쓰고, 이미지만 ttl.sh(로그인 없는 공개 임시 레지스트리)에 올린 amd64(인텔·AMD 64비트. 애플 실리콘 맥은 arm64 라 따로 빌드해야 한다) 이미지로 바꾼다.</p>
+  <p>스팟이 회수돼 ASG 가 새 노드를 띄워도 같은 user_data 라서 gVisor 가 다시 깔린다. 04 의 RuntimeClass(<code>handler: runsc</code>, <code>scheduling.nodeSelector: pool=exec</code>)와 ksvc 는 그대로 쓰고, 이미지만 <span class="t">ttl.sh</span> 에 올린 <span class="t">amd64</span> 이미지로 바꾼다.</p>
+  <aside class="notes"><dl>
+  <div><dt>ttl.sh</dt><dd>로그인 없이 쓰는 공개 임시 레지스트리. 올린 이미지가 정해진 시간 뒤 사라진다.</dd></div>
+  <div><dt>amd64</dt><dd>인텔·AMD 의 64비트 CPU 아키텍처. 애플 실리콘 맥은 arm64 라 EC2(x86) 용 이미지는 따로 빌드해야 한다.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="3">
@@ -2230,9 +2455,12 @@ systemctl restart k3s-agent</code></pre>
   <ul>
     <li>이 파일도 Terraform 템플릿이다. 그래서 Go 템플릿의 <code>{{ … }}</code> 는 그대로 통과하지만(Terraform 은 <code>${</code>·<code>%{</code> 만 봄), 셸 변수는 중괄호 없이 <code>$GV</code>, <code>$TMP</code> 처럼만 쓴다. Terraform 값은 첫 줄 <code>GV='${gvisor_version}'</code> 하나.</li>
     <li>user_data 의 앞부분(install 스크립트)이 <code>set -euo pipefail</code> 을 켜 둔 상태로 이어지므로, 이 부분의 어떤 실패도 스크립트를 멈춘다. 다만 k3s agent 는 이미 조인한 뒤라 노드는 Ready 인데 gVisor 만 없는 상태가 된다 → <code>gvisor-ec2.sh check</code> 로 확인.</li>
-    <li>k3s 는 PATH 에서 찾은 몇몇 런타임(nvidia, crun, wasm 계열)을 containerd 설정에 자동으로 넣지만 <b>runsc 는 그 목록에 없다</b>(k3s 소스 <code>pkg/agent/containerd/runtimes.go</code>, 공식 문서 "Alternative Container Runtime Support"). 그래서 스크립트의 "먼저 보고(<code>crictl info</code>, 컨테이너 런타임에 직접 묻는 CLI), 없을 때만 템플릿" 분기는 늘 템플릿 쪽으로 간다. 파일 주석의 【미확인】은 이렇게 결론 난다. 템플릿 파일 이름은 containerd 2(설정 version 3)면 <code>config-v3.toml.tmpl</code>, 1.x 면 <code>config.toml.tmpl</code> 이고, <code>{{ template "base" . }}</code> 가 k3s 의 기본 설정을 통째로 끼워 넣는다(공식 문서 "Configuring containerd").</li>
+    <li>k3s 는 PATH 에서 찾은 몇몇 런타임(nvidia, crun, wasm 계열)을 containerd 설정에 자동으로 넣지만 <b>runsc 는 그 목록에 없다</b>(k3s 소스 <code>pkg/agent/containerd/runtimes.go</code>, 공식 문서 "Alternative Container Runtime Support"). 그래서 스크립트의 "먼저 <span class="t">crictl</span> 로 보고, 없을 때만 템플릿" 분기는 늘 템플릿 쪽으로 간다. 파일 주석의 【미확인】은 이렇게 결론 난다. 템플릿 파일 이름은 containerd 2(설정 version 3)면 <code>config-v3.toml.tmpl</code>, 1.x 면 <code>config.toml.tmpl</code> 이고, <code>{{ template "base" . }}</code> 가 k3s 의 기본 설정을 통째로 끼워 넣는다(공식 문서 "Configuring containerd").</li>
     <li>측정은 04 의 <code>coldstart.sh</code> 를 <code>GATEWAY=http://localhost:8081</code> 로 그대로 부르고, 결과 줄만 07 의 <code>results/coldstart-ec2.csv</code> 로 옮긴다. 절대값에는 SSM 터널 + port-forward 비용이 섞이므로 같은 클러스터 안의 <b>차이</b>만 본다 (스크립트 마지막 주의 문구).</li>
   </ul>
+  <aside class="notes"><dl>
+  <div><dt>crictl</dt><dd>kubelet 을 거치지 않고 컨테이너 런타임(containerd)에 직접 묻는 CLI. k3s 에는 <code>k3s crictl</code> 로 내장돼 있다.</dd></div>
+  </dl></aside>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>gVisor 는 exec 풀 <b>전체</b>에 깔린다 (<code>enable_gvisor</code>). 빌드 풀에는 안 붙는다(<code>pool == "exec"</code> 조건). 대안인 gVisor 전용 풀은 신뢰 못 할 함수만 거기로 보내 runc 함수의 오버헤드를 0 으로 두는 대신 풀이 하나 늘어난다 (README 부가 결정).</p></aside>
@@ -2327,9 +2555,12 @@ exit $found</code></pre>
   <ul>
     <li><code>set -uo pipefail</code>(<code>-e</code> 없음): 한 검사가 실패해도 나머지를 계속 본다.</li>
     <li>출력이 비었거나 <code>None</code> 이면 "없음". 그런데 명령 자체가 실패(자격 증명 만료 등)하면 에러 문구가 <code>out</code> 에 들어가 "남아 있음" 으로 보고된다 → 거짓 양성이지만 안전한 쪽(fail-closed).</li>
-    <li>EIP(Elastic IP, 고정 퍼블릭 IP)·NAT 는 태그 없이 리전 전체를 본다. 다른 실습의 EIP 가 있으면 매번 "남아 있음" 이 뜬다.</li>
+    <li><span class="t">EIP</span>·NAT 는 태그 없이 리전 전체를 본다. 다른 실습의 EIP 가 있으면 매번 "남아 있음" 이 뜬다.</li>
     <li>보지 않는 것: IAM 역할·프로파일(무료지만 다음 apply 때 이름 충돌), FIS 템플릿(무료), 보안 그룹·서브넷(VPC 와 함께 감). 과금 리소스만 본다는 설계다.</li>
   </ul>
+  <aside class="notes"><dl>
+  <div><dt>EIP(Elastic IP)</dt><dd>계정에 할당받아 인스턴스에 붙였다 뗄 수 있는 고정 퍼블릭 IPv4. 어디에도 붙이지 않고 두어도 과금된다.</dd></div>
+  </dl></aside>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>승인 규칙이 코드보다 위에 있다. README 첫 경고와 RUNBOOK 첫 줄이 같은 말을 한다: AWS 리소스 생성·apply·destroy·start-experiment 는 <b>Jeong 의 승인 뒤 Jeong 이 로컬 맥에서 직접</b>. 이 가이드를 쓰는 동안에도 terraform·AWS 명령은 한 번도 실행하지 않았다.</p></aside>

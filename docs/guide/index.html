@@ -35,7 +35,7 @@
 
 <h2 id="map">이 장의 지도</h2>
 
-<p>이 장은 특정 기술 하나가 아니라 가이드 전체의 지도다. 아래 그림에서 테두리 전체가 이 장이 다루는 범위이고, 안의 칸 하나하나가 다음 장들이다. 아래층(기반)이 무너지면 위층이 다 같이 무너진다는 점을 기억해 두면 장애를 추적할 때 순서가 생긴다. 그림 안의 이름(Argo CD, Knative, Cilium, kaniko, gVisor, MCP, k3s …)은 아직 몰라도 된다. 이 장을 위에서 아래로 읽는 동안 처음 나오는 자리에서 하나씩 풀어 쓴다.</p>
+<p>이 장은 특정 기술 하나가 아니라 가이드 전체의 지도다. 아래 그림에서 테두리 전체가 이 장이 다루는 범위이고, 안의 칸 하나하나가 다음 장들이다. 아래층(기반)이 무너지면 위층이 다 같이 무너진다는 점을 기억해 두면 장애를 추적할 때 순서가 생긴다. 그림 안의 이름(Argo CD, Knative, Cilium, kaniko, gVisor, MCP, k3s …)은 아직 몰라도 된다. 이 장을 위에서 아래로 읽는 동안 처음 나오는 자리에서 하나씩 풀어 쓴다. 점선 밑줄과 번호가 붙은 말은 그 단락 옆(좁은 화면에서는 아래)의 주석에 뜻이 있다.</p>
 
 <figure>
   <div class="fig scroll">
@@ -91,23 +91,62 @@
 
 <h2 id="what">이 PoC 는 무엇인가</h2>
 
-<p>한 문장으로: <strong>"Run your function over HTTP"</strong> 를 직접 운영하는(self-managed) 쿠버네티스 위에 세운 멀티테넌트 FaaS 플랫폼이다. 말을 하나씩 풀면 이렇다. 쿠버네티스(Kubernetes)는 컨테이너(container: 프로그램과 그 실행 환경을 한 묶음으로 격리해 돌리는 단위. 자바라면 JVM 과 jar 와 OS 라이브러리를 한 상자에 넣은 것)를 여러 서버에 걸쳐 배치하고, 죽으면 다시 띄우는 오케스트레이터다. 직접 운영한다는 것은 EKS 같은 관리형 서비스가 아니라 노드와 컨트롤 플레인을 우리가 세운다는 뜻이다. 멀티테넌트(multi-tenant)는 한 플랫폼을 여러 고객 조직(테넌트, tenant)이 서로 모른 채 나눠 쓴다는 뜻이고, FaaS(Function as a Service)는 코드 조각만 올리면 빌드·배포·확장·축소를 플랫폼이 맡는 서비스 모양이다.</p>
+<p>한 문장으로: <strong>"Run your function over HTTP"</strong> 를 직접 운영하는(self-managed) 쿠버네티스 위에 세운 멀티테넌트 FaaS 플랫폼이다. 말을 하나씩 풀면 이렇다. 쿠버네티스(Kubernetes)는 <span class="t">컨테이너</span>를 여러 서버에 걸쳐 배치하고, 죽으면 다시 띄우는 오케스트레이터다. 직접 운영한다는 것은 <span class="t">EKS</span> 같은 관리형 서비스가 아니라 <span class="t">노드</span>와 컨트롤 플레인을 우리가 세운다는 뜻이다. 멀티테넌트(multi-tenant)는 한 플랫폼을 여러 고객 조직(테넌트, tenant)이 서로 모른 채 나눠 쓴다는 뜻이고, FaaS(Function as a Service)는 코드 조각만 올리면 빌드·배포·확장·축소를 플랫폼이 맡는 서비스 모양이다.</p>
+<aside class="notes"><dl>
+<div><dt>컨테이너(container)</dt><dd>프로그램과 그것이 기대는 라이브러리·설정을 한 묶음으로 격리해 돌리는 단위. 같은 묶음이면 어느 서버에서 띄워도 같게 돈다.</dd></div>
+<div><dt>EKS</dt><dd>AWS 의 관리형 쿠버네티스. 컨트롤 플레인을 AWS 가 대신 돌려 주고 시간당 과금한다.</dd></div>
+<div><dt>노드(node)</dt><dd>컨테이너가 실제로 도는 서버 한 대. 이 PoC 의 kind 에서는 Docker 컨테이너 하나가 노드 하나다.</dd></div>
+</dl></aside>
 
-<p>함수 개발자는 파이썬 함수 파일 하나를 <code>POST /api/v1/tenants/tenant-a/functions</code> 로 보낸다. 플랫폼은 클러스터 안에서 컨테이너 이미지(image: 코드와 실행 환경을 담은, 어디서 띄워도 같은 파일 묶음)를 빌드하고(kaniko: Docker 없이 컨테이너 안에서 이미지를 만드는 도구), 이미지 내용의 지문(digest: 내용 전체의 SHA-256 해시. 이름표인 태그와 달리 내용이 바뀌면 값도 바뀐다)으로 고정해 Knative Service 로 띄운다. Knative 는 쿠버네티스 위에서 요청량에 따라 파드 수를 0 과 N 사이로 조절하는 서버리스 계층이고, Knative Service(줄여서 ksvc)는 거기서 "함수 하나" 에 해당하는 리소스다. 파드(Pod)는 쿠버네티스가 컨테이너를 띄우는 최소 단위로, 같은 노드에서 함께 뜨는 컨테이너 한두 개를 묶은 것이다. 요청이 없으면 파드를 0개로 줄였다가 첫 요청이 오면 다시 띄운다. 테넌트끼리는 Namespace(이름과 권한을 나누는 칸), ResourceQuota(칸 하나가 쓸 수 있는 CPU·메모리·파드 수의 총량 한도), NetworkPolicy(파드 사이 통신을 라벨로 허용하는 규칙), RBAC(Role-Based Access Control: 누가 어떤 쿠버네티스 API 를 부를 수 있는지 정하는 권한 체계) 같은 울타리 여러 겹으로 나누고, 남의 코드를 돌리는 실행 노드(node: 파드가 실제로 도는 서버 한 대)는 별도 풀(pool: 같은 역할의 노드 묶음)로 떼어 gVisor 샌드박스(컨테이너와 호스트 커널 사이에 끼어 시스템 콜을 대신 받아 주는 격리 런타임. 아래 그림 0-4 에서 다시 설명)를 쓸 수 있게 했다.</p>
+<p>함수 개발자는 파이썬 함수 파일 하나를 <code>POST /api/v1/tenants/tenant-a/functions</code> 로 보낸다. 플랫폼은 클러스터 안에서 컨테이너 <span class="t">이미지</span>를 <span class="t">kaniko</span> 로 빌드하고, 이미지 내용의 지문인 <span class="t">digest</span> 로 고정해 <span class="t">Knative Service</span> 로 띄운다. 요청이 없으면 <span class="t">파드</span>를 0개로 줄였다가 첫 요청이 오면 다시 띄운다.</p>
+<aside class="notes"><dl>
+<div><dt>이미지(image)</dt><dd>코드와 실행 환경을 담은, 어디서 띄워도 같은 파일 묶음. 컨테이너는 이미지를 실행한 것이다.</dd></div>
+<div><dt>kaniko</dt><dd>Docker 없이 컨테이너 안에서 이미지를 만드는 빌드 도구.</dd></div>
+<div><dt>digest</dt><dd>이미지 내용 전체의 SHA-256 해시. 이름표인 태그와 달리 내용이 바뀌면 값도 바뀐다.</dd></div>
+<div><dt>Knative Service(ksvc)</dt><dd>Knative 는 쿠버네티스 위에서 요청량에 따라 파드 수를 0 과 N 사이로 조절하는 서버리스 계층이고, Knative Service(줄여서 ksvc)는 거기서 "함수 하나" 에 해당하는 리소스다.</dd></div>
+<div><dt>파드(Pod)</dt><dd>쿠버네티스가 컨테이너를 띄우는 최소 단위. 같은 노드에서 함께 뜨는 컨테이너 한두 개를 묶은 것.</dd></div>
+</dl></aside>
+<p>테넌트끼리는 <span class="t">Namespace</span>, <span class="t">ResourceQuota</span>, <span class="t">NetworkPolicy</span>, <span class="t">RBAC</span> 같은 울타리 여러 겹으로 나누고, 남의 코드를 돌리는 실행 노드는 별도 <span class="t">풀</span>로 떼어 <span class="t">gVisor</span> 샌드박스를 쓸 수 있게 했다.</p>
+<aside class="notes"><dl>
+<div><dt>Namespace</dt><dd>이름과 권한을 나누는 칸. 이 PoC 는 테넌트 하나에 namespace 하나.</dd></div>
+<div><dt>ResourceQuota</dt><dd>칸 하나가 쓸 수 있는 CPU·메모리·파드 수의 총량 한도.</dd></div>
+<div><dt>NetworkPolicy</dt><dd>파드 사이 통신을 라벨로 허용하는 규칙.</dd></div>
+<div><dt>RBAC(Role-Based Access Control)</dt><dd>누가 어떤 쿠버네티스 API 를 부를 수 있는지 정하는 권한 체계.</dd></div>
+<div><dt>풀(pool)</dt><dd>같은 역할의 노드 묶음. 여기서는 system·build·exec 셋.</dd></div>
+<div><dt>gVisor</dt><dd>컨테이너와 호스트 커널 사이에 끼어 시스템 콜을 대신 받아 주는 격리 런타임. 아래 그림 0-4 에서 다시 설명.</dd></div>
+</dl></aside>
 
-<p>플랫폼 자체(Argo CD, Rollouts, 울타리, 컨트롤 플레인)는 Git 이 정답인 GitOps(원하는 상태를 Git 에 적어 두면 클러스터 안의 에이전트가 그것을 읽어 클러스터를 맞추는 방식. 그 에이전트가 Argo CD 다)로 관리하고, 사용자 함수는 컨트롤 플레인(이 PoC 에서는 함수 배포 API 를 가진 Spring Boot 서비스)이 쿠버네티스 API 로 직접 만든다. 이 <strong>두 갈래</strong>가 이 PoC 의 가장 중요한 구조 결정이다. 그 위에 AI 운영 에이전트(Claude Code + MCP. MCP 는 Model Context Protocol, AI 모델이 외부 도구를 표준 방식으로 부르는 규약)가 좁은 권한의 토큰 하나로 지표를 보고, 스케일을 조정하고, 사람 승인을 받아 롤백한다.</p>
+<p>플랫폼 자체(Argo CD, Rollouts, 울타리, 컨트롤 플레인)는 Git 이 정답인 <span class="t">GitOps</span> 로 관리하고, 사용자 함수는 <span class="t">컨트롤 플레인</span>이 쿠버네티스 API 로 직접 만든다. 이 <strong>두 갈래</strong>가 이 PoC 의 가장 중요한 구조 결정이다. 그 위에 AI 운영 에이전트가 <span class="t">MCP</span> 도구와 좁은 권한의 토큰 하나로 지표를 보고, 스케일을 조정하고, 사람 승인을 받아 롤백한다.</p>
+<aside class="notes"><dl>
+<div><dt>GitOps</dt><dd>원하는 상태를 Git 에 적어 두면 클러스터 안의 에이전트가 그것을 읽어 클러스터를 맞추는 방식. 그 에이전트가 Argo CD 다.</dd></div>
+<div><dt>컨트롤 플레인</dt><dd>이 PoC 에서는 함수 배포 API 를 가진 Spring Boot 서비스. 쿠버네티스 자체의 컨트롤 플레인과는 다른 말이다(아래 단락).</dd></div>
+<div><dt>MCP(Model Context Protocol)</dt><dd>AI 모델이 외부 도구를 표준 방식으로 부르는 규약. 여기서는 Claude Code 가 MCP 서버 ops_mcp 를 통해 클러스터를 다룬다.</dd></div>
+</dl></aside>
 
 <div class="grid">
   <div class="item"><h4>무엇을 만들었나</h4><p>함수 배포 API, 클러스터 안 빌드, 0↔N 서버리스 실행, 테넌트 격리, 점진 배포와 자동 롤백, AI 운영 도구, 장애 주입 실험, EC2 이전 코드.</p></div>
-  <div class="item"><h4>어디서 도나</h4><p>맥의 Docker Desktop 위 kind(Kubernetes in Docker: 쿠버네티스 노드 하나를 Docker 컨테이너 하나로 흉내 내는 도구) 클러스터 <code>faas</code> 하나 (노드 4개). 06 장애 주입은 대역 클러스터 <code>chaos</code>, 07 은 AWS EC2 위 k3s(쿠버네티스를 바이너리 하나로 줄인 경량 배포판) 코드만 있다.</p></div>
+  <div class="item"><h4>어디서 도나</h4><p>맥의 Docker Desktop 위 <span class="t">kind</span> 클러스터 <code>faas</code> 하나 (노드 4개). 06 장애 주입은 대역 클러스터 <code>chaos</code>, 07 은 AWS EC2 위 <span class="t">k3s</span> 코드만 있다.</p><aside class="notes"><dl><div><dt>kind</dt><dd>Kubernetes in Docker. 쿠버네티스 노드 하나를 Docker 컨테이너 하나로 흉내 내는 로컬 클러스터 도구.</dd></div><div><dt>k3s</dt><dd>쿠버네티스를 바이너리 하나로 줄인 경량 배포판.</dd></div></dl></aside></div>
   <div class="item"><h4>어떻게 세우나</h4><p><code>poc/run-all.sh</code> 한 줄. platform → rollouts → tenants → control-plane → check 순서로 "최종 모양" 클러스터를 한 번에 올린다.</p></div>
   <div class="item"><h4>왜 이렇게 나눴나</h4><p>본선(11/7~8)에서 "왜 이 구조인가, 깨지면 어디를 보나" 에 답하려고. 단계마다 결정 3개와 대안, 깨뜨렸다 고치는 실험이 붙어 있다.</p></div>
 </div>
 
-<p>이 장 전체에서 계속 쓰는 쿠버네티스 기본 말을 여기서 정해 둔다. 클러스터(cluster)는 노드 여러 대와 그것을 지휘하는 부품을 합친 전체다. 지휘하는 부품은 API 서버(모든 요청이 들어오는 하나의 문. 사람의 kubectl 도, 아래 모든 컨트롤러도 여기로 말한다), etcd(클러스터의 모든 상태를 저장하는 키-값 저장소), 스케줄러(새 파드를 어느 노드에 둘지 고르는 부품), 컨트롤러(원하는 상태와 실제 상태를 비교해 계속 맞추는 루프. 쿠버네티스는 이런 루프의 집합이다)이고, 이 넷을 쿠버네티스의 컨트롤 플레인이라 부른다. 노드마다는 kubelet(API 서버가 정한 파드를 그 노드에 실제로 띄우고 상태를 보고하는 에이전트)과 containerd(kubelet 의 지시로 컨테이너를 실제로 만들고 돌리는 런타임)가 돈다. 사람은 kubectl 명령으로 API 서버에 말하고, 어느 클러스터에 어떤 계정으로 붙을지는 kubeconfig 파일에 적는다. 리소스(resource)는 API 서버에 저장되는 오브젝트 한 장이고, 매니페스트(manifest)는 그것을 적은 YAML 파일이다. 자주 나오는 리소스 셋: Deployment 는 같은 파드를 N 개 유지하며 새 버전으로 굴려 바꾸는 리소스(실제 N 개 유지는 그 아래 ReplicaSet 이 한다), Service 는 파드가 바뀌어도 변하지 않는 안정된 주소, 라벨(label)은 리소스에 붙이는 키=값 꼬리표로 "어떤 파드" 를 고르는 열쇠다. 컨트롤 플레인이라는 말은 이 PoC 에서 두 가지 뜻으로 쓰인다. 방금 말한 쿠버네티스의 것과, 우리가 만든 함수 배포 API 서비스. 이 장에서 그냥 "컨트롤 플레인" 이라 하면 후자다.</p>
+<p>이 장 전체에서 계속 쓰는 쿠버네티스 기본 말을 여기서 정해 둔다. 클러스터(cluster)는 노드 여러 대와 그것을 지휘하는 부품을 합친 전체다. 지휘하는 부품은 <span class="t">API 서버</span>, <span class="t">etcd</span>, <span class="t">스케줄러</span>, <span class="t">컨트롤러</span>이고, 이 넷을 쿠버네티스의 컨트롤 플레인이라 부른다. 노드마다는 <span class="t">kubelet</span> 과 <span class="t">containerd</span> 가 돈다.</p>
+<aside class="notes"><dl>
+<div><dt>API 서버</dt><dd>모든 요청이 들어오는 하나의 문. 사람의 kubectl 도, 아래 모든 컨트롤러도 여기로 말한다.</dd></div>
+<div><dt>etcd</dt><dd>클러스터의 모든 상태를 저장하는 키-값 저장소.</dd></div>
+<div><dt>스케줄러</dt><dd>새 파드를 어느 노드에 둘지 고르는 부품.</dd></div>
+<div><dt>컨트롤러</dt><dd>원하는 상태와 실제 상태를 비교해 계속 맞추는 루프. 쿠버네티스는 이런 루프의 집합이다.</dd></div>
+<div><dt>kubelet</dt><dd>API 서버가 정한 파드를 그 노드에 실제로 띄우고 상태를 보고하는 노드 에이전트.</dd></div>
+<div><dt>containerd</dt><dd>kubelet 의 지시로 컨테이너를 실제로 만들고 돌리는 컨테이너 런타임.</dd></div>
+</dl></aside>
+<p>사람은 kubectl 명령으로 API 서버에 말하고, 어느 클러스터에 어떤 계정으로 붙을지는 kubeconfig 파일에 적는다. 리소스(resource)는 API 서버에 저장되는 오브젝트 한 장이고, 매니페스트(manifest)는 그것을 적은 YAML 파일이다. 자주 나오는 리소스 셋: <span class="t">Deployment</span> 는 같은 파드를 N 개 유지하며 새 버전으로 굴려 바꾸는 리소스, Service 는 파드가 바뀌어도 변하지 않는 안정된 주소, 라벨(label)은 리소스에 붙이는 키=값 꼬리표로 "어떤 파드" 를 고르는 열쇠다. annotation 은 같은 키=값이지만 고르는 데는 쓰지 않는 메모다. 컨트롤 플레인이라는 말은 이 PoC 에서 두 가지 뜻으로 쓰인다. 방금 말한 쿠버네티스의 것과, 우리가 만든 함수 배포 API 서비스. 이 장에서 그냥 "컨트롤 플레인" 이라 하면 후자다.</p>
+<aside class="notes"><dl>
+<div><dt>Deployment</dt><dd>실제로 N 개를 유지하는 일은 그 아래 ReplicaSet 이 한다. 버전마다 ReplicaSet 이 하나씩 생긴다.</dd></div>
+</dl></aside>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p>
-<p>단계 번호(PoC 01~07)와 이 가이드의 장 번호(01~09)는 다르다. PoC 는 만든 순서대로, 가이드는 기술 주제별로 나눴다. 예를 들어 PoC 04 단계 하나에 노드 풀, Cilium(파드끼리 네트워크를 이어 주고 통신 규칙을 집행하는 CNI 플러그인. CNI 는 Container Network Interface, 노드에 파드 네트워크를 꽂는 표준) 재설치, Knative, kaniko, gVisor 가 다 들어 있어서, 가이드에서는 3·4·5·6장으로 쪼개 설명한다. 아래 <a href="#chapters">장 목록</a>의 표가 그 대응이다.</p></aside>
+<p>단계 번호(PoC 01~07)와 이 가이드의 장 번호(01~09)는 다르다. PoC 는 만든 순서대로, 가이드는 기술 주제별로 나눴다. 예를 들어 PoC 04 단계 하나에 노드 풀, <span class="t">Cilium</span> 재설치, Knative, kaniko, gVisor 가 다 들어 있어서, 가이드에서는 3·4·5·6장으로 쪼개 설명한다. 아래 <a href="#chapters">장 목록</a>의 표가 그 대응이다.</p>
+<aside class="notes"><dl><div><dt>Cilium</dt><dd>파드끼리 네트워크를 이어 주고 NetworkPolicy 를 집행하는 CNI 플러그인. CNI(Container Network Interface)는 노드에 파드 네트워크를 꽂는 표준.</dd></div></dl></aside></aside>
 
 <h2 id="how-to-read">이 가이드를 읽는 법</h2>
 
@@ -178,13 +217,13 @@ flowchart LR
 
 <h2 id="chapters">장 목록</h2>
 
-<p>장마다 다루는 PoC 폴더와 핵심 질문 하나. 카드를 누르면 그 장으로 간다. 카드에 적은 용어는 괄호 안에 한 줄씩 풀었고, 전부 이 장 뒤쪽에서 다시 나온다.</p>
+<p>장마다 다루는 PoC 폴더와 핵심 질문 하나. 카드를 누르면 그 장으로 간다. 카드에 적은 용어 가운데 처음 나오는 것은 카드 아래 주석에 한 줄씩 풀었고, 전부 이 장 뒤쪽에서 다시 나온다.</p>
 
 <div class="grid">
   <div class="item"><span class="ch-tag">01 · poc/01-argocd</span><h4><a href="ch01-gitops.html">GitOps와 Argo CD</a></h4><p>git push 한 번에 클러스터가 따라오는 원리. Argo CD 의 기본 단위 Application, Application 을 낳는 Application(App of Apps), 손으로 바꾼 것을 되돌리는 selfHeal 과 Git 에서 지운 것을 지우는 prune, Git 을 다시 읽는 주기(폴링)와 무작위 지연(jitter).</p></div>
-  <div class="item"><span class="ch-tag">02 · poc/02-rollouts</span><h4><a href="ch02-rollouts.html">점진 배포와 자동 롤백</a></h4><p>새 버전을 파드 일부에만 먼저 내보내는 카나리 배포(20 → 60 → 100%)를 Argo Rollouts 로 하고, Prometheus(지표를 모아 두는 시계열 DB)가 센 성공률로 자동 판정한다. 판정을 못 하면 멈추는 fail-closed.</p></div>
-  <div class="item"><span class="ch-tag">03 · poc/03 + 04 kind-config</span><h4><a href="ch03-tenancy.html">멀티테넌시와 노드 풀</a></h4><p>테넌트 하나를 둘러싸는 울타리 6겹, 테넌트를 찍어 내는 ApplicationSet, 노드를 역할별로 나누는 taint(오지 마)·toleration(견딘다)·nodeSelector(여기로만) 와 system/build/exec 풀.</p></div>
-  <div class="item"><span class="ch-tag">04 · poc/03·04 rebuild-cluster</span><h4><a href="ch04-network.html">네트워크: eBPF와 Cilium</a></h4><p>파드 네트워크를 만드는 CNI 플러그인 Cilium 이 통신 규칙(NetworkPolicy)을 강제하는 법, 기본 차단(default deny), 막힌(DROPPED) 패킷을 Hubble 로 보기, 10/20 이음새.</p></div>
+  <div class="item"><span class="ch-tag">02 · poc/02-rollouts</span><h4><a href="ch02-rollouts.html">점진 배포와 자동 롤백</a></h4><p>새 버전을 파드 일부에만 먼저 내보내는 카나리 배포(20 → 60 → 100%)를 Argo Rollouts 로 하고, <span class="t">Prometheus</span> 가 센 성공률로 자동 판정한다. 판정을 못 하면 멈추는 fail-closed.</p><aside class="notes"><dl><div><dt>Prometheus</dt><dd>지표를 주기적으로 긁어 모아 두고 PromQL 로 묻는 시계열 데이터베이스.</dd></div></dl></aside></div>
+  <div class="item"><span class="ch-tag">03 · poc/03 + 04 kind-config</span><h4><a href="ch03-tenancy.html">멀티테넌시와 노드 풀</a></h4><p>테넌트 하나를 둘러싸는 울타리 6겹, 테넌트를 찍어 내는 ApplicationSet, 노드를 역할별로 나누는 <span class="t">taint</span>·<span class="t">toleration</span>·<span class="t">nodeSelector</span> 와 system/build/exec 풀.</p><aside class="notes"><dl><div><dt>taint</dt><dd>노드가 "이것을 견디는 파드만 와라" 고 거는 표시.</dd></div><div><dt>toleration</dt><dd>파드가 "나는 견딘다" 고 다는 통과증.</dd></div><div><dt>nodeSelector</dt><dd>파드가 "이 라벨 노드로만 가겠다" 는 조건.</dd></div></dl></aside></div>
+  <div class="item"><span class="ch-tag">04 · poc/03·04 rebuild-cluster</span><h4><a href="ch04-network.html">네트워크: eBPF와 Cilium</a></h4><p>파드 네트워크를 만드는 CNI 플러그인 Cilium 이 통신 규칙(NetworkPolicy)을 강제하는 법, 기본 차단(default deny), 막힌(DROPPED) 패킷을 <span class="t">Hubble</span> 로 보기, 10/20 이음새.</p><aside class="notes"><dl><div><dt>Hubble</dt><dd>Cilium 에 딸린 패킷 흐름 관찰 도구. 어느 패킷이 어디서 버려졌는지 보여 준다.</dd></div></dl></aside></div>
   <div class="item"><span class="ch-tag">05 · poc/04-faas-runtime</span><h4><a href="ch05-knative.html">서버리스: Knative</a></h4><p>서버리스 계층 Knative: 함수 정의(ksvc) → 불변 스냅샷(Revision) → 파드, 요청을 받아 두는 activator 와 파드 수를 정하는 autoscaler, 파드 옆의 queue-proxy, 콜드 스타트, 입구 Kourier 와 Host 헤더 라우팅.</p></div>
   <div class="item"><span class="ch-tag">06 · poc/04-faas-runtime</span><h4><a href="ch06-build-runtime.html">이미지 빌드와 gVisor</a></h4><p>Docker 없이 클러스터 안에서 이미지를 만드는 kaniko Job, 이미지 저장소(레지스트리)의 두 이름, 파드의 런타임을 고르는 RuntimeClass 와 gVisor 의 runsc 샌드박스.</p></div>
   <div class="item"><span class="ch-tag">07 · poc/05-control-plane-mcp</span><h4><a href="ch07-control-plane.html">컨트롤 플레인과 MCP</a></h4><p>함수 배포 API: 202 + 상태 조회, 같은 코드면 같은 빌드가 되는 멱등 빌드 ID, 이미지 지문(digest) 고정, server-side apply, AI 에이전트용 MCP 도구 3개와 가드레일 5층.</p></div>
@@ -195,20 +234,31 @@ flowchart LR
 <div class="table-wrap"><table>
 <thead><tr><th>PoC 단계 (로드맵 날짜)</th><th>폴더</th><th>가이드 장</th><th>그 단계가 남긴 것</th></tr></thead>
 <tbody>
-<tr><td>01 (10/21)</td><td><code>poc/01-argocd</code></td><td>01</td><td>Argo CD (Helm 차트 10.10.5. Helm 은 템플릿 + 값으로 설치 묶음 "차트" 를 만드는 패키지 도구), root App of Apps, 샘플 앱 hello-fn·bye-fn (namespace fn-demo)</td></tr>
-<tr><td>02 (10/22)</td><td><code>poc/02-rollouts</code></td><td>02</td><td>Argo Rollouts, Prometheus, 샘플 앱 podinfo 의 Rollout(Argo Rollouts 가 Deployment 대신 쓰는 리소스. namespace fn-canary), AnalysisTemplate(무엇을 재서 어떻게 판정할지 적은 틀) success-rate</td></tr>
-<tr><td>03 (10/23)</td><td><code>poc/03-tenant-isolation</code></td><td>03, 04</td><td>Cilium + Hubble, tenant 차트(테넌트 울타리를 한 번에 만드는 Helm 차트), ApplicationSet tenants, tenant-a/b 와 각자의 hello-fn</td></tr>
-<tr><td>04 (10/24)</td><td><code>poc/04-faas-runtime</code></td><td>03, 05, 06</td><td>노드 풀 taint, kind-registry(맥 위에 띄운 로컬 이미지 레지스트리), Knative + Kourier, gVisor, kaniko 빌드, fn-runtime 함수 3개</td></tr>
-<tr><td>05 (10/25)</td><td><code>poc/05-control-plane-mcp</code></td><td>07</td><td>컨트롤 플레인 API (namespace faas-system), 빌드용 namespace faas-build, 에이전트 계정 ops-agent (ServiceAccount, 프로그램용 계정), MCP 서버 ops_mcp</td></tr>
+<tr><td>01 (10/21)</td><td><code>poc/01-argocd</code></td><td>01</td><td>Argo CD (<span class="t">Helm</span> 차트 10.10.5), root App of Apps, 샘플 앱 hello-fn·bye-fn (namespace fn-demo)</td></tr>
+<tr><td>02 (10/22)</td><td><code>poc/02-rollouts</code></td><td>02</td><td>Argo Rollouts, Prometheus, 샘플 앱 podinfo 의 <span class="t">Rollout</span> (namespace fn-canary), <span class="t">AnalysisTemplate</span> success-rate</td></tr>
+<tr><td>03 (10/23)</td><td><code>poc/03-tenant-isolation</code></td><td>03, 04</td><td>Cilium + Hubble, <span class="t">tenant 차트</span>, <span class="t">ApplicationSet</span> tenants, tenant-a/b 와 각자의 hello-fn</td></tr>
+<tr><td>04 (10/24)</td><td><code>poc/04-faas-runtime</code></td><td>03, 05, 06</td><td>노드 풀 taint, <span class="t">kind-registry</span>, Knative + Kourier, gVisor, kaniko 빌드, fn-runtime 함수 3개</td></tr>
+<tr><td>05 (10/25)</td><td><code>poc/05-control-plane-mcp</code></td><td>07</td><td>컨트롤 플레인 API (namespace faas-system), 빌드용 namespace faas-build, 에이전트 계정 ops-agent (<span class="t">ServiceAccount</span>), MCP 서버 ops_mcp</td></tr>
 <tr><td>06 (10/26)</td><td><code>poc/06-fault-injection</code></td><td>08</td><td>대역 클러스터 chaos, 장애 스크립트 4종, 방어 설정, 알림 규칙 5개, 런북 4개</td></tr>
-<tr><td>07 (10/27 예정)</td><td><code>poc/07-ec2-k3s</code></td><td>09</td><td>Terraform(인프라를 코드로 선언해 만드는 도구) 코드 (VPC·EC2·ASG·FIS·예산), k3s 템플릿, root-ec2 GitOps (코드만)</td></tr>
+<tr><td>07 (10/27 예정)</td><td><code>poc/07-ec2-k3s</code></td><td>09</td><td><span class="t">Terraform</span> 코드 (VPC·EC2·ASG·FIS·예산), k3s 템플릿, root-ec2 GitOps (코드만)</td></tr>
 </tbody></table></div>
+<aside class="notes"><dl>
+<div><dt>Helm</dt><dd>템플릿 + 값(values)으로 설치 묶음 "차트" 를 만드는 쿠버네티스 패키지 도구.</dd></div>
+<div><dt>Rollout</dt><dd>Argo Rollouts 가 Deployment 대신 쓰는 리소스. 카나리 단계와 분석을 spec 에 적는다.</dd></div>
+<div><dt>AnalysisTemplate</dt><dd>무엇을 재서 어떻게 판정할지 적은 틀. 실행 한 번이 AnalysisRun 이다.</dd></div>
+<div><dt>tenant 차트</dt><dd>테넌트 울타리 6겹을 한 번에 만드는 03 의 Helm 차트.</dd></div>
+<div><dt>ApplicationSet</dt><dd>생성기(generator)로 Argo CD Application 을 찍어 내는 리소스. tenants 는 Git 의 테넌트 파일 하나마다 Application 하나를 만든다.</dd></div>
+<div><dt>kind-registry</dt><dd>맥의 Docker 위에 띄운 로컬 이미지 레지스트리(이미지를 올리고 받는 저장소 서버). 클러스터 안에서 빌드한 이미지가 여기 쌓인다.</dd></div>
+<div><dt>ServiceAccount</dt><dd>사람이 아니라 파드나 프로그램이 API 서버에 쓰는 쿠버네티스 계정.</dd></div>
+<div><dt>Terraform</dt><dd>인프라를 코드로 선언하고 plan/apply 로 만드는 도구.</dd></div>
+</dl></aside>
 
 <h2 id="arch">전체 아키텍처</h2>
 
 <div class="tier" data-tier="1">
   <h3>한 장으로 보는 구조</h3>
-  <p>장 목록까지가 안내였고, 여기부터가 본문이다. 아래 그림이 이 가이드 전체의 기준 그림이다. 왼쪽 열은 플랫폼을 쓰는 사람과 에이전트(입구), 가운데 점선 영역은 클러스터 안의 플랫폼 부품(우리 플랫폼의 컨트롤 플레인: 무엇을 어디에 몇 개 띄울지 정하고 지시하는 부품들), 그 아래 점선 상자는 노드 풀, 오른쪽 열은 클러스터 밖 저장소, 아래쪽 띠는 차례로 데이터 플레인(사용자 요청이 실제로 지나는 길. 지시하는 쪽이 컨트롤 플레인, 실어 나르는 쪽이 데이터 플레인), 관측, 설계 원칙이다. 선의 종류가 뜻을 가진다: 회색 실선은 API 호출, 보라 점선은 비동기·승인 대기, 주황은 배포·생성, 파랑은 사용자 트래픽, 청록 점선은 관측, 초록은 Git, 빨강 점선은 차단 지점.</p>
+  <p>장 목록까지가 안내였고, 여기부터가 본문이다. 아래 그림이 이 가이드 전체의 기준 그림이다. 왼쪽 열은 플랫폼을 쓰는 사람과 에이전트(입구), 가운데 점선 영역은 클러스터 안의 플랫폼 부품(우리 플랫폼의 컨트롤 플레인), 그 아래 점선 상자는 노드 풀, 오른쪽 열은 클러스터 밖 저장소, 아래쪽 띠는 차례로 <span class="t">데이터 플레인</span>, 관측, 설계 원칙이다. 선의 종류가 뜻을 가진다: 회색 실선은 API 호출, 보라 점선은 비동기·승인 대기, 주황은 배포·생성, 파랑은 사용자 트래픽, 청록 점선은 관측, 초록은 Git, 빨강 점선은 차단 지점.</p>
+  <aside class="notes"><dl><div><dt>데이터 플레인</dt><dd>사용자 요청이 실제로 지나는 길. 지시하는 쪽이 컨트롤 플레인, 실어 나르는 쪽이 데이터 플레인이다.</dd></div></dl></aside>
   <figure>
     <div class="fig scroll-l">
       <svg viewBox="0 0 1900 2040" role="img" aria-labelledby="f03-t">
@@ -575,17 +625,35 @@ flowchart LR
 <div class="tier" data-tier="2">
   <h3>영역별로 무엇을 하나</h3>
   <h4>입구 (왼쪽 열)</h4>
-  <p>사람과 에이전트가 플랫폼에 닿는 길은 네 가지다. 각 길마다 쥔 권한이 다르다는 점이 핵심이다. 플랫폼 운영자는 Git 쓰기 권한과 관리자 kubeconfig(모든 것을 할 수 있는 cluster-admin 계정이 적힌 접속 파일)를 갖는다. 함수 개발자는 컨트롤 플레인 API 만 부른다(지금은 인증 없음, 알려진 한계). AI 에이전트는 tenant-a 하나에 묶인 <code>ops-agent</code> ServiceAccount(사람이 아니라 파드나 프로그램이 API 서버에 쓰는 쿠버네티스 계정) 토큰만 갖고, 롤백은 사람이 터미널에서 승인해야 실행된다. 최종 사용자는 맥 8081 포트로 HTTP 만 보낸다.</p>
+  <p>사람과 에이전트가 플랫폼에 닿는 길은 네 가지다. 각 길마다 쥔 권한이 다르다는 점이 핵심이다. 플랫폼 운영자는 Git 쓰기 권한과 관리자 <span class="t">kubeconfig</span> 를 갖는다. 함수 개발자는 컨트롤 플레인 API 만 부른다(지금은 인증 없음, 알려진 한계). AI 에이전트는 tenant-a 하나에 묶인 <code>ops-agent</code> ServiceAccount 토큰만 갖고, 롤백은 사람이 터미널에서 승인해야 실행된다. 최종 사용자는 맥 8081 포트로 HTTP 만 보낸다.</p>
+  <aside class="notes"><dl><div><dt>관리자 kubeconfig</dt><dd>모든 것을 할 수 있는 cluster-admin 계정이 적힌 접속 파일. kind 가 클러스터를 만들 때 맥에 써 준다.</dd></div></dl></aside>
   <h4>컨트롤 플레인 (가운데 점선)</h4>
-  <p>쿠버네티스 자체의 컨트롤 플레인(API 서버, etcd, 스케줄러)과 구별해서, 이 영역은 <strong>우리 플랫폼의 컨트롤 플레인</strong>이다. 무엇을 어디에 몇 개 띄울지 정하고 지시하는 부품들이다. Argo CD 는 Git 을 원하는 상태로 삼아 클러스터를 맞추고, Argo Rollouts 는 그 위에서 새 버전을 조금씩 내보내며(카나리 배포) Prometheus(지표를 주기적으로 긁어 모아 두고 PromQL 로 묻는 시계열 데이터베이스) 숫자로 판정한다. Knative Serving 은 함수 하나를 Revision(함수 설정이 바뀔 때마다 생기는 불변 스냅샷)·오토스케일러·주소로 펼친다. 컨트롤 플레인 API(Spring Boot)는 사람 말(함수 이름, 코드)을 쿠버네티스 말(Job: 끝나면 멈추는 일회성 파드를 돌리는 리소스, ConfigMap: 설정이나 파일을 담는 리소스, Knative Service)로 번역하고, 쓸 때는 server-side apply(SSA: "내가 적은 필드는 이 값" 을 API 서버가 필드 주인별로 기억하며 합치는 쓰기 방식. 같은 리소스를 여러 주체가 나눠 쓸 수 있다)를 쓴다. Cilium 은 모든 노드의 커널(운영체제의 핵심. 프로세스·메모리·네트워크·파일을 관리한다)에 eBPF 프로그램(커널 안에서 안전하게 도는 작은 프로그램)을 꽂아 파드 사이 패킷을 나르고 NetworkPolicy 를 강제한다.</p>
+  <p>쿠버네티스 자체의 컨트롤 플레인(API 서버, etcd, 스케줄러)과 구별해서, 이 영역은 <strong>우리 플랫폼의 컨트롤 플레인</strong>이다. 무엇을 어디에 몇 개 띄울지 정하고 지시하는 부품들이다. Argo CD 는 Git 을 원하는 상태로 삼아 클러스터를 맞추고, Argo Rollouts 는 그 위에서 새 버전을 조금씩 내보내며(카나리 배포) Prometheus 숫자로 판정한다. Knative Serving 은 함수 하나를 <span class="t">Revision</span>·오토스케일러·주소로 펼친다. 컨트롤 플레인 API(Spring Boot)는 사람 말(함수 이름, 코드)을 쿠버네티스 말(<span class="t">Job</span>, <span class="t">ConfigMap</span>, Knative Service)로 번역하고, 쓸 때는 <span class="t">server-side apply</span> 를 쓴다. Cilium 은 모든 노드의 <span class="t">커널</span>에 <span class="t">eBPF</span> 프로그램을 꽂아 파드 사이 패킷을 나르고 NetworkPolicy 를 강제한다.</p>
+  <aside class="notes"><dl>
+  <div><dt>Revision</dt><dd>함수 설정(template)이 바뀔 때마다 생기는 불변 스냅샷.</dd></div>
+  <div><dt>Job</dt><dd>끝나면 멈추는 일회성 파드를 돌리는 리소스.</dd></div>
+  <div><dt>ConfigMap</dt><dd>설정이나 파일을 담아 파드에 꽂는 리소스.</dd></div>
+  <div><dt>server-side apply(SSA)</dt><dd>"내가 적은 필드는 이 값" 을 API 서버가 필드 주인별로 기억하며 합치는 쓰기 방식. 같은 리소스를 여러 주체가 나눠 쓸 수 있다.</dd></div>
+  <div><dt>커널</dt><dd>운영체제의 핵심. 프로세스·메모리·네트워크·파일을 관리한다.</dd></div>
+  <div><dt>eBPF</dt><dd>커널 안에서 안전하게 도는 작은 프로그램.</dd></div>
+  </dl></aside>
   <h4>노드 풀 (가운데 아래 점선)</h4>
   <p>kind 노드 4개가 맥 위 Docker 컨테이너로 뜬다. 워커 3대에 <code>pool</code> 라벨을 붙이고, build·exec 두 풀에는 <code>NoSchedule</code> taint 를 걸었다. taint 는 노드가 "이것을 견디는 파드만 와라" 고 거는 표시, toleration 은 파드가 "나는 견딘다" 고 다는 통과증, nodeSelector 는 파드가 "이 라벨 노드로만 가겠다" 는 조건이다. 설치 YAML 을 하나도 고치지 않아도 Argo CD·Knative 같은 플랫폼 파드는 toleration 이 없으니 taint 없는 system 노드로만 간다. 빌드 Job 과 함수 파드만 toleration 과 nodeSelector 를 둘 다 달고 자기 풀로 들어간다.</p>
   <h4>저장소 (오른쪽 열)</h4>
-  <p>클러스터 밖에 있지만 클러스터가 기대는 것들. GitHub 의 main 브랜치는 플랫폼의 정답 원천이고, kind-registry 는 클러스터 안에서 빌드한 함수 이미지가 쌓이는 곳이다(레지스트리: 이미지를 올리고(push) 받는(pull) 저장소 서버). 같은 레지스트리를 파드(kaniko)는 <code>kind-registry:5000</code>, 노드(containerd)는 <code>localhost:5001</code> 로 부르고, 노드 설정 <code>hosts.toml</code> 이 두 이름을 같은 곳으로 돌린다. 함수의 이력은 Git 이 아니라 Knative Revision 과 감사 로그에 남는다.</p>
+  <p>클러스터 밖에 있지만 클러스터가 기대는 것들. GitHub 의 main 브랜치는 플랫폼의 정답 원천이고, kind-registry 는 클러스터 안에서 빌드한 함수 이미지를 올리고(push) 받는(pull) 저장소다. 같은 레지스트리를 파드(kaniko)는 <code>kind-registry:5000</code>, 노드(containerd)는 <code>localhost:5001</code> 로 부르고, 노드 설정 <code>hosts.toml</code> 이 두 이름을 같은 곳으로 돌린다. 함수의 이력은 Git 이 아니라 Knative Revision 과 감사 로그에 남는다.</p>
   <h4>데이터 플레인 (파란 띠)</h4>
-  <p>맥 8081 → kind 의 extraPortMappings(노드 컨테이너의 포트를 맥 포트에 묶는 kind 설정) → control-plane 노드 31080 (NodePort: 모든 노드의 같은 포트로 Service 를 바깥에 여는 방식) → Kourier(Knative 의 입구 역할을 하는 Envoy 프록시). Kourier 는 HTTP Host 헤더 <code>&lt;함수&gt;.&lt;namespace&gt;.faas.local</code> 로 어느 함수인지 고른다. 파드가 있으면 바로 파드의 queue-proxy(Knative 가 함수 컨테이너 옆에 끼워 넣는 작은 프록시. 동시 요청 수를 센다. 포트 8012) → 사용자 컨테이너(8080). 파드가 0개면 activator(파드가 없을 때 대신 요청을 받아 붙잡아 두는 Knative 부품)가 요청을 붙잡고 autoscaler(동시 요청 수를 보고 파드 수를 정하는 Knative 부품)에 수요를 알리고, 파드가 준비되면 넘긴다. 이 0→1 구간이 콜드 스타트다. tenant-a 파드로 들어가는 순간 Cilium 이 NetworkPolicy 를 검사한다.</p>
+  <p>맥 8081 → kind 의 <span class="t">extraPortMappings</span> → control-plane 노드의 <span class="t">NodePort</span> 31080 → <span class="t">Kourier</span>. Kourier 는 HTTP Host 헤더 <code>&lt;함수&gt;.&lt;namespace&gt;.faas.local</code> 로 어느 함수인지 고른다. 파드가 있으면 바로 파드의 <span class="t">queue-proxy</span>(8012) → 사용자 컨테이너(8080). 파드가 0개면 <span class="t">activator</span> 가 요청을 붙잡고 <span class="t">autoscaler</span> 에 수요를 알리고, 파드가 준비되면 넘긴다. 이 0→1 구간이 콜드 스타트다. tenant-a 파드로 들어가는 순간 Cilium 이 NetworkPolicy 를 검사한다.</p>
+  <aside class="notes"><dl>
+  <div><dt>extraPortMappings</dt><dd>노드 컨테이너의 포트를 맥 포트에 묶는 kind 설정.</dd></div>
+  <div><dt>NodePort</dt><dd>모든 노드의 같은 포트를 열어 바깥에서 Service 로 들어오게 하는 방식.</dd></div>
+  <div><dt>Kourier</dt><dd>Knative 의 입구 역할을 하는 Envoy 프록시.</dd></div>
+  <div><dt>queue-proxy</dt><dd>Knative 가 함수 컨테이너 옆에 끼워 넣는 작은 프록시. 동시 요청 수를 센다.</dd></div>
+  <div><dt>activator</dt><dd>파드가 없을 때 대신 요청을 받아 붙잡아 두는 Knative 부품.</dd></div>
+  <div><dt>autoscaler</dt><dd>동시 요청 수를 보고 파드 수를 정하는 Knative 부품.</dd></div>
+  </dl></aside>
   <h4>관측과 설계 원칙 (아래 두 띠)</h4>
-  <p>관측 띠는 "무슨 일이 일어났나" 를 볼 곳 여섯 가지다. 같은 사건을 서로 다른 눈으로 본다: Prometheus(숫자), Hubble(Cilium 에 딸린 패킷 흐름 관찰 도구. 어느 패킷이 어디서 버려졌는지 보여 준다), Argo CD(Git 과의 차이), kubectl(쿠버네티스 상태), 감사 로그(누가 무엇을 했나), 합성 프로브(정해진 주기로 함수를 불러 성공·실패를 기록하는 스크립트. 사용자가 실제로 겪은 것의 대리). 설계 원칙 띠는 결정 여섯 개를 한 문장씩 줄인 것이다. 본선 발표에서 그대로 말할 수 있게 썼다.</p>
+  <p>관측 띠는 "무슨 일이 일어났나" 를 볼 곳 여섯 가지다. 같은 사건을 서로 다른 눈으로 본다: Prometheus(숫자), Hubble(패킷 흐름), Argo CD(Git 과의 차이), kubectl(쿠버네티스 상태), 감사 로그(누가 무엇을 했나), <span class="t">합성 프로브</span>(사용자가 겪은 것). 설계 원칙 띠는 결정 여섯 개를 한 문장씩 줄인 것이다. 본선 발표에서 그대로 말할 수 있게 썼다.</p>
+  <aside class="notes"><dl><div><dt>합성 프로브</dt><dd>정해진 주기로 함수를 불러 성공·실패를 기록하는 스크립트. 사용자가 실제로 겪은 것의 대리.</dd></div></dl></aside>
 </div>
 
 <h3>같은 구조를 층으로 쌓으면</h3>
@@ -658,12 +726,19 @@ flowchart LR
       <text x="40" y="745" class="d-sub">아래층이 깨지면 위층 전체가 증상을 낸다. 사용자 요청은 맥(아래)에서 들어와 함수(위)까지 올라간다.</text>
     </svg>
   </div>
-  <figcaption><b>그림 0-4.</b> 같은 아키텍처를 층으로. 런타임 층만 두 칸으로 갈라진다: 같은 containerd 가 RuntimeClass(파드가 어느 컨테이너 런타임으로 돌지 고르는 쿠버네티스 리소스)에 따라 runc(호스트 커널을 그대로 쓰는 기본 런타임) 또는 runsc(gVisor 의 런타임)를 부른다. gVisor 는 컨테이너의 시스템 콜(syscall: 프로그램이 파일 열기·소켓 보내기처럼 커널 기능을 부르는 호출)을 Sentry 라는 사용자 공간 커널이 대신 받아, 남의 코드가 호스트 커널을 직접 건드리지 못하게 한다.</figcaption>
+  <figcaption><b>그림 0-4.</b> 같은 아키텍처를 층으로. 런타임 층만 두 칸으로 갈라진다: 같은 containerd 가 <span class="t">RuntimeClass</span> 에 따라 <span class="t">runc</span> 또는 <span class="t">runsc</span> 를 부른다. gVisor 는 컨테이너의 <span class="t">시스템 콜</span>을 Sentry 라는 사용자 공간 커널이 대신 받아, 남의 코드가 호스트 커널을 직접 건드리지 못하게 한다.</figcaption>
 </figure>
+<aside class="notes"><dl>
+<div><dt>RuntimeClass</dt><dd>파드가 어느 컨테이너 런타임으로 돌지 고르는 쿠버네티스 리소스.</dd></div>
+<div><dt>runc</dt><dd>호스트 커널을 그대로 쓰는 기본 컨테이너 런타임.</dd></div>
+<div><dt>runsc</dt><dd>gVisor 의 런타임. RuntimeClass <code>gvisor</code> 의 handler 이름.</dd></div>
+<div><dt>시스템 콜(syscall)</dt><dd>프로그램이 파일 열기·소켓 보내기처럼 커널 기능을 부르는 호출.</dd></div>
+</dl></aside>
 
 <h3>맥에서 클러스터로 들어가는 문</h3>
 
-<p>로컬 PoC 에서 맥과 클러스터를 잇는 문은 다섯 개다. 그중 둘은 port-forward(kubectl 이 맥의 포트를 클러스터 안 Service 로 터널링하는 명령. 터미널을 닫으면 끊긴다)다. 포트 번호가 겹치면 엉뚱한 곳으로 가므로 컨트롤 플레인은 8090 으로 연다. run-all.sh 의 <code>CP_PORT</code> 기본값이고 05 README 의 port-forward 명령도 같은 값이다. 05 README 에 나오는 8080 은 맥에서 <code>mvn spring-boot:run</code> 으로 컨트롤 플레인을 직접 띄울 때의 포트라, 그때 Argo CD UI port-forward 를 같이 열면 겹친다.</p>
+<p>로컬 PoC 에서 맥과 클러스터를 잇는 문은 다섯 개다. 그중 둘은 <span class="t">port-forward</span> 다. 포트 번호가 겹치면 엉뚱한 곳으로 가므로 컨트롤 플레인은 8090 으로 연다. run-all.sh 의 <code>CP_PORT</code> 기본값이고 05 README 의 port-forward 명령도 같은 값이다. 05 README 에 나오는 8080 은 맥에서 <code>mvn spring-boot:run</code> 으로 컨트롤 플레인을 직접 띄울 때의 포트라, 그때 Argo CD UI port-forward 를 같이 열면 겹친다.</p>
+<aside class="notes"><dl><div><dt>port-forward</dt><dd>kubectl 이 맥의 포트를 클러스터 안 Service 로 터널링하는 명령. 터미널을 닫으면 끊긴다.</dd></div></dl></aside>
 
 <figure>
   <div class="fig scroll">
@@ -770,7 +845,8 @@ flowchart LR
   - <span class="k">role</span>: worker
     <span class="k">labels</span>: { <span class="k">pool</span>: exec }             <span class="c"># 같은 방식으로 pool=exec:NoSchedule</span>
 <span class="k">containerdConfigPatches</span>:                <span class="c"># config_path = /etc/containerd/certs.d (레지스트리 두 이름)</span></code></pre>
-  <p>한 줄씩: <code>disableDefaultCNI</code> 를 켜면 노드가 CNI 없이 뜨고 Cilium 을 깔 때까지 NotReady 다(정상). <code>extraPortMappings</code> 는 control-plane 노드 컨테이너의 31080 을 맥 8081 로 열어 준다. 워커 세 개의 라벨이 풀 이름이고, build·exec 에만 kubeadm(쿠버네티스 노드를 세우고 클러스터에 합류시키는 공식 도구. kind 가 노드 컨테이너 안에서 쓴다)의 JoinConfiguration 으로 taint 를 건다. 마지막 containerd 설정은 노드가 <code>/etc/containerd/certs.d/&lt;레지스트리&gt;/hosts.toml</code> 을 읽게 해서, setup.sh 가 레지스트리 두 이름을 같은 컨테이너로 돌릴 수 있게 한다.</p>
+  <p>한 줄씩: <code>disableDefaultCNI</code> 를 켜면 노드가 CNI 없이 뜨고 Cilium 을 깔 때까지 NotReady 다(정상). <code>extraPortMappings</code> 는 control-plane 노드 컨테이너의 31080 을 맥 8081 로 열어 준다. 워커 세 개의 라벨이 풀 이름이고, build·exec 에만 <span class="t">kubeadm</span> 의 JoinConfiguration 으로 taint 를 건다. 마지막 containerd 설정은 노드가 <code>/etc/containerd/certs.d/&lt;레지스트리&gt;/hosts.toml</code> 을 읽게 해서, setup.sh 가 레지스트리 두 이름을 같은 컨테이너로 돌릴 수 있게 한다.</p>
+  <aside class="notes"><dl><div><dt>kubeadm</dt><dd>쿠버네티스 노드를 세우고 클러스터에 합류시키는 공식 도구. kind 가 노드 컨테이너 안에서 쓴다.</dd></div></dl></aside>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>최종 모양 클러스터의 정의는 <code>poc/04-faas-runtime/cluster/kind-config.yaml</code> 한 파일이다. 01 단계 클러스터(워커 1, kindnet)와 03 단계 클러스터(워커 3, taint 없음)는 역사로만 남아 있고, <code>run-all.sh</code> 는 처음부터 04 설정으로 만든다. 06 대역 클러스터(<code>poc/06-fault-injection/standin/kind-config.yaml</code>)는 exec 노드가 2대이고 taint 와 Cilium 이 없다(kindnet 기본 CNI).</p></aside>
@@ -804,7 +880,8 @@ flowchart LR
 
 <div class="tier" data-tier="1">
   <h3>무엇이 Git 으로 가고 무엇이 API 로 가나</h3>
-  <p>이 PoC 에는 클러스터를 바꾸는 길이 둘 있다. <strong>플랫폼 변경</strong>(Argo CD 설정, Rollouts, 테넌트 울타리, 컨트롤 플레인 자체)은 Git 에 YAML 을 쓰고 push 하면 Argo CD 가 끌어와 맞춘다(pull 방식: 클러스터 안의 Argo CD 가 Git 을 읽어 오는 것. CI 서버가 클러스터에 밀어 넣는 push 방식의 반대). <strong>사용자 함수</strong>는 컨트롤 플레인이 받아서 쿠버네티스 API 로 직접 만든다. 둘은 tenant-a namespace 에서 만난다: 울타리는 Git 이, 그 안의 함수는 API 가 만든다.</p>
+  <p>이 PoC 에는 클러스터를 바꾸는 길이 둘 있다. <strong>플랫폼 변경</strong>(Argo CD 설정, Rollouts, 테넌트 울타리, 컨트롤 플레인 자체)은 Git 에 YAML 을 쓰고 push 하면 Argo CD 가 <span class="t">pull 방식</span>으로 끌어와 맞춘다. <strong>사용자 함수</strong>는 컨트롤 플레인이 받아서 쿠버네티스 API 로 직접 만든다. 둘은 tenant-a namespace 에서 만난다: 울타리는 Git 이, 그 안의 함수는 API 가 만든다.</p>
+  <aside class="notes"><dl><div><dt>pull 방식</dt><dd>클러스터 안의 Argo CD 가 스스로 Git 을 읽어 오는 것. CI 서버가 바깥에서 클러스터에 밀어 넣는 push 방식의 반대.</dd></div></dl></aside>
   <figure>
     <div class="fig scroll">
       <svg viewBox="0 0 1000 530" role="img" aria-labelledby="f06-t">
@@ -887,8 +964,12 @@ flowchart LR
     <li><b>속도</b>: 배포마다 커밋 → push → Argo CD 감지(폴링 최대 120 + 60초, 또는 refresh) → sync 가 더해진다. "Instantly" 와 멀어진다.</li>
     <li><b>권한</b>: 컨트롤 플레인에 Git 쓰기 토큰이 들어가야 한다. 플랫폼 레포에 쓸 수 있는 토큰은 플랫폼 전체를 바꿀 수 있다.</li>
     <li><b>레포 오염</b>: 사용자 함수(런타임 데이터)가 플랫폼 설정 레포를 커밋으로 채운다.</li>
-    <li><b>selfHeal 충돌</b>: 에이전트가 <code>min-scale</code>(파드 수 하한을 적는 annotation)을 patch 하면 Argo CD 의 selfHeal(Git 과 다르게 손으로 바꾼 것, 즉 드리프트를 Git 대로 되돌리는 옵션)이 되돌린다.</li>
+    <li><b>selfHeal 충돌</b>: 에이전트가 <span class="t"><code>min-scale</code></span> 을 patch 하면 Argo CD 의 <span class="t">selfHeal</span> 이 되돌린다.</li>
   </ol>
+  <aside class="notes"><dl>
+  <div><dt><code>min-scale</code></dt><dd>파드 수 하한을 적는 Knative annotation. 에이전트의 scale 도구가 바꾸는 값이다.</dd></div>
+  <div><dt>selfHeal</dt><dd>Git 과 다르게 손으로 바꾼 것(드리프트)을 Git 대로 되돌리는 Argo CD 옵션.</dd></div>
+  </dl></aside>
   <p>대가도 분명하다. 함수 이력이 Git 에 없으니 클러스터를 통째로 다시 만들면 함수는 다시 배포해야 한다(05 알려진 한계 3). 컨트롤 플레인 자체는 여전히 GitOps(<code>platform-05</code> Application)로 깔린다는 점이 중요하다: "누가 함수를 만들 수 있나" 를 정하는 RBAC 는 Git 에 있다.</p>
   <pre class="pseudo"><code><span class="k">변경 하나가 들어오면</span>:
   <span class="k">만약</span> 플랫폼의 모양을 바꾸는 것이면 (울타리, 부품 설정, 권한, 컨트롤 플레인 이미지 태그):
@@ -1011,26 +1092,40 @@ flowchart LR
   <thead><tr><th>유즈케이스</th><th>행위자</th><th>계기</th><th>주 흐름</th><th>관여 부품</th><th>장</th></tr></thead>
   <tbody>
   <tr><td>함수 배포</td><td>함수 개발자</td><td><code>deploy-fn.sh tenant-a hello samples/hello-v1.py</code></td><td>POST {name, code} → 테넌트 라벨 확인 → buildId = 코드 해시 → ConfigMap + kaniko Job → 202. 백그라운드에서 digest 읽고 ksvc SSA → BUILDING → DEPLOYING → READY</td><td>컨트롤 플레인, faas-build, kind-registry, Knative</td><td><a href="ch07-control-plane.html">07</a>, <a href="ch06-build-runtime.html">06</a></td></tr>
-  <tr><td>이미지 빌드 «include»</td><td>(시스템)</td><td>함수 배포 안에서 항상</td><td>initContainer(본 컨테이너보다 먼저 도는 준비 컨테이너)가 ConfigMap 을 <code>cp -L</code> 로 복사 → kaniko 가 <code>python:3.12-slim</code> 위에 handler.py + server.py → push → digest 를 termination-log(컨테이너가 끝날 때 남기는 종료 메시지 파일)에</td><td>kaniko, build 풀, kind-registry</td><td><a href="ch06-build-runtime.html">06</a></td></tr>
+  <tr><td>이미지 빌드 «include»</td><td>(시스템)</td><td>함수 배포 안에서 항상</td><td><span class="t">initContainer</span> 가 ConfigMap 을 <code>cp -L</code> 로 복사 → kaniko 가 <code>python:3.12-slim</code> 위에 handler.py + server.py → push → digest 를 <span class="t">termination-log</span> 에</td><td>kaniko, build 풀, kind-registry</td><td><a href="ch06-build-runtime.html">06</a></td></tr>
   <tr><td>함수 상태 조회</td><td>함수 개발자</td><td><code>GET …/functions/hello</code></td><td>가장 최근 빌드 Job 과 ksvc 를 함께 보고 phase 를 계산: NOT_FOUND / BUILDING / BUILD_FAILED / DEPLOYING / READY / FAILED</td><td>컨트롤 플레인 (읽기만)</td><td><a href="ch07-control-plane.html">07</a></td></tr>
-  <tr><td>테넌트 추가</td><td>테넌트 관리자 (플랫폼 팀)</td><td><code>tenants/tenant-c.yaml</code> 추가 + push</td><td>ApplicationSet 의 Git files generator(레포의 파일 하나마다 Application 하나를 찍어 내는 생성기)가 파일을 발견 → Application tenant-c → tenant 차트 helm template → 울타리 6겹</td><td>ApplicationSet, tenant 차트, Argo CD</td><td><a href="ch03-tenancy.html">03</a></td></tr>
-  <tr><td>테넌트 울타리 생성 «include»</td><td>(Argo CD)</td><td>테넌트 추가 안에서</td><td>Namespace(PSA = Pod Security Admission 라벨: 파드가 쓸 수 있는 권한 수준 privileged·baseline·restricted 를 namespace 단위로 강제) → ResourceQuota → LimitRange(컨테이너 하나의 기본값과 상한) → NetworkPolicy 3~4장 → Role/RoleBinding/SA deployer → AppProject</td><td>API 서버, Cilium</td><td><a href="ch03-tenancy.html">03</a>, <a href="ch04-network.html">04</a></td></tr>
+  <tr><td>테넌트 추가</td><td>테넌트 관리자 (플랫폼 팀)</td><td><code>tenants/tenant-c.yaml</code> 추가 + push</td><td>ApplicationSet 의 <span class="t">Git files generator</span> 가 파일을 발견 → Application tenant-c → tenant 차트 helm template → 울타리 6겹</td><td>ApplicationSet, tenant 차트, Argo CD</td><td><a href="ch03-tenancy.html">03</a></td></tr>
+  <tr><td>테넌트 울타리 생성 «include»</td><td>(Argo CD)</td><td>테넌트 추가 안에서</td><td>Namespace(<span class="t">PSA</span> 라벨) → ResourceQuota → <span class="t">LimitRange</span> → NetworkPolicy 3~4장 → Role/RoleBinding/SA deployer → <span class="t">AppProject</span></td><td>API 서버, Cilium</td><td><a href="ch03-tenancy.html">03</a>, <a href="ch04-network.html">04</a></td></tr>
   <tr><td>함수 호출</td><td>최종 사용자</td><td><code>curl -H "Host: hello.tenant-a.faas.local" localhost:8081</code></td><td>맥 8081 → 노드 31080 → Kourier → (파드 있으면) queue-proxy → 사용자 컨테이너 → 응답</td><td>Kourier, Knative, Cilium</td><td><a href="ch05-knative.html">05</a></td></tr>
   <tr><td>콜드 스타트 «extend»</td><td>(Knative)</td><td>호출 시 파드가 0개일 때만</td><td>activator 가 요청 보관 → autoscaler 0→1 → 스케줄(exec 풀) → 이미지 받기 → 시작 → 준비 → 넘김</td><td>activator, autoscaler, kubelet, containerd</td><td><a href="ch05-knative.html">05</a>, <a href="ch06-build-runtime.html">06</a></td></tr>
   <tr><td>플랫폼 변경 배포</td><td>플랫폼 운영자</td><td>git push (main)</td><td>Argo CD 가 폴링(120s + jitter)으로 새 커밋 발견 → 렌더 → 비교 → sync</td><td>GitHub, Argo CD</td><td><a href="ch01-gitops.html">01</a></td></tr>
   <tr><td>Git 동기화·드리프트 복구</td><td>Argo CD</td><td>폴링 주기, 클러스터 변화 이벤트</td><td>원하는 상태 ≠ 실제 → apply. 누가 kubectl 로 바꾸면 selfHeal 이 되돌리고, Git 에서 지운 것은 prune 이 지운다</td><td>argocd-repo-server(Git 렌더), application-controller(비교·apply)</td><td><a href="ch01-gitops.html">01</a></td></tr>
-  <tr><td>카나리 배포·자동 롤백 «extend»</td><td>Argo Rollouts</td><td>Rollout 의 template 이 바뀌었을 때만</td><td>새 ReplicaSet(같은 파드 N 개를 유지하는 리소스. Rollout 이 버전마다 하나씩 만든다) 20% → pause → AnalysisRun 이 Prometheus 질의 → 통과면 60% → 100%, 실패면 abort</td><td>Rollouts, Prometheus</td><td><a href="ch02-rollouts.html">02</a></td></tr>
-  <tr><td>메트릭 조회</td><td>AI 운영 에이전트</td><td>"hello 가 이상해" 같은 사람 지시</td><td><code>get_metrics</code>: ksvc 상태, traffic, min/max-scale, PodAutoscaler(Knative autoscaler 가 원하는/실제 파드 수를 적는 리소스) desired/actual, 파드 재시작, (선택) 함수에 실제 요청 5번</td><td>ops_mcp, API 서버, Kourier</td><td><a href="ch07-control-plane.html">07</a></td></tr>
-  <tr><td>스케일 조정</td><td>AI 운영 에이전트</td><td>콜드 스타트를 줄이고 싶을 때</td><td><code>scale(delta)</code>: 가드레일(±2, 0~5, 트래픽 고정 아님) 통과 → min-scale annotation(리소스에 붙이는 메모 형식의 키-값) 을 merge patch(그 필드만 바꾸는 부분 수정) (dry_run 가능)</td><td>ops_mcp, Knative</td><td><a href="ch07-control-plane.html">07</a></td></tr>
+  <tr><td>카나리 배포·자동 롤백 «extend»</td><td>Argo Rollouts</td><td>Rollout 의 template 이 바뀌었을 때만</td><td>새 버전의 ReplicaSet 20% → pause → AnalysisRun 이 Prometheus 질의 → 통과면 60% → 100%, 실패면 abort</td><td>Rollouts, Prometheus</td><td><a href="ch02-rollouts.html">02</a></td></tr>
+  <tr><td>메트릭 조회</td><td>AI 운영 에이전트</td><td>"hello 가 이상해" 같은 사람 지시</td><td><code>get_metrics</code>: ksvc 상태, traffic, min/max-scale, <span class="t">PodAutoscaler</span> desired/actual, 파드 재시작, (선택) 함수에 실제 요청 5번</td><td>ops_mcp, API 서버, Kourier</td><td><a href="ch07-control-plane.html">07</a></td></tr>
+  <tr><td>스케일 조정</td><td>AI 운영 에이전트</td><td>콜드 스타트를 줄이고 싶을 때</td><td><code>scale(delta)</code>: 가드레일(±2, 0~5, 트래픽 고정 아님) 통과 → min-scale annotation 을 <span class="t">merge patch</span> (dry_run 가능)</td><td>ops_mcp, Knative</td><td><a href="ch07-control-plane.html">07</a></td></tr>
   <tr><td>롤백 요청 · 사람 승인</td><td>AI 에이전트 → 플랫폼 운영자</td><td>새 Revision 이 500 을 낼 때</td><td>rollback 첫 호출 = 승인 요청만 생성 → 사람이 터미널(TTY)에서 <code>approve &lt;id&gt;</code> → 같은 대상으로 재호출 → traffic 100% 를 옛 Revision 으로</td><td>ops_mcp, approvals/, Knative</td><td><a href="ch07-control-plane.html">07</a></td></tr>
   <tr><td>가드레일 검사 «include»</td><td>(MCP 서버 + API 서버)</td><td>모든 변경 도구 호출</td><td>이름 정규식 → 한도·승인 확인(파이썬) → RBAC(API 서버, 진짜 벽) → 감사 로그 한 줄</td><td>guardrails.py, ops-agent Role</td><td><a href="ch07-control-plane.html">07</a></td></tr>
-  <tr><td>파드 스케줄·축출·재생성</td><td>Kubernetes</td><td>새 파드, 노드 장애</td><td>스케줄러가 taint/toleration·nodeSelector·자원으로 노드 고름. 노드 NotReady 면 taint 붙이고 tolerationSeconds(파드가 죽은 노드의 taint 를 견디는 초) 뒤 축출 → ReplicaSet 이 재생성</td><td>스케줄러, node lifecycle 컨트롤러</td><td><a href="ch03-tenancy.html">03</a>, <a href="ch08-resilience.html">08</a></td></tr>
-  <tr><td>0↔N 오토스케일</td><td>Kubernetes (Knative autoscaler)</td><td>동시 요청 수 변화</td><td>queue-proxy 숫자 집계 → 파드당 target 기준 desired 계산 → 요청이 끊기면 window(평균을 내는 시간 창) + grace(유예) 뒤 0</td><td>autoscaler, activator, queue-proxy</td><td><a href="ch05-knative.html">05</a></td></tr>
+  <tr><td>파드 스케줄·축출·재생성</td><td>Kubernetes</td><td>새 파드, 노드 장애</td><td>스케줄러가 taint/toleration·nodeSelector·자원으로 노드 고름. 노드 NotReady 면 taint 붙이고 <span class="t">tolerationSeconds</span> 뒤 축출 → ReplicaSet 이 재생성</td><td>스케줄러, node lifecycle 컨트롤러</td><td><a href="ch03-tenancy.html">03</a>, <a href="ch08-resilience.html">08</a></td></tr>
+  <tr><td>0↔N 오토스케일</td><td>Kubernetes (Knative autoscaler)</td><td>동시 요청 수 변화</td><td>queue-proxy 숫자 집계 → 파드당 target 기준 desired 계산 → 요청이 끊기면 <span class="t">stable window</span> + <span class="t">grace period</span> 뒤 0</td><td>autoscaler, activator, queue-proxy</td><td><a href="ch05-knative.html">05</a></td></tr>
   <tr><td>장애 대응 (런북)</td><td>플랫폼 운영자</td><td>Prometheus 알림 (FnNodeNotReady 등)</td><td>알림의 runbook 주석 → <code>runbooks/RB-0N-*.md</code> 순서대로 확인 → 조치 → 기록</td><td>Prometheus 알림 규칙 5개, 런북 4개</td><td><a href="ch08-resilience.html">08</a></td></tr>
   </tbody></table></div>
+  <aside class="notes"><dl>
+  <div><dt>initContainer</dt><dd>본 컨테이너보다 먼저 돌아 준비를 하는 컨테이너. 여기서는 busybox.</dd></div>
+  <div><dt>termination-log</dt><dd>컨테이너가 끝날 때 남기는 종료 메시지 파일(<code>/dev/termination-log</code>). 파드 status 에 그대로 올라온다.</dd></div>
+  <div><dt>Git files generator</dt><dd>레포의 파일 하나마다 Application 하나를 찍어 내는 ApplicationSet 생성기.</dd></div>
+  <div><dt>PSA(Pod Security Admission)</dt><dd>파드가 쓸 수 있는 권한 수준 privileged·baseline·restricted 를 namespace 라벨로 강제하는 쿠버네티스 기능.</dd></div>
+  <div><dt>LimitRange</dt><dd>컨테이너 하나의 기본값과 상한.</dd></div>
+  <div><dt>AppProject</dt><dd>Argo CD 에서 Application 묶음의 울타리. 갈 수 있는 namespace 와 만들 수 있는 리소스 종류를 제한한다.</dd></div>
+  <div><dt>PodAutoscaler</dt><dd>Knative autoscaler 가 원하는/실제 파드 수를 적는 리소스. Revision 마다 하나.</dd></div>
+  <div><dt>merge patch</dt><dd>리소스 전체를 다시 쓰지 않고 그 필드만 바꾸는 부분 수정 요청.</dd></div>
+  <div><dt>tolerationSeconds</dt><dd>파드가 NoExecute taint 를 몇 초 견딘 뒤 쫓겨날지 적는 값. 죽은 노드의 파드를 옮기기까지의 시간이 된다.</dd></div>
+  <div><dt>stable window</dt><dd>autoscaler 가 동시 요청 수의 평균을 내는 시간 창. Knative 기본 60초, 허용 최소 6초. 04 함수는 annotation 으로 6초.</dd></div>
+  <div><dt>grace period</dt><dd>scale-to-zero-grace-period. 0 으로 내리기 전에 경로를 activator 로 돌려 두는 유예. 기본 30초.</dd></div>
+  </dl></aside>
 </div>
 
-<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>테넌트 관리자는 실제로는 플랫폼 팀이다: <code>tenants/*.yaml</code> 은 플랫폼 레포에 있고, 테넌트 자신은 자기 AppProject(Argo CD 에서 Application 묶음의 울타리. 갈 수 있는 namespace 와 만들 수 있는 리소스 종류를 제한한다. 여기선 tenant-a) 안에서만 Argo CD 로 배포할 수 있다(<code>tenant-a-hello</code>). 함수 개발자 인증은 아직 없고(05 알려진 한계 2), 본선이면 테넌트별 API 키나 OIDC(OpenID Connect: 외부 신원 공급자로 사용자를 확인하는 로그인 표준) 게이트웨이를 앞에 둔다.</p></aside>
+<aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>테넌트 관리자는 실제로는 플랫폼 팀이다: <code>tenants/*.yaml</code> 은 플랫폼 레포에 있고, 테넌트 자신은 자기 AppProject(여기선 tenant-a) 안에서만 Argo CD 로 배포할 수 있다(<code>tenant-a-hello</code>). 함수 개발자 인증은 아직 없고(05 알려진 한계 2), 본선이면 테넌트별 API 키나 <span class="t">OIDC</span> 게이트웨이를 앞에 둔다.</p>
+<aside class="notes"><dl><div><dt>OIDC(OpenID Connect)</dt><dd>외부 신원 공급자로 사용자를 확인하는 로그인 표준.</dd></div></dl></aside></aside>
 
 <h2 id="catalog">컴포넌트 카탈로그</h2>
 
@@ -1038,15 +1133,16 @@ flowchart LR
 
 <div class="tier" data-tier="1">
   <h3>namespace 와 부품 전부</h3>
-  <p>"이 파드는 왜 여기 있나" 에 답하는 표다. 설치 방법 열이 중요하다: Helm 으로 깐 것은 <code>helm list</code> 에 보이고, release YAML(프로젝트가 GitHub 릴리스에 올려 둔 설치용 매니페스트)을 <code>kubectl apply</code> 한 것은 Helm 이 모르며, Argo CD 가 깐 것은 Git 을 고쳐야 바뀐다(손으로 고치면 selfHeal 이 되돌린다).</p>
+  <p>"이 파드는 왜 여기 있나" 에 답하는 표다. 설치 방법 열이 중요하다: Helm 으로 깐 것은 <code>helm list</code> 에 보이고, <span class="t">release YAML</span> 을 <code>kubectl apply</code> 한 것은 Helm 이 모르며, Argo CD 가 깐 것은 Git 을 고쳐야 바뀐다(손으로 고치면 selfHeal 이 되돌린다).</p>
+  <aside class="notes"><dl><div><dt>release YAML</dt><dd>프로젝트가 GitHub 릴리스에 올려 둔 설치용 매니페스트. Knative 와 Kourier 가 이 방식이다.</dd></div></dl></aside>
   <div class="table-wrap"><table>
   <thead><tr><th>namespace</th><th>무엇이 도나</th><th>단계</th><th>노드 풀</th><th>설치 방법</th></tr></thead>
   <tbody>
-  <tr><td><code>kube-system</code></td><td>Cilium agent(DaemonSet: 노드마다 파드 하나씩 두는 리소스. 그래서 모든 노드), cilium-operator, hubble-relay, hubble-ui, CoreDNS(클러스터 안 DNS), kube-proxy(Service 주소로 온 패킷을 파드로 돌리는 노드 부품) 등 kind 기본</td><td>03·04</td><td>agent 는 전부, 나머지는 스케줄러가 고름</td><td><code>kind create</code> + <code>cilium install</code> CLI</td></tr>
-  <tr><td><code>argocd</code></td><td>argocd-server(UI 와 API), repo-server(Git 을 받아 매니페스트로 렌더), application-controller(렌더 결과를 클러스터와 비교해 apply. StatefulSet: 이름과 저장소가 고정된 파드 집합), redis(캐시), applicationset-controller. Application·AppProject 오브젝트도 여기</td><td>01</td><td>system</td><td>Helm <code>argo/argo-cd 10.10.5</code></td></tr>
+  <tr><td><code>kube-system</code></td><td>Cilium agent(<span class="t">DaemonSet</span>), cilium-operator, hubble-relay, hubble-ui, <span class="t">CoreDNS</span>, <span class="t">kube-proxy</span> 등 kind 기본</td><td>03·04</td><td>agent 는 전부, 나머지는 스케줄러가 고름</td><td><code>kind create</code> + <code>cilium install</code> CLI</td></tr>
+  <tr><td><code>argocd</code></td><td>argocd-server(UI 와 API), repo-server(Git 을 받아 매니페스트로 렌더), application-controller(렌더 결과를 클러스터와 비교해 apply, <span class="t">StatefulSet</span>), redis(캐시), applicationset-controller. Application·AppProject 오브젝트도 여기</td><td>01</td><td>system</td><td>Helm <code>argo/argo-cd 10.10.5</code></td></tr>
   <tr><td><code>argo-rollouts</code></td><td>Rollouts 컨트롤러 1개 (대시보드 끔)</td><td>02</td><td>system</td><td>Helm <code>argo/argo-rollouts 2.43.8</code></td></tr>
   <tr><td><code>monitoring</code></td><td>prometheus-server (Service <code>prometheus-server:80</code>)</td><td>02</td><td>system</td><td>Helm <code>prometheus-community/prometheus 29.37.0</code></td></tr>
-  <tr><td><code>knative-serving</code></td><td>controller, autoscaler, activator, webhook(리소스를 저장하기 전에 검사하고 기본값을 채우는 어드미션 훅), net-kourier-controller</td><td>04</td><td>system</td><td><code>kubectl apply</code> (serving-crds, serving-core v1.23.0) + ConfigMap patch</td></tr>
+  <tr><td><code>knative-serving</code></td><td>controller, autoscaler, activator, <span class="t">webhook</span>, net-kourier-controller</td><td>04</td><td>system</td><td><code>kubectl apply</code> (serving-crds, serving-core v1.23.0) + ConfigMap patch</td></tr>
   <tr><td><code>kourier-system</code></td><td>Kourier 게이트웨이(Envoy), Service <code>kourier</code> NodePort 31080</td><td>04</td><td>system</td><td><code>kubectl apply</code> kourier.yaml + Service patch</td></tr>
   <tr><td><code>faas-system</code></td><td>컨트롤 플레인 Deployment 1 + Service (80 → 8080), SA control-plane. PSA restricted</td><td>05</td><td>system</td><td>Argo CD <code>platform-05</code> (이미지는 <code>kind load</code>)</td></tr>
   <tr><td><code>faas-build</code></td><td>함수 빌드 Job <code>build-&lt;이름&gt;-&lt;해시&gt;</code> + ConfigMap <code>src-&lt;id&gt;</code>. PSA baseline. 1시간 뒤 자동 삭제</td><td>05</td><td>build</td><td>namespace 는 Argo CD <code>platform-05</code>, Job 은 컨트롤 플레인</td></tr>
@@ -1057,8 +1153,16 @@ flowchart LR
   <tr><td><code>tenant-a</code></td><td>울타리(Quota, LimitRange, NetworkPolicy 4장, Role, SA deployer) + Deployment tenant-a-hello + ksvc hello (05) + SA ops-agent</td><td>03·05</td><td>hello-fn 은 system, ksvc hello 는 exec</td><td>Argo CD <code>tenant-a</code>, <code>tenant-a-hello</code>, <code>platform-05</code> + 컨트롤 플레인 SSA</td></tr>
   <tr><td><code>tenant-b</code></td><td>울타리(NetworkPolicy 3장, 한도 더 작게) + Deployment tenant-b-hello</td><td>03</td><td>system</td><td>Argo CD <code>tenant-b</code>, <code>tenant-b-hello</code></td></tr>
   <tr><td>(클러스터 밖) kind-registry</td><td>registry:2 컨테이너, 맥 127.0.0.1:5001, docker 네트워크 kind 에 연결</td><td>04</td><td>—</td><td><code>docker run</code> (setup.sh)</td></tr>
-  <tr><td>(맥 프로세스) ops_mcp</td><td>MCP 서버. Claude Code 가 자식 프로세스로 띄워 stdio(표준 입출력 파이프)로 대화</td><td>05</td><td>—</td><td><code>claude mcp add faas-ops …</code></td></tr>
+  <tr><td>(맥 프로세스) ops_mcp</td><td>MCP 서버. Claude Code 가 자식 프로세스로 띄워 <span class="t">stdio</span> 로 대화</td><td>05</td><td>—</td><td><code>claude mcp add faas-ops …</code></td></tr>
   </tbody></table></div>
+  <aside class="notes"><dl>
+  <div><dt>DaemonSet</dt><dd>노드마다 파드 하나씩 두는 리소스. 그래서 Cilium agent 는 모든 노드에 있다.</dd></div>
+  <div><dt>CoreDNS</dt><dd>클러스터 안 DNS 서버. Service 이름을 IP 로 푼다.</dd></div>
+  <div><dt>kube-proxy</dt><dd>Service 주소로 온 패킷을 파드로 돌리는 노드 부품.</dd></div>
+  <div><dt>StatefulSet</dt><dd>이름과 저장소가 고정된 파드 집합을 유지하는 리소스.</dd></div>
+  <div><dt>webhook</dt><dd>리소스를 저장하기 전에 검사하고 기본값을 채우는 어드미션 훅. API 서버가 저장 직전에 불러 준다.</dd></div>
+  <div><dt>stdio</dt><dd>표준 입출력. MCP 서버를 자식 프로세스로 띄워 파이프로 JSON 메시지를 주고받는 전송 방식.</dd></div>
+  </dl></aside>
 </div>
 
 <div class="tier" data-tier="2">
@@ -1395,12 +1499,14 @@ flowchart LR
 
 <h2 id="flows">핵심 흐름 다섯</h2>
 
-<p>여기까지가 "무엇이 어디에 있나" 였다. 이제 그 부품들이 실제로 어떤 순서로 서로를 부르는지 본다. 이 플랫폼을 설명할 때 반드시 나오는 요청 다섯 가지를 시퀀스 다이어그램(위에서 아래로 시간이 흐르고, 화살표 하나가 호출 하나인 그림)으로 따라간다. 화살표 하나하나가 "여기가 끊기면 어떤 증상이 나나" 의 후보다. ANALYSIS.md 2절의 네 가지에 노드 장애(06)를 더했다.</p>
+<p>여기까지가 "무엇이 어디에 있나" 였다. 이제 그 부품들이 실제로 어떤 순서로 서로를 부르는지 본다. 이 플랫폼을 설명할 때 반드시 나오는 요청 다섯 가지를 <span class="t">시퀀스 다이어그램</span>으로 따라간다. 화살표 하나하나가 "여기가 끊기면 어떤 증상이 나나" 의 후보다. ANALYSIS.md 2절의 네 가지에 노드 장애(06)를 더했다.</p>
+<aside class="notes"><dl><div><dt>시퀀스 다이어그램</dt><dd>위에서 아래로 시간이 흐르고, 화살표 하나가 호출 하나인 그림. 세로줄 하나가 부품 하나다.</dd></div></dl></aside>
 
 <h3 id="flow-deploy">흐름 1. 함수 배포 (poc/05 · 7장)</h3>
 
 <div class="tier" data-tier="1">
-  <p>개발자가 코드를 보내면 1초 안에 HTTP 202 Accepted(받았다, 처리는 나중에 한다는 응답)를 받고, 그 뒤 상태를 몇 번 물어보다 READY 와 URL 을 받는다. 그 사이 클러스터 안에서 빌드 Job, digest, Knative Service 가 차례로 생긴다.</p>
+  <p>개발자가 코드를 보내면 1초 안에 HTTP <span class="t">202 Accepted</span> 를 받고, 그 뒤 상태를 몇 번 물어보다 READY 와 URL 을 받는다. 그 사이 클러스터 안에서 빌드 Job, digest, Knative Service 가 차례로 생긴다.</p>
+  <aside class="notes"><dl><div><dt>202 Accepted</dt><dd>"받았다, 처리는 나중에 한다" 는 HTTP 응답. 결과는 Location 헤더의 주소로 물어본다.</dd></div></dl></aside>
   <pre class="mermaid">
 sequenceDiagram
   participant D as 함수 개발자
@@ -1433,15 +1539,19 @@ sequenceDiagram
 
 <div class="tier" data-tier="2">
   <ol>
-    <li><b>검사</b>: 이름(정규식)·코드 크기(<code>max-code-bytes</code> 262144) 확인 후, namespace 에 <code>tenant=tenant-a</code> 라벨이 있는지 본다. 없으면 404. kube-system 같은 곳에 함수를 못 넣게 하는 첫 문이고, 두 번째 문은 RBAC 다(권한 묶음 Role 을 누구에게 어느 namespace 에서 주는지 적는 RoleBinding 이 tenant-a 에만 있다).</li>
+    <li><b>검사</b>: 이름(정규식)·코드 크기(<code>max-code-bytes</code> 262144) 확인 후, namespace 에 <code>tenant=tenant-a</code> 라벨이 있는지 본다. 없으면 404. kube-system 같은 곳에 함수를 못 넣게 하는 첫 문이고, 두 번째 문은 RBAC 다. 컨트롤 플레인에 ksvc 권한을 주는 <span class="t">RoleBinding</span> 이 tenant-a 에만 있다.</li>
     <li><b>멱등 빌드 ID</b>: <code>BuildIds.of(tenant, name, code)</code> = 이름 + SHA-256 앞 10자. 같은 코드면 같은 Job 이름 → 이미 있으면 빌드를 건너뛴다(재사용). <code>inFlight</code> 집합이 같은 빌드를 기다리는 스레드를 하나로 묶는다.</li>
-    <li><b>Job + ConfigMap</b>: Job 을 먼저 만들고, 소스 ConfigMap(handler.py, server.py, Dockerfile)의 ownerReference("이 리소스의 주인은 저것" 이라는 표시. 주인이 지워지면 같이 지워진다)를 그 Job 으로 건다. Job 이 TTL(3600초)로 지워지면 ConfigMap 도 같이 지워진다. Job 파드는 ConfigMap 이 생길 때까지 ContainerCreating 에서 기다린다.</li>
+    <li><b>Job + ConfigMap</b>: Job 을 먼저 만들고, 소스 ConfigMap(handler.py, server.py, Dockerfile)의 <span class="t">ownerReference</span> 를 그 Job 으로 건다. Job 이 TTL(3600초)로 지워지면 ConfigMap 도 같이 지워진다. Job 파드는 ConfigMap 이 생길 때까지 ContainerCreating 에서 기다린다.</li>
     <li><b>202 와 Location</b>: 빌드는 수십 초라 요청을 붙잡지 않는다. 클라이언트(deploy-fn.sh)는 Location 의 상태 주소를 0.5초마다 묻는다.</li>
-    <li><b>빌드</b>: initContainer(작은 리눅스 도구 모음 이미지 busybox)가 ConfigMap 의 심볼릭 링크를 <code>cp -L</code> 로 실제 파일로 복사하고, kaniko 가 <code>--digest-file=/dev/termination-log</code> 로 digest 를 컨테이너 종료 메시지에 남긴다.</li>
+    <li><b>빌드</b>: initContainer(busybox)가 ConfigMap 의 심볼릭 링크를 <code>cp -L</code> 로 실제 파일로 복사하고, kaniko 가 <code>--digest-file=/dev/termination-log</code> 로 digest 를 컨테이너 종료 메시지에 남긴다.</li>
     <li><b>digest 로 고정</b>: 컨트롤 플레인이 빌드 파드의 <code>status.containerStatuses[kaniko].state.terminated.message</code> 에서 <code>sha256:</code> 을 읽고, 이미지 주소를 pull 이름 <code>localhost:5001/tenant-a/hello@sha256:…</code> 로 만든다.</li>
     <li><b>server-side apply</b>: field manager <code>faas-control-plane</code>, <code>forceConflicts</code>. 컨트롤 플레인이 적은 필드(이미지, 라벨, max-scale, traffic)만 주인이 되고, 에이전트가 바꾼 min-scale 은 건드리지 않는다.</li>
     <li><b>Knative 반영</b>: template 이 바뀌었으니 새 Revision → Deployment → 파드(exec 풀). traffic 은 <code>latestRevision: true, percent: 100</code>.</li>
   </ol>
+  <aside class="notes"><dl>
+  <div><dt>RoleBinding</dt><dd>권한 묶음(Role 또는 ClusterRole)을 누구에게 어느 namespace 에서 주는지 적는 리소스.</dd></div>
+  <div><dt>ownerReference</dt><dd>"이 리소스의 주인은 저것" 이라는 표시. 주인이 지워지면 같이 지워진다.</dd></div>
+  </dl></aside>
   <div class="code-head"><span>poc/05-control-plane-mcp/control-plane/src/main/java/com/example/controlplane/deploy/FunctionDeployer.java</span><span>발췌</span></div>
   <pre><code><span class="c">// startDeploy: 요청 스레드, 1초 안에 끝남</span>
 String buildId = BuildIds.of(tenant, name, req.code());       <span class="c">// 이름 + 코드 해시 앞 10자</span>
@@ -1495,12 +1605,16 @@ sequenceDiagram
 <div class="tier" data-tier="2">
   <ol>
     <li><b>입구</b>: 맥 8081 은 kind 가 control-plane 노드 컨테이너의 31080 에 묶어 둔 포트다. Service <code>kourier</code> 가 NodePort 31080 으로 열려 있어 그 노드의 kube-proxy/Cilium 이 Kourier 파드로 보낸다. NodePort 는 네 노드 모두에 열리지만 맥 포트에 묶인 것은 control-plane 노드 하나다.</li>
-    <li><b>라우팅</b>: Knative 가 ksvc 마다 KIngress(Knative 가 정의한 인그레스 리소스. 인그레스 = 바깥에서 온 HTTP 요청을 안의 어느 서비스로 보낼지 적는 입구 규칙)를 만들고 net-kourier-controller 가 Envoy 설정으로 바꾼다. Host 가 <code>hello.tenant-a.faas.local</code> 이면 tenant-a 의 hello Revision 으로.</li>
-    <li><b>파드 0개</b>: 그 Revision 의 엔드포인트가 activator 를 가리킨다(Knative 의 ServerlessService(SKS) 리소스가 Proxy 모드. 파드가 넉넉하면 Serve 모드로 바뀌어 파드로 직접 간다). activator 는 요청을 버퍼에 두고 autoscaler 에 수요를 알린다. 그래서 0개여도 요청이 실패하지 않고 느려질 뿐이다.</li>
+    <li><b>라우팅</b>: Knative 가 ksvc 마다 <span class="t">KIngress</span> 를 만들고 net-kourier-controller 가 Envoy 설정으로 바꾼다. Host 가 <code>hello.tenant-a.faas.local</code> 이면 tenant-a 의 hello Revision 으로.</li>
+    <li><b>파드 0개</b>: 그 Revision 의 엔드포인트가 activator 를 가리킨다. 이것을 정하는 것이 Knative 의 <span class="t">ServerlessService(SKS)</span> 로, 파드가 0개면 Proxy 모드, 파드가 넉넉하면 Serve 모드로 바뀌어 파드로 직접 간다. activator 는 요청을 버퍼에 두고 autoscaler 에 수요를 알린다. 그래서 0개여도 요청이 실패하지 않고 느려질 뿐이다.</li>
     <li><b>스케일 업</b>: autoscaler 가 PodAutoscaler 의 desired 를 1 로 → Deployment replicas 1 → 스케줄러가 exec 풀 노드를 고름(nodeSelector + toleration) → kubelet 이 이미지를 받고(노드 containerd 의 hosts.toml 이 localhost:5001 을 kind-registry:5000 으로) 컨테이너 시작.</li>
     <li><b>정책 검사</b>: tenant-a 의 default-deny 가 모든 들어오는 연결을 막고, <code>allow-from-namespaces</code> 가 knative-serving(activator, 그리고 queue-proxy 의 지표를 긁으러 오는 autoscaler)과 kourier-system(Kourier)만 연다. 10/20 에 이 정책이 없어서 "READY 인데 타임아웃" 이 될 뻔했다.</li>
-    <li><b>스케일 다운</b>: queue-proxy 가 동시 요청 수를 보고, autoscaler 가 stable window(평균을 내는 시간 창. Knative 기본 60초, 허용 최소 6초. 04 함수는 annotation 으로 6초) 동안 요청이 없으면 0 으로 결정하고, scale-to-zero grace period(0 으로 내리기 전에 경로를 activator 로 돌려 두는 유예. 기본 30초) 뒤 파드 종료.</li>
+    <li><b>스케일 다운</b>: queue-proxy 가 동시 요청 수를 보고, autoscaler 가 stable window(04 함수는 6초) 동안 요청이 없으면 0 으로 결정하고, scale-to-zero grace period(기본 30초) 뒤 파드 종료.</li>
   </ol>
+  <aside class="notes"><dl>
+  <div><dt>KIngress</dt><dd>Knative 가 정의한 인그레스 리소스. 인그레스는 바깥에서 온 HTTP 요청을 안의 어느 서비스로 보낼지 적는 입구 규칙이다.</dd></div>
+  <div><dt>ServerlessService(SKS)</dt><dd>Revision 마다 하나씩 있는 Knative 리소스. 엔드포인트를 activator 로 돌릴지(Proxy) 파드로 직접 보낼지(Serve) 정한다.</dd></div>
+  </dl></aside>
 </div>
 
 <h3 id="flow-gitops">흐름 3. git push → 클러스터 반영 (poc/01 · 1장)</h3>
@@ -1531,12 +1645,17 @@ sequenceDiagram
 
 <div class="tier" data-tier="2">
   <ol>
-    <li><b>폴링</b>: <code>timeout.reconciliation: 120</code> + <code>timeout.reconciliation.jitter: 60</code> (01 values). 그래서 push 후 반영까지 최대 약 3분. 강제 새로고침(UI 의 Refresh 또는 Application 의 <code>argocd.argoproj.io/refresh</code> annotation)이나 webhook(GitHub 가 push 때 Argo CD 에 보내는 HTTP 알림)이면 몇 초.</li>
+    <li><b>폴링</b>: <code>timeout.reconciliation: 120</code> + <code>timeout.reconciliation.jitter: 60</code> (01 values). 그래서 push 후 반영까지 최대 약 3분. 강제 새로고침(UI 의 Refresh 또는 Application 의 <code>argocd.argoproj.io/refresh</code> annotation)이나 <span class="t">Git 웹훅</span>이면 몇 초.</li>
     <li><b>렌더</b>: repo-server 가 폴더에 <code>Chart.yaml</code> 이 있으면 <code>helm template</code> 으로 펼친다. <code>helm install</code> 이 아니라서 <code>helm list</code> 에는 안 보인다.</li>
-    <li><b>두 상태</b>: Sync(Git 과 같은가: Synced/OutOfSync, 비교를 못 하면 Unknown)와 Health(잘 도나: Healthy/Progressing/Degraded/Suspended/Missing/Unknown)는 따로다. Git 대로 깔았는데 파드가 안 뜨면 Synced + Degraded.</li>
-    <li><b>클러스터 쪽 변화</b>는 폴링이 아니라 watch(API 서버가 변화를 실시간으로 밀어 주는 구독) 이벤트로 바로 안다. 그래서 selfHeal 은 몇 초 안에 시작된다. 같은 Application 이 계속 어긋나면 백오프(<code>controller.self.heal.backoff.*</code>: 기본 2초부터 3배씩, 최대 300초)로 되돌리는 간격이 늘어난다.</li>
+    <li><b>두 상태</b>: Sync 와 Health 는 따로다. Sync 는 Git 과 같은가(Synced/OutOfSync, 비교를 못 하면 Unknown)이고, Health 는 잘 도나(Healthy/Progressing/Degraded/Suspended/Missing/Unknown)다. Git 대로 깔았는데 파드가 안 뜨면 Synced + Degraded.</li>
+    <li><b>클러스터 쪽 변화</b>는 폴링이 아니라 <span class="t">watch</span> 이벤트로 바로 안다. 그래서 selfHeal 은 몇 초 안에 시작된다. 같은 Application 이 계속 어긋나면 <span class="t">백오프</span>로 되돌리는 간격이 늘어난다.</li>
     <li><b>App of Apps</b>: root 가 <code>gitops/apps/</code> 를 보므로 그 폴더에 Application YAML 을 하나 추가하고 push 하면 새 Application 이 생긴다(bye-fn 이 그렇게 생겼다).</li>
   </ol>
+  <aside class="notes"><dl>
+  <div><dt>Git 웹훅</dt><dd>GitHub 가 push 때 Argo CD 에 보내는 HTTP 알림. 폴링을 기다리지 않게 한다.</dd></div>
+  <div><dt>watch</dt><dd>API 서버가 리소스 변화를 실시간으로 밀어 주는 구독.</dd></div>
+  <div><dt>백오프</dt><dd>실패가 반복될 때 다음 시도까지의 간격을 점점 늘리는 방식. selfHeal 은 <code>controller.self.heal.backoff.*</code> 로 기본 2초부터 3배씩, 최대 300초.</dd></div>
+  </dl></aside>
 </div>
 
 <h3 id="flow-canary">흐름 4. 나쁜 버전 배포와 자동 롤백 (poc/02 · 2장)</h3>
@@ -1572,18 +1691,20 @@ sequenceDiagram
 
 <div class="tier" data-tier="2">
   <ol>
-    <li><b>비율 = 파드 수</b>: 트래픽 라우터(Istio 나 NGINX 인그레스처럼 비율로 트래픽을 나눠 주는 장치) 없이 Rollouts 는 파드 수로 비율을 흉내 낸다. replicas 5, setWeight 20 → canary 1 + stable 4. Service 가 두 종류 파드를 고르게 부르니 약 20% 가 카나리로 간다.</li>
+    <li><b>비율 = 파드 수</b>: <span class="t">트래픽 라우터</span> 없이 Rollouts 는 파드 수로 비율을 흉내 낸다. replicas 5, setWeight 20 → canary 1 + stable 4. Service 가 두 종류 파드를 고르게 부르니 약 20% 가 카나리로 간다.</li>
     <li><b>카나리만 재기</b>: 파드 라벨 <code>rollouts-pod-template-hash</code> 를 Prometheus 가 지표 라벨 <code>rollouts_pod_template_hash</code> 로 복사한다. AnalysisTemplate 은 이 값(<code>podTemplateHashValue: Latest</code>)으로 카나리 파드만 고른다. <code>path="root"</code> 로 헬스체크를 뺀다.</li>
     <li><b>판정 네 가지</b>: Successful(계속), Failed(failureLimit 초과 → abort), Error(질의 실패가 consecutiveErrorLimit 4 초과 → abort), Inconclusive(pause). 질의 주소가 틀려도 abort 되는 것이 fail-closed.</li>
     <li><b>부하가 필요한 이유</b>: 요청이 0 이면 rate 가 0/0 = NaN → 판정 불가. 그래서 <code>scripts/load.sh</code> 로 클러스터 안에서 계속 부른다.</li>
     <li><b>GitOps 와의 엇갈림</b>: abort 뒤 클러스터는 stable 100% 지만 Rollout spec 은 Git 의 나쁜 버전 그대로다. Argo CD 는 Synced + Degraded 로 보인다. <code>kubectl argo rollouts undo</code> 로 고치면 selfHeal 이 Git 상태로 다시 바꾼다. 그래서 Git 을 고친다.</li>
   </ol>
+  <aside class="notes"><dl><div><dt>트래픽 라우터</dt><dd>Istio 나 NGINX 인그레스처럼 요청을 비율로 나눠 주는 장치. Rollouts 는 있으면 쓰고, 없으면 파드 수로 흉내 낸다.</dd></div></dl></aside>
 </div>
 
 <h3 id="flow-node">흐름 5. 노드 장애와 복구 (poc/06 · 8장)</h3>
 
 <div class="tier" data-tier="1">
-  <p>대역 클러스터 chaos 의 exec 노드 하나를 <code>docker pause</code> 로 얼린다. 쿠버네티스는 하트비트가 끊긴 지 일정 시간이 지나야 노드를 NotReady 로 보고, 그때부터 그 노드 파드를 Service 에서 빼고, 다시 일정 시간 뒤 다른 노드로 옮긴다. 방어 설정(tolerationSeconds 20, 파드를 노드마다 흩어 놓기, PDB = 최소 몇 개는 남기라는 약속)은 이 두 번째 시간을 줄이고 첫 번째 시간의 피해를 나눈다.</p>
+  <p>대역 클러스터 chaos 의 exec 노드 하나를 <code>docker pause</code> 로 얼린다. 쿠버네티스는 하트비트가 끊긴 지 일정 시간이 지나야 노드를 NotReady 로 보고, 그때부터 그 노드 파드를 Service 에서 빼고, 다시 일정 시간 뒤 다른 노드로 옮긴다. 방어 설정(tolerationSeconds 20, 파드를 노드마다 흩어 놓기, <span class="t">PDB</span>)은 이 두 번째 시간을 줄이고 첫 번째 시간의 피해를 나눈다.</p>
+  <aside class="notes"><dl><div><dt>PDB(PodDisruptionBudget)</dt><dd>drain 같은 자발적 중단 때 최소 몇 개는 남겨 두라는 약속. 여기선 minAvailable 1.</dd></div></dl></aside>
   <pre class="mermaid">
 sequenceDiagram
   participant S as s1-node-down.sh
@@ -1610,12 +1731,20 @@ sequenceDiagram
 
 <div class="tier" data-tier="2">
   <ol>
-    <li><b>감지까지</b>: kubelet 은 <code>kube-node-lease</code> namespace 의 Lease(하트비트용 작은 리소스)를 주기적으로(기본 10초마다) 갱신한다. kube-controller-manager(쿠버네티스의 여러 컨트롤러를 묶어 돌리는 프로세스)의 <code>--node-monitor-grace-period</code>(기본 50초) 동안 갱신이 없으면 노드 Ready=Unknown. 이 50초 동안 그 노드 파드로 간 요청은 응답이 없다.</li>
-    <li><b>Service 에서 빠짐</b>: NotReady 가 되면 그 노드 파드들이 Ready=False 로 표시되고 EndpointSlice(Service 뒤에 있는 파드 주소 목록)에서 빠진다. 프로브 에러가 이 순간 멈춘다. "NotReady 가 Service 를 고친다" 는 이 뜻이다.</li>
+    <li><b>감지까지</b>: kubelet 은 <code>kube-node-lease</code> namespace 의 <span class="t">Lease</span> 를 주기적으로(기본 10초마다) 갱신한다. <span class="t">kube-controller-manager</span> 의 <code>--node-monitor-grace-period</code>(기본 50초) 동안 갱신이 없으면 노드 Ready=Unknown. 이 50초 동안 그 노드 파드로 간 요청은 응답이 없다.</li>
+    <li><b>Service 에서 빠짐</b>: NotReady 가 되면 그 노드 파드들이 Ready=False 로 표시되고 <span class="t">EndpointSlice</span> 에서 빠진다. 프로브 에러가 이 순간 멈춘다. "NotReady 가 Service 를 고친다" 는 이 뜻이다.</li>
     <li><b>옮기기</b>: 노드에 <code>node.kubernetes.io/unreachable:NoExecute</code> taint. 파드는 이 taint 를 기본 300초 견딘다(DefaultTolerationSeconds). 06 방어는 이를 20초로 줄였다.</li>
-    <li><b>어디로</b>: topologySpreadConstraints(maxSkew 1, DoNotSchedule, nodeTaintsPolicy Honor, matchLabelKeys pod-template-hash)가 평소엔 파드를 노드마다 흩고, 노드가 죽으면 죽은 노드를 계산에서 빼서 새 파드가 산 노드에 뜰 수 있게 한다.</li>
-    <li><b>스팟 모드</b>: <code>spot</code> 은 2분 예고를 흉내 내 cordon(노드에 새 파드 배치 금지) + drain(있는 파드를 다른 노드로 내보내기) 뒤 멈춘다. drain 은 PDB(PodDisruptionBudget: 자발적 중단 때 최소 몇 개는 남기라는 약속. 여기선 minAvailable 1)를 지킨다. PDB 를 2 로 너무 세게 하면 drain 이 안 끝나 예고 없는 장애와 같아진다(06 README 4.4).</li>
+    <li><b>어디로</b>: <span class="t">topologySpreadConstraints</span>(maxSkew 1, DoNotSchedule, nodeTaintsPolicy Honor, matchLabelKeys pod-template-hash)가 평소엔 파드를 노드마다 흩고, 노드가 죽으면 죽은 노드를 계산에서 빼서 새 파드가 산 노드에 뜰 수 있게 한다.</li>
+    <li><b>스팟 모드</b>: <code>spot</code> 은 2분 예고를 흉내 내 <span class="t">cordon</span> + <span class="t">drain</span> 뒤 멈춘다. drain 은 PDB(여기선 minAvailable 1)를 지킨다. PDB 를 2 로 너무 세게 하면 drain 이 안 끝나 예고 없는 장애와 같아진다(06 README 4.4).</li>
   </ol>
+  <aside class="notes"><dl>
+  <div><dt>Lease</dt><dd>kubelet 이 주기적으로 갱신하는 하트비트용 작은 리소스.</dd></div>
+  <div><dt>kube-controller-manager</dt><dd>쿠버네티스의 여러 컨트롤러를 묶어 돌리는 컨트롤 플레인 프로세스.</dd></div>
+  <div><dt>EndpointSlice</dt><dd>Service 뒤에 지금 붙어 있는 파드 주소 목록.</dd></div>
+  <div><dt>topologySpreadConstraints</dt><dd>파드를 노드·존마다 고르게 흩는 규칙. maxSkew 가 허용하는 치우침, whenUnsatisfiable 이 못 지킬 때의 행동이다.</dd></div>
+  <div><dt>cordon</dt><dd>노드에 새 파드 배치를 금지하는 것.</dd></div>
+  <div><dt>drain</dt><dd>노드에 있는 파드를 PDB 를 지키며 다른 노드로 내보내는 것.</dd></div>
+  </dl></aside>
 </div>
 
 <h3 id="lifecycle">함수의 일생</h3>
@@ -1660,10 +1789,11 @@ stateDiagram-v2
   ready = ksvc.status.conditions[Ready]
   <span class="k">반환</span> True → READY, False → FAILED, 그 밖 → DEPLOYING</code></pre>
   <ul>
-    <li><b>컨트롤 플레인이 빌드 중에 죽으면</b>: Job 은 끝나지만 기다리던 가상 스레드가 사라져 ksvc 가 안 생긴다. 상태는 영원히 DEPLOYING (05 알려진 한계 1, ANALYSIS B10). 고치는 설계: 시작할 때 "끝났는데 반영 안 된 Job" 을 찾아 이어 하기, 또는 오퍼레이터(원하는 상태를 리소스로 적어 두면 전용 컨트롤러가 계속 맞추는 패턴)로 바꿔 reconcile 루프에 맡기기.</li>
+    <li><b>컨트롤 플레인이 빌드 중에 죽으면</b>: Job 은 끝나지만 기다리던 가상 스레드가 사라져 ksvc 가 안 생긴다. 상태는 영원히 DEPLOYING (05 알려진 한계 1, ANALYSIS B10). 고치는 설계: 시작할 때 "끝났는데 반영 안 된 Job" 을 찾아 이어 하기, 또는 <span class="t">오퍼레이터</span>로 바꿔 reconcile 루프에 맡기기.</li>
     <li><b>빌드가 오래 걸리면</b>: 처음엔 <code>application.yml</code> 의 <code>build-timeout: 5m</code> 이 Job 의 <code>activeDeadlineSeconds: 600</code> 보다 짧아서, 5~10분 사이에 끝나는 빌드는 기다림이 먼저 끝나 DEPLOYING 에 고착될 수 있었다. 지금은 <code>11m</code> 으로 고쳐서 쿠버네티스가 먼저 Job 을 끝내고 컨트롤 플레인이 그 결과를 읽는다 (7장).</li>
     <li><b>tenant-b 로 배포하면</b>: tenant-b 도 <code>tenant=tenant-b</code> 라벨이 있어 404 를 통과하고, faas-build 의 Job 생성도 된다. 그러나 컨트롤 플레인의 ksvc 권한 RoleBinding 이 tenant-a 에만 있어 백그라운드 apply 에서 403 이 나고, 상태 조회는 Job 성공 + ksvc 없음이라 DEPLOYING 에 머물 것이다 【확인 필요: 실제 클러스터 미검증. <code>scripts/deploy-fn.sh tenant-b hello samples/hello-v1.py</code> 를 돌려 컨트롤 플레인 로그의 AUDIT deploy.apply 줄에 403 이 찍히는지 보면 확정된다】. 테넌트 추가 때 <code>k8s/platform/control-plane/tenant-*.yaml</code> 도 같이 늘려야 한다.</li>
   </ul>
+  <aside class="notes"><dl><div><dt>오퍼레이터</dt><dd>원하는 상태를 리소스로 적어 두면 전용 컨트롤러가 계속 맞추는 패턴.</dd></div></dl></aside>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>다섯 흐름의 스크립트: 흐름 1 <code>poc/05-control-plane-mcp/scripts/deploy-fn.sh</code>(시간이 <code>results/deploy-times.csv</code> 에 쌓임), 흐름 2 <code>poc/04-faas-runtime/scripts/coldstart.sh</code>, 흐름 3 <code>poc/01-argocd/scripts/measure-sync.sh</code>, 흐름 4 <code>poc/02-rollouts/scripts/measure-rollback.sh</code>, 흐름 5 <code>poc/06-fault-injection/scripts/s1-node-down.sh</code>. 모두 "시작 시각 → 관찰 → CSV 한 줄" 같은 모양이다.</p></aside>
@@ -1892,12 +2022,17 @@ control_plane() {
       <tr><td>관리자(사람)</td><td>kind-faas kubeconfig</td><td>전부</td><td>없음. 그래서 에이전트에게 주지 않는다</td><td><a href="ch01-gitops.html">1장</a></td></tr>
       <tr><td>Argo CD</td><td>argocd-application-controller SA</td><td>Git 에 있는 모든 리소스</td><td>테넌트 project 앱은 자기 ns 밖 · Quota·NetworkPolicy·RBAC 생성 불가</td><td><a href="ch03-tenancy.html">3장</a></td></tr>
       <tr><td>컨트롤 플레인</td><td>faas-system/control-plane</td><td>faas-build 의 Job·ConfigMap·Pod 읽기, tenant-a 의 ksvc</td><td>namespace 목록, 다른 테넌트 ksvc, 삭제 전부</td><td><a href="ch07-control-plane.html">7장</a></td></tr>
-      <tr><td>운영 에이전트</td><td>tenant-a/ops-agent (토큰 8h)</td><td>tenant-a 의 ksvc get·patch, revision·PA·pod 읽기</td><td>create·delete, pods/exec(파드 안에서 명령 실행), pods/log(로그 읽기), Secret(비밀값 리소스), 다른 ns</td><td><a href="ch07-control-plane.html">7장</a></td></tr>
+      <tr><td>운영 에이전트</td><td>tenant-a/ops-agent (토큰 8h)</td><td>tenant-a 의 ksvc get·patch, revision·PA·pod 읽기</td><td>create·delete, <span class="t">pods/exec</span>, <span class="t">pods/log</span>, <span class="t">Secret</span>, 다른 ns</td><td><a href="ch07-control-plane.html">7장</a></td></tr>
       <tr><td>tenant-a 개발자</td><td>그룹 tenant-a-developers · SA deployer</td><td>tenant-a 의 워크로드</td><td>Quota·LimitRange·NetworkPolicy·RBAC 수정</td><td><a href="ch03-tenancy.html">3장</a></td></tr>
       <tr><td>함수 파드</td><td>tenant ns 의 default SA</td><td>같은 ns 파드, DNS</td><td>다른 테넌트로 패킷, 특권 컨테이너(PSA baseline)</td><td><a href="ch04-network.html">4장</a></td></tr>
       <tr><td>빌드 Job</td><td>faas-build 의 default SA</td><td>kind-registry 에 push</td><td>함수 노드에 뜨기(build 풀 taint)</td><td><a href="ch06-build-runtime.html">6장</a></td></tr>
     </tbody>
   </table></div>
+  <aside class="notes"><dl>
+  <div><dt>pods/exec</dt><dd>파드 안에서 명령을 실행하는 API 하위 리소스.</dd></div>
+  <div><dt>pods/log</dt><dd>파드 로그를 읽는 API 하위 리소스.</dd></div>
+  <div><dt>Secret</dt><dd>비밀번호·토큰 같은 비밀값을 담는 리소스.</dd></div>
+  </dl></aside>
 
   <p>에이전트가 rollback 을 부르면 가드레일 다섯 겹을 차례로 지난다. 겹의 번호는 05 README 와 7장의 번호(1 범위 고정, 2 최소 권한 RBAC, 3 사람 승인, 4 한도·dry-run, 5 감사)를 그대로 쓰고, 실제로 지나는 순서는 1 → 4 → 3 → 2 → 5 다. 1·3·4·5겹은 MCP 서버 코드(파이썬) 안의 검사이고, 2겹만 API 서버의 RBAC 다. 코드 검사가 다 뚫려도 2겹이 남는다. 그래서 2겹을 "진짜 벽" 이라 부른다.</p>
   <pre class="mermaid">
@@ -1937,10 +2072,11 @@ flowchart LR
   <ul>
     <li><b>namespace 는 get 만</b>: <code>tenantExists</code> 는 이름으로 하나만 읽는다. list 를 주면 모든 테넌트 이름이 보이므로 주지 않는다.</li>
     <li><b>ConfigMap delete 없음</b>: 지우는 일은 Job 의 ownerReference 를 보고 쓰레기 수집기(garbage collector)가 한다.</li>
-    <li><b>에이전트 토큰은 짧게</b>: <code>make-agent-kubeconfig.sh</code> 가 <code>kubectl create token ops-agent --duration=8h</code>(TokenRequest API: ServiceAccount 의 짧게 사는 토큰을 발급하는 쿠버네티스 API)로 만든다. 시간이 지나면 저절로 무효다.</li>
+    <li><b>에이전트 토큰은 짧게</b>: <code>make-agent-kubeconfig.sh</code> 가 <code>kubectl create token ops-agent --duration=8h</code> 로 만든다. 이 명령이 부르는 것이 <span class="t">TokenRequest API</span> 다. 시간이 지나면 저절로 무효다.</li>
     <li><b>X-Actor 는 신뢰하지 않는다</b>: 컨트롤 플레인 API 의 <code>X-Actor</code> 헤더(기본 anonymous)는 감사 로그에 쓰일 뿐 인증이 아니다. 본선 설계에서는 API 게이트웨이의 OIDC 토큰에서 테넌트와 사용자를 꺼내야 한다.</li>
     <li><b>Argo CD 컨트롤러의 권한</b>: Helm 차트 10.10.5 의 기본값(<code>createClusterRoles: true</code>, <code>controller.clusterRoleRules.enabled: false</code>)은 application-controller 에 모든 apiGroup·리소스·동사가 <code>*</code> 인 ClusterRole 을 준다. 그래서 테넌트 경계는 AppProject(대상 ns·리소스 종류 제한)가 지킨다. 줄이려면 <code>controller.clusterRoleRules.rules</code> 에 직접 적어야 하는데 이 PoC 는 하지 않았다.</li>
   </ul>
+  <aside class="notes"><dl><div><dt>TokenRequest API</dt><dd>ServiceAccount 의 짧게 사는 토큰을 발급하는 쿠버네티스 API.</dd></div></dl></aside>
 </div>
 
 <aside class="callout poc"><p class="callout-title">우리 PoC 에서는</p><p>격리 실험은 <code>poc/03-tenant-isolation/scripts/test-isolation.sh</code> 다. <code>net</code>(테넌트 사이 패킷), <code>cpu</code>(한도 넘기기), <code>rbac</code>(남의 namespace 만지기), <code>argocd</code>(AppProject 밖으로 배포) 를 돌려 "막혔다" 를 확인한다. 에이전트 쪽은 <code>poc/05-control-plane-mcp/mcp-server/tests/</code> 의 pytest 가 가드레일 1·3·4·5겹(범위·승인·한도·감사)을 검사하고, 2겹(RBAC)은 <code>kubectl auth can-i --as=system:serviceaccount:tenant-a:ops-agent</code> 로 본다.</p></aside>
@@ -1957,7 +2093,22 @@ flowchart LR
 
 <div class="tier" data-tier="1">
   <p>PoC 는 맥 한 대의 kind 위에서 돈다. 07 은 같은 설계를 AWS EC2 + k3s 로 옮긴 코드다. Terraform 과 k3s 설정, Argo CD 부트스트랩까지 썼지만 <strong>apply 하지 않았다</strong>(비용과 계정 문제). 그래서 07 의 동작 설명은 코드 읽기다.</p>
-  <p>07 에 나오는 AWS 말을 먼저 풀어 둔다. EC2 는 AWS 의 가상 서버 한 대다. 온디맨드(on-demand)는 정가를 내고 회수되지 않는 EC2, 스팟(spot)은 남는 용량을 싸게 쓰되 AWS 가 2분 예고 뒤 회수할 수 있는 EC2 다. ASG(Auto Scaling Group)는 같은 설정(Launch Template)의 EC2 를 정해진 수만큼 유지하는 묶음이고, NTH(Node Termination Handler)는 스팟 회수 예고를 받아 그 노드를 미리 비우는 AWS 의 쿠버네티스용 도구다. SSM(Systems Manager)은 서버에 포트를 열지 않고 AWS 경유로 들어가는 서비스, FIS(Fault Injection Service)는 AWS 가 제공하는 장애 주입 서비스다. k3s 의 server 는 컨트롤 플레인 역할 노드, agent 는 워커 노드이고, flannel 은 k3s 의 기본 CNI, Traefik 은 k3s 의 기본 인그레스다.</p>
+  <p>07 의 노드는 전부 <span class="t">EC2</span> 다. k3s 의 <span class="t">server</span> 1대는 <span class="t">온디맨드</span>, 함수가 도는 exec 풀은 <span class="t">스팟</span>이고, 풀마다 <span class="t">ASG</span> 가 대수를 유지한다. 스팟 회수 예고는 <span class="t">NTH</span> 가 받아 그 노드를 미리 비우고, 운영자는 <span class="t">SSM</span> 터널로 들어가며, 장애 실험은 <span class="t">FIS</span> 로 일으킨다.</p>
+  <aside class="notes"><dl>
+  <div><dt>EC2</dt><dd>AWS 의 가상 서버 한 대.</dd></div>
+  <div><dt>server</dt><dd>k3s 에서 컨트롤 플레인 역할을 하는 노드. 워커는 agent 라 부른다.</dd></div>
+  <div><dt>온디맨드(on-demand)</dt><dd>정가를 내고 회수되지 않는 EC2.</dd></div>
+  <div><dt>스팟(spot)</dt><dd>남는 용량을 싸게 쓰되 AWS 가 2분 예고 뒤 회수할 수 있는 EC2.</dd></div>
+  <div><dt>ASG(Auto Scaling Group)</dt><dd>같은 설정(Launch Template)의 EC2 를 정해진 수만큼 유지하는 묶음.</dd></div>
+  <div><dt>NTH(Node Termination Handler)</dt><dd>스팟 회수 예고를 받아 그 노드를 미리 비우는 AWS 의 쿠버네티스용 도구.</dd></div>
+  <div><dt>SSM(Systems Manager)</dt><dd>서버에 포트를 열지 않고 AWS 경유로 들어가는 서비스.</dd></div>
+  <div><dt>FIS(Fault Injection Service)</dt><dd>AWS 가 제공하는 장애 주입 서비스.</dd></div>
+  </dl></aside>
+  <p>k3s 는 따로 바꾸지 않으면 CNI 로 <span class="t">flannel</span>, 인그레스로 <span class="t">Traefik</span> 을 쓴다. 07 은 둘 다 기본값 그대로다.</p>
+  <aside class="notes"><dl>
+  <div><dt>flannel</dt><dd>k3s 에 내장된 기본 CNI.</dd></div>
+  <div><dt>Traefik</dt><dd>k3s 에 내장된 기본 인그레스 컨트롤러.</dd></div>
+  </dl></aside>
   <figure>
     <div class="fig scroll-l">
       <svg viewBox="0 0 1200 660" role="img" aria-labelledby="f13-t">
@@ -2010,7 +2161,7 @@ flowchart LR
   <p>07 의 <code>local-stage-apps</code> Application 은 <code>poc/01-argocd/gitops/apps</code> 만 가리킨다. 그래서 EC2 에 올라가는 앞 단계 앱은 hello-fn 과 bye-fn 뿐이다(07 README 의 "앞 단계 앱 전부" 라는 표현과 다르다). Knative·Rollouts·테넌트를 EC2 에 올리는 것은 07 범위 밖이다. 자세한 것은 <a href="ch09-ec2-k3s.html">9장</a>.</p>
 </div>
 
-<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>EKS(AWS 의 관리형 쿠버네티스. 컨트롤 플레인을 AWS 가 돌려 준다)는 관리형 컨트롤 플레인 비용(시간당 과금)이 PoC 예산($5 알람)을 바로 넘는다. kubeadm 은 설치 단계가 많다. k3s 는 바이너리 하나와 설정 YAML 로 서버·에이전트가 붙고, Terraform 의 user_data 한 장으로 끝난다. 본선에서 "왜 EKS 가 아니냐" 는 질문에는 "비용과 학습 범위. 노드 풀·스팟·taint 설계는 EKS managed node group 으로 그대로 옮겨진다" 가 답이다.</p></aside>
+<aside class="callout why"><p class="callout-title">왜 이걸 골랐나 (대안)</p><p>EKS 는 관리형 컨트롤 플레인 비용(시간당 과금)이 PoC 예산($5 알람)을 바로 넘는다. kubeadm 은 설치 단계가 많다. k3s 는 바이너리 하나와 설정 YAML 로 서버·에이전트가 붙고, Terraform 의 user_data 한 장으로 끝난다. 본선에서 "왜 EKS 가 아니냐" 는 질문에는 "비용과 학습 범위. 노드 풀·스팟·taint 설계는 EKS managed node group 으로 그대로 옮겨진다" 가 답이다.</p></aside>
 
 <h2 id="glossary">용어집</h2>
 
