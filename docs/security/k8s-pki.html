@@ -1,0 +1,521 @@
+<title>쿠버네티스 인증서 지도</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+KR:wght@400;500;700&display=swap">
+<style>
+/* 레이아웃: 한 단 본문 + 넓은 화면에서는 단락 오른쪽에 각주 칸. CA 세 개는 색으로 구분(클러스터=파랑, etcd=주황, front-proxy=보라). */
+:root {
+  --bg: #F6F8FA; --surface: #FFFFFF; --surface-2: #EEF2F6; --line: #D5DBE3;
+  --text: #1C2430; --muted: #5E6B7A; --edge: #7C8896;
+  --kca: #2F6FD1; --kca-soft: #EEF3FB; --kca-line: #9DB8E6;
+  --eca: #C8650F; --eca-soft: #FDF1E6; --eca-line: #EBB685;
+  --pca: #7B61D9; --pca-soft: #F3F0FD; --pca-line: #A99BE6;
+  --sa: #2F7A55;  --sa-soft: #EFF6F2;  --sa-line: #7DB596;
+  --fail: #C0453A; --fail-soft: #FCEFEE;
+  --code-bg: #1F2630; --code-fg: #DCE3EA; --code-c: #8B98A8; --code-k: #8FC7A8;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+  --font-mono: "IBM Plex Mono", "D2Coding", "DejaVu Sans Mono", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #12171D; --surface: #1A2129; --surface-2: #222B35; --line: #2F3A46;
+  --text: #E4E9EF; --muted: #9AA7B5; --edge: #8794A3;
+  --kca: #6FA0EE; --kca-soft: #172338; --kca-line: #3A5687;
+  --eca: #F09A4E; --eca-soft: #2E2116; --eca-line: #8A5626;
+  --pca: #A796F0; --pca-soft: #221D38; --pca-line: #5A4B9C;
+  --sa: #6CC497;  --sa-soft: #17291F;  --sa-line: #3E7A5A;
+  --fail: #EE7D72; --fail-soft: #2E1816;
+  --code-bg: #0D1116; --code-fg: #DCE3EA; --code-c: #7D8A99; --code-k: #8FC7A8;
+  color-scheme: dark; } }
+:root[data-theme="dark"] {
+  --bg: #12171D; --surface: #1A2129; --surface-2: #222B35; --line: #2F3A46;
+  --text: #E4E9EF; --muted: #9AA7B5; --edge: #8794A3;
+  --kca: #6FA0EE; --kca-soft: #172338; --kca-line: #3A5687;
+  --eca: #F09A4E; --eca-soft: #2E2116; --eca-line: #8A5626;
+  --pca: #A796F0; --pca-soft: #221D38; --pca-line: #5A4B9C;
+  --sa: #6CC497;  --sa-soft: #17291F;  --sa-line: #3E7A5A;
+  --fail: #EE7D72; --fail-soft: #2E1816;
+  --code-bg: #0D1116; --code-fg: #DCE3EA; --code-c: #7D8A99; --code-k: #8FC7A8;
+  color-scheme: dark; }
+
+body { background: var(--bg); color: var(--text); font-family: var(--font-body); font-size: 16px; line-height: 1.75; counter-reset: tnote dnote; }
+.page { max-width: 68rem; margin: 0 auto; padding-block: 32px 80px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.roadmap { font-family: var(--font-mono); font-size: 12.5px; color: var(--muted); }
+h1 { font-size: 2rem; line-height: 1.3; margin: 8px 0 8px; text-wrap: balance; }
+h2 { font-size: 1.4rem; margin: 56px 0 12px; padding-top: 16px; border-top: 1px solid var(--line); text-wrap: balance; }
+h3 { font-size: 1.08rem; margin: 28px 0 8px; }
+p, ul, ol { margin: 0 0 14px; }
+.lede { color: var(--muted); font-size: 1.05rem; max-width: 46rem; }
+code { font-family: var(--font-mono); font-size: .88em; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+pre { background: var(--code-bg); color: var(--code-fg); font-family: var(--font-mono); font-size: 13px; line-height: 1.6; padding: 14px 16px; border-radius: 8px; overflow-x: auto; margin: 0 0 16px; }
+pre code { background: none; padding: 0; color: inherit; overflow-wrap: normal; }
+pre .c { color: var(--code-c); } pre .k { color: var(--code-k); }
+a { color: var(--kca); }
+.toc { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 14px; margin: 18px 0 0; padding: 0; list-style: none; }
+
+/* 본문 + 각주 블록 */
+.blk { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 28px; max-width: 46rem; }
+.blk > * { min-width: 0; }
+@media (min-width: 1080px) { .blk { max-width: none; grid-template-columns: minmax(0, 46rem) 17rem; } .blk > aside.notes { grid-column: 2; grid-row: 1 / span 9; align-self: start; margin-top: 4px; } }
+.t { text-decoration: underline dotted var(--edge); text-underline-offset: 3px; counter-increment: tnote; }
+.t::after { content: counter(tnote); font-size: .68em; vertical-align: super; color: var(--muted); margin-left: 1px; font-family: var(--font-mono); }
+aside.notes { font-size: 13px; line-height: 1.6; color: var(--muted); border-top: 1px solid var(--line); padding-top: 8px; margin: 0 0 16px; }
+@media (min-width: 1080px) { aside.notes { border-top: 0; border-left: 2px solid var(--line); padding: 0 0 0 12px; } }
+aside.notes dl { margin: 0; display: grid; gap: 6px; }
+aside.notes dt { font-weight: 600; color: var(--text); display: inline; counter-increment: dnote; }
+aside.notes dt::before { content: counter(dnote) " "; font-family: var(--font-mono); color: var(--muted); font-weight: 400; }
+aside.notes dd { display: inline; margin: 0; }
+aside.notes dd::before { content: " · "; }
+
+figure { margin: 18px 0 22px; }
+.fig { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; padding: 8px; }
+.fig svg { display: block; width: 100%; min-width: 760px; height: auto; }
+figcaption { font-size: 13.5px; color: var(--muted); margin-top: 8px; max-width: 46rem; }
+.tbl { overflow-x: auto; margin: 0 0 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+th { background: var(--surface-2); font-weight: 600; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+td code { white-space: nowrap; overflow-wrap: normal; }
+.ca { display: inline-block; font-size: 12px; font-weight: 600; padding: 0 7px; border-radius: 99px; white-space: nowrap; }
+.ca.k { color: var(--kca); background: var(--kca-soft); } .ca.e { color: var(--eca); background: var(--eca-soft); } .ca.p { color: var(--pca); background: var(--pca-soft); } .ca.s { color: var(--sa); background: var(--sa-soft); }
+.rule { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--kca); border-radius: 8px; padding: 12px 16px; margin: 0 0 18px; max-width: 46rem; }
+.rule p:last-child { margin: 0; }
+details { background: var(--surface); border: 1px dashed var(--line); border-radius: 8px; padding: 10px 14px; margin: 0 0 18px; }
+summary { cursor: pointer; font-weight: 600; }
+summary:focus-visible, a:focus-visible { outline: 2px solid var(--kca); outline-offset: 2px; }
+.fact { font-size: 12px; color: var(--muted); }
+.end { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 4px 18px 10px; margin-top: 18px; }
+
+/* SVG 클래스 */
+.s-card { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.s-k { fill: var(--kca-soft); stroke: var(--kca-line); stroke-width: 1.4; }
+.s-e { fill: var(--eca-soft); stroke: var(--eca-line); stroke-width: 1.4; }
+.s-p { fill: var(--pca-soft); stroke: var(--pca-line); stroke-width: 1.4; }
+.s-s { fill: var(--sa-soft); stroke: var(--sa-line); stroke-width: 1.4; }
+.s-kca { fill: var(--kca); } .s-eca { fill: var(--eca); } .s-pca { fill: var(--pca); } .s-sac { fill: var(--sa); }
+.s-ttl { fill: var(--text); font: 600 15px var(--font-body); }
+.s-ttlw { fill: var(--surface); font: 600 15px var(--font-body); }
+.s-subw { fill: var(--surface); font: 12px var(--font-mono); opacity: .9; }
+.s-f { fill: var(--text); font: 600 12.5px var(--font-mono); }
+.s-sub { fill: var(--muted); font: 12px var(--font-body); }
+.s-num { fill: var(--surface); font: 700 12px var(--font-mono); }
+.s-ln { fill: none; stroke: var(--edge); stroke-width: 1.3; }
+.s-lk { fill: none; stroke: var(--kca); stroke-width: 2; }
+.s-le { fill: none; stroke: var(--eca); stroke-width: 2; }
+.s-lp { fill: none; stroke: var(--pca); stroke-width: 2; }
+.s-ls { fill: none; stroke: var(--sa); stroke-width: 2; }
+.s-mk { fill: var(--edge); } .s-mkk { fill: var(--kca); } .s-mke { fill: var(--eca); } .s-mkp { fill: var(--pca); } .s-mks { fill: var(--sa); }
+.s-dot-k { fill: var(--kca); } .s-dot-e { fill: var(--eca); } .s-dot-p { fill: var(--pca); } .s-dot-s { fill: var(--sa); } .s-dot-f { fill: var(--fail); }
+.s-zone { fill: none; stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 5 4; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+<article class="page">
+<p class="roadmap">로드맵 위치: 4주차(10/25) / CKA Security: 인증서·인증·인가 / 본선 연결점: 멀티테넌트 FaaS의 테넌트 격리(RBAC·ServiceAccount·PSA)를 설계 문서에서 근거 있게 설명</p>
+<h1>쿠버네티스 인증서 지도</h1>
+<p class="lede">kubeadm 클러스터 한 대를 기준으로, 누가 어떤 인증서를 들고 누구와 이야기하는지, 그리고 요청 하나가 apiserver 안에서 어떤 검사를 거치는지를 그림으로 정리했다. 기준은 kubernetes.io 공식 문서이고, 경로는 kubeadm 기본값이다.</p>
+<ul class="toc">
+  <li><a href="#basics">0. 인증서 기초</a></li>
+  <li><a href="#tree">1. CA 세 개와 발급 트리</a></li>
+  <li><a href="#links">2. 연결별 서버·클라이언트</a></li>
+  <li><a href="#flow">3. 요청 흐름과 SA 토큰</a></li>
+  <li><a href="#openssl">4. openssl로 읽기, CN·O와 RBAC</a></li>
+  <li><a href="#trouble">5. 흔한 장애와 확인 명령</a></li>
+  <li><a href="#wrap">정리</a></li>
+</ul>
+
+<h2 id="basics">0. 인증서 기초: 세 가지만 알면 된다</h2>
+<div class="blk">
+<p>쿠버네티스 컨트롤 플레인의 부품들은 모두 <span class="t">TLS</span>로 이야기한다. TLS 연결에는 늘 서버와 클라이언트가 있다. 서버는 자기 인증서를 보여 주고, 클라이언트는 그 인증서가 자기가 믿는 <span class="t">CA</span>가 서명한 것인지 확인한다. 쿠버네티스는 여기에 한 단계를 더해서 클라이언트도 인증서를 보여 주게 하는데, 이것을 <span class="t">mTLS</span>라고 부른다. 서버는 자기가 믿는 CA 목록으로 클라이언트 인증서를 확인한다.</p>
+<aside class="notes"><dl>
+<div><dt>TLS</dt><dd>Transport Layer Security. 통신을 암호화하고 상대가 진짜인지 인증서로 확인하는 규약. HTTPS의 S.</dd></div>
+<div><dt>CA</dt><dd>Certificate Authority. 다른 인증서에 서명해 "이 공개키는 이 이름의 것"이라고 보증하는 인증서와 키. 서명한 쪽을 발급자(Issuer)라고 한다.</dd></div>
+<div><dt>mTLS</dt><dd>mutual TLS. 서버와 클라이언트가 서로 인증서를 확인하는 TLS.</dd></div>
+</dl></aside>
+</div>
+<div class="blk">
+<p>그래서 각 부품의 설정에는 세 종류의 파일이 나온다. 내가 내미는 인증서(<code>.crt</code>), 그 인증서의 짝인 <span class="t">개인키</span>(<code>.key</code>), 상대 인증서를 확인할 때 쓰는 CA 인증서(<code>ca.crt</code>)다. 옵션 이름에 <code>cert</code>/<code>key</code>가 붙으면 앞의 둘, <code>ca</code>나 <code>trusted</code>가 붙으면 마지막 것이다.</p>
+<aside class="notes"><dl>
+<div><dt>개인키</dt><dd>인증서 안 공개키와 짝을 이루는 비밀 키. 이걸 가진 쪽만 그 인증서의 주인 행세를 할 수 있어서 절대 밖으로 내보내지 않는다.</dd></div>
+</dl></aside>
+</div>
+<div class="rule">
+<p><b>이 문서를 관통하는 규칙.</b> 인증서는 그걸 쓰는 컴포넌트의 설정에 적혀 있다. apiserver가 etcd에 붙을 때 쓰는 인증서는 etcd가 아니라 apiserver의 manifest(<code>/etc/kubernetes/manifests/kube-apiserver.yaml</code>)에 있다. 반대로 etcd가 누구를 믿을지는 etcd의 manifest에 있다.</p>
+</div>
+
+<h2 id="tree">1. CA 세 개와 각 CA가 발급한 인증서</h2>
+<div class="blk">
+<p>kubeadm은 <code>/etc/kubernetes/pki/</code> 아래에 CA를 세 개 만든다. 클러스터 CA, etcd CA, front-proxy CA다. CA를 나누는 이유는 신뢰 범위를 나누기 위해서다. etcd는 etcd CA만 믿기 때문에, 클러스터 CA로 서명된 인증서(예: 관리자 인증서)를 가진 사람이라도 etcd에 직접 붙을 수 없다. 그리고 이 셋과 별개로 <span class="t">ServiceAccount</span> 토큰을 서명하는 키 쌍 <code>sa.key</code>/<code>sa.pub</code>이 있다. 이건 인증서가 아니라 그냥 키 쌍이다.</p>
+<aside class="notes"><dl>
+<div><dt>ServiceAccount</dt><dd>파드 같은 프로그램이 apiserver를 부를 때 쓰는 계정. 사람 계정과 달리 쿠버네티스 오브젝트로 존재한다.</dd></div>
+</dl></aside>
+</div>
+<figure>
+<div class="fig">
+<svg viewBox="0 0 960 470" role="img" aria-labelledby="tree-t">
+<title id="tree-t">세 CA와 각 CA가 서명한 인증서, 그리고 sa 키 쌍</title>
+<!-- 클러스터 CA -->
+<rect x="16" y="16" width="300" height="66" rx="10" class="s-kca"/>
+<text x="32" y="44" class="s-ttlw">클러스터 CA (kubernetes-ca)</text>
+<text x="32" y="66" class="s-subw">pki/ca.crt · pki/ca.key</text>
+<path d="M36 82 V430" class="s-lk"/>
+<g>
+<path d="M36 120 H56" class="s-lk"/><rect x="56" y="98" width="260" height="44" rx="8" class="s-k"/>
+<text x="68" y="117" class="s-f">apiserver.crt / .key</text><text x="68" y="134" class="s-sub">서버 · apiserver의 HTTPS(6443)</text>
+<path d="M36 172 H56" class="s-lk"/><rect x="56" y="150" width="260" height="44" rx="8" class="s-k"/>
+<text x="68" y="169" class="s-f">apiserver-kubelet-client.crt</text><text x="68" y="186" class="s-sub">클라이언트 · apiserver → kubelet</text>
+<path d="M36 224 H56" class="s-lk"/><rect x="56" y="202" width="260" height="44" rx="8" class="s-k"/>
+<text x="68" y="221" class="s-f">admin.conf · super-admin.conf</text><text x="68" y="238" class="s-sub">클라이언트 · 관리자 kubectl (내장)</text>
+<path d="M36 276 H56" class="s-lk"/><rect x="56" y="254" width="260" height="44" rx="8" class="s-k"/>
+<text x="68" y="273" class="s-f">controller-manager.conf</text><text x="68" y="290" class="s-sub">클라이언트 · controller-manager (내장)</text>
+<path d="M36 328 H56" class="s-lk"/><rect x="56" y="306" width="260" height="44" rx="8" class="s-k"/>
+<text x="68" y="325" class="s-f">scheduler.conf</text><text x="68" y="342" class="s-sub">클라이언트 · scheduler (내장)</text>
+<path d="M36 380 H56" class="s-lk"/><rect x="56" y="358" width="260" height="44" rx="8" class="s-k"/>
+<text x="68" y="377" class="s-f">kubelet.conf → kubelet-client-*.pem</text><text x="68" y="394" class="s-sub">클라이언트 · kubelet → apiserver (자동 갱신)</text>
+<path d="M36 430 H56" class="s-ln" stroke-dasharray="4 3"/>
+<text x="64" y="434" class="s-sub">kubelet 서빙 인증서(kubelet.crt)는 기본이 자체 서명</text>
+</g>
+<!-- etcd CA -->
+<rect x="336" y="16" width="290" height="66" rx="10" class="s-eca"/>
+<text x="352" y="44" class="s-ttlw">etcd CA (etcd-ca)</text>
+<text x="352" y="66" class="s-subw">pki/etcd/ca.crt · ca.key</text>
+<path d="M356 82 V328" class="s-le"/>
+<path d="M356 120 H376" class="s-le"/><rect x="376" y="98" width="250" height="44" rx="8" class="s-e"/>
+<text x="388" y="117" class="s-f">etcd/server.crt / .key</text><text x="388" y="134" class="s-sub">서버 · etcd의 2379 포트</text>
+<path d="M356 172 H376" class="s-le"/><rect x="376" y="150" width="250" height="44" rx="8" class="s-e"/>
+<text x="388" y="169" class="s-f">etcd/peer.crt / .key</text><text x="388" y="186" class="s-sub">서버+클라 · etcd끼리 2380 포트</text>
+<path d="M356 224 H376" class="s-le"/><rect x="376" y="202" width="250" height="44" rx="8" class="s-e"/>
+<text x="388" y="221" class="s-f">etcd/healthcheck-client.crt</text><text x="388" y="238" class="s-sub">클라이언트 · etcd 헬스체크</text>
+<path d="M356 276 H376" class="s-le"/><rect x="376" y="254" width="250" height="44" rx="8" class="s-e"/>
+<text x="388" y="273" class="s-f">apiserver-etcd-client.crt</text><text x="388" y="290" class="s-sub">클라이언트 · apiserver → etcd</text>
+<text x="376" y="324" class="s-sub">파일은 pki/ 에 있지만 서명은 etcd CA</text>
+<!-- front-proxy CA -->
+<rect x="646" y="16" width="298" height="66" rx="10" class="s-pca"/>
+<text x="662" y="44" class="s-ttlw">front-proxy CA</text>
+<text x="662" y="66" class="s-subw">pki/front-proxy-ca.crt · .key</text>
+<path d="M666 82 V120" class="s-lp"/>
+<path d="M666 120 H686" class="s-lp"/><rect x="686" y="98" width="258" height="44" rx="8" class="s-p"/>
+<text x="698" y="117" class="s-f">front-proxy-client.crt</text><text x="698" y="134" class="s-sub">클라이언트 · apiserver → 확장 API 서버</text>
+<!-- sa -->
+<rect x="646" y="210" width="298" height="120" rx="10" class="s-s"/>
+<text x="662" y="238" class="s-ttl">sa.key / sa.pub (CA 아님)</text>
+<text x="662" y="262" class="s-sub">ServiceAccount 토큰(JWT)을</text>
+<text x="662" y="280" class="s-sub">sa.key로 서명, sa.pub로 검증.</text>
+<text x="662" y="304" class="s-f">apiserver · controller-manager</text>
+<text x="662" y="320" class="s-sub">가 이 파일을 쓴다</text>
+<rect x="646" y="356" width="298" height="78" rx="10" class="s-card"/>
+<text x="662" y="382" class="s-ttl">"(내장)"의 뜻</text>
+<text x="662" y="404" class="s-sub">.conf는 kubeconfig 파일이고, 그 안에</text>
+<text x="662" y="422" class="s-sub">클라이언트 인증서가 base64로 들어 있다</text>
+</svg>
+</div>
+<figcaption><b>그림 1.</b> CA 세 개와 서명 관계. 색이 같은 것끼리 같은 CA로 서명됐다. 아래 그림·표에서도 같은 색을 쓴다. <span class="fact">【사실】 kubernetes.io "PKI certificates and requirements", "Certificate Management with kubeadm"</span></figcaption>
+</figure>
+<div class="blk">
+<p>kubeconfig 파일들(<code>admin.conf</code>, <code>scheduler.conf</code> 등)은 <code>/etc/kubernetes/</code> 바로 아래에 있고, 안에 <code>client-certificate-data</code>와 <code>client-key-data</code>가 <span class="t">base64</span>로 박혀 있다. 그래서 <code>pki/</code> 폴더만 보면 이 인증서들이 안 보인다. kubelet만 예외로, kubelet.conf가 <code>/var/lib/kubelet/pki/kubelet-client-current.pem</code> 파일을 가리키고 kubelet이 만료 전에 스스로 새 인증서를 받아 이 파일을 바꾼다.</p>
+<aside class="notes"><dl>
+<div><dt>base64</dt><dd>바이너리를 글자로 바꾸는 인코딩. 암호화가 아니라서 <code>base64 -d</code>로 바로 원래대로 돌아온다.</dd></div>
+</dl></aside>
+</div>
+
+<h2 id="links">2. 연결마다 누가 서버고 누가 클라이언트인가</h2>
+<p>화살표는 클라이언트에서 서버 방향이다. 화살표 색은 그 연결에서 인증서를 확인하는 CA다.</p>
+<figure>
+<div class="fig">
+<svg viewBox="0 0 960 440" role="img" aria-labelledby="links-t">
+<title id="links-t">컨트롤 플레인 컴포넌트 간 TLS 연결</title>
+<defs>
+<marker id="mk-k" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="s-mkk"/></marker>
+<marker id="mk-e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="s-mke"/></marker>
+<marker id="mk-p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="s-mkp"/></marker>
+</defs>
+<rect x="250" y="16" width="694" height="300" rx="14" class="s-zone"/>
+<text x="266" y="38" class="s-sub">컨트롤 플레인 노드 (static pod, /etc/kubernetes/manifests/)</text>
+<!-- clients left -->
+<rect x="16" y="60" width="200" height="58" rx="10" class="s-card"/>
+<text x="30" y="84" class="s-ttl">kubectl (사람)</text><text x="30" y="104" class="s-f">admin.conf</text>
+<rect x="276" y="60" width="190" height="58" rx="10" class="s-card"/>
+<text x="290" y="84" class="s-ttl">scheduler</text><text x="290" y="104" class="s-f">scheduler.conf</text>
+<rect x="276" y="236" width="190" height="58" rx="10" class="s-card"/>
+<text x="290" y="260" class="s-ttl">controller-manager</text><text x="290" y="280" class="s-f">controller-manager.conf</text>
+<!-- apiserver -->
+<rect x="520" y="120" width="190" height="100" rx="12" class="s-k"/>
+<text x="536" y="150" class="s-ttl">kube-apiserver</text>
+<text x="536" y="172" class="s-f">:6443</text>
+<text x="536" y="192" class="s-sub">서버 인증서 apiserver.crt</text>
+<text x="536" y="208" class="s-sub">클라 확인 ca.crt</text>
+<!-- etcd -->
+<rect x="780" y="120" width="150" height="100" rx="12" class="s-e"/>
+<text x="796" y="150" class="s-ttl">etcd</text>
+<text x="796" y="172" class="s-f">:2379 / :2380</text>
+<text x="796" y="192" class="s-sub">server.crt</text>
+<text x="796" y="208" class="s-sub">확인 etcd/ca.crt</text>
+<!-- kubelet -->
+<rect x="420" y="360" width="200" height="64" rx="12" class="s-card"/>
+<text x="436" y="386" class="s-ttl">kubelet (모든 노드)</text><text x="436" y="408" class="s-f">:10250 · kubelet.conf</text>
+<!-- ext api -->
+<rect x="720" y="360" width="224" height="64" rx="12" class="s-p"/>
+<text x="736" y="386" class="s-ttl">확장 API 서버</text><text x="736" y="408" class="s-sub">예: metrics-server</text>
+<!-- edges -->
+<path d="M216 89 C 380 89, 430 150, 518 152" class="s-lk" marker-end="url(#mk-k)"/>
+<path d="M466 104 L518 136" class="s-lk" marker-end="url(#mk-k)"/>
+<path d="M466 250 L518 206" class="s-lk" marker-end="url(#mk-k)"/>
+<path d="M710 170 L778 170" class="s-le" marker-end="url(#mk-e)"/>
+<path d="M600 222 L560 358" class="s-lk" marker-end="url(#mk-k)" stroke-dasharray="6 4"/>
+<path d="M500 358 L540 222" class="s-lk" marker-end="url(#mk-k)"/>
+<path d="M680 222 L790 358" class="s-lp" marker-end="url(#mk-p)"/>
+<path d="M880 120 C 880 70, 930 70, 930 118" class="s-le" marker-end="url(#mk-e)"/>
+<!-- numbers -->
+<g>
+<circle cx="380" cy="100" r="11" class="s-dot-k"/><text x="376" y="104" class="s-num">1</text>
+<circle cx="492" cy="120" r="11" class="s-dot-k"/><text x="488" y="124" class="s-num">2</text>
+<circle cx="492" cy="228" r="11" class="s-dot-k"/><text x="488" y="232" class="s-num">2</text>
+<circle cx="744" cy="170" r="11" class="s-dot-e"/><text x="740" y="174" class="s-num">3</text>
+<circle cx="590" cy="290" r="11" class="s-dot-k"/><text x="586" y="294" class="s-num">4</text>
+<circle cx="512" cy="300" r="11" class="s-dot-k"/><text x="508" y="304" class="s-num">5</text>
+<circle cx="735" cy="290" r="11" class="s-dot-p"/><text x="731" y="294" class="s-num">6</text>
+<circle cx="905" cy="82" r="11" class="s-dot-e"/><text x="901" y="86" class="s-num">7</text>
+</g>
+</svg>
+</div>
+<figcaption><b>그림 2.</b> 번호는 아래 표의 행 번호다. 4번 점선은 kubeadm 기본값에서 apiserver가 kubelet 서버 인증서를 검증하지 않는다는 뜻이다(<code>--kubelet-certificate-authority</code> 미설정). <span class="fact">【사실】 kubernetes.io "Control plane to node communication"</span></figcaption>
+</figure>
+
+<div class="tbl">
+<table>
+<thead><tr><th>#</th><th>클라이언트 → 서버</th><th>클라이언트 쪽 설정 (그 컴포넌트 manifest·config)</th><th>서버 쪽 설정</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>kubectl → apiserver <span class="ca k">클러스터 CA</span></td><td><code>admin.conf</code> 안 <code>client-certificate-data</code>, <code>client-key-data</code>, 서버 확인용 <code>certificate-authority-data</code></td><td><code>--tls-cert-file=/etc/kubernetes/pki/apiserver.crt</code><br><code>--tls-private-key-file=…/apiserver.key</code><br><code>--client-ca-file=…/ca.crt</code></td></tr>
+<tr><td>2</td><td>scheduler·controller-manager → apiserver <span class="ca k">클러스터 CA</span></td><td><code>--kubeconfig=/etc/kubernetes/scheduler.conf</code><br><code>--kubeconfig=/etc/kubernetes/controller-manager.conf</code></td><td>1번과 같음</td></tr>
+<tr><td>3</td><td>apiserver → etcd <span class="ca e">etcd CA</span></td><td><code>--etcd-certfile=…/pki/apiserver-etcd-client.crt</code><br><code>--etcd-keyfile=…/pki/apiserver-etcd-client.key</code><br><code>--etcd-cafile=…/pki/etcd/ca.crt</code><br><code>--etcd-servers=https://127.0.0.1:2379</code></td><td>etcd: <code>--cert-file=…/etcd/server.crt</code><br><code>--key-file=…/etcd/server.key</code><br><code>--trusted-ca-file=…/etcd/ca.crt</code><br><code>--client-cert-auth=true</code></td></tr>
+<tr><td>4</td><td>apiserver → kubelet <span class="ca k">클러스터 CA</span></td><td><code>--kubelet-client-certificate=…/pki/apiserver-kubelet-client.crt</code><br><code>--kubelet-client-key=…/pki/apiserver-kubelet-client.key</code></td><td>kubelet config(<code>/var/lib/kubelet/config.yaml</code>):<br><code>authentication.x509.clientCAFile: /etc/kubernetes/pki/ca.crt</code></td></tr>
+<tr><td>5</td><td>kubelet → apiserver <span class="ca k">클러스터 CA</span></td><td><code>--kubeconfig=/etc/kubernetes/kubelet.conf</code> → <code>/var/lib/kubelet/pki/kubelet-client-current.pem</code></td><td>1번과 같음</td></tr>
+<tr><td>6</td><td>apiserver → 확장 API 서버 <span class="ca p">front-proxy CA</span></td><td><code>--proxy-client-cert-file=…/pki/front-proxy-client.crt</code><br><code>--proxy-client-key-file=…/pki/front-proxy-client.key</code></td><td>확장 서버가 apiserver의 <code>--requestheader-client-ca-file=…/front-proxy-ca.crt</code> 값을 읽어 확인</td></tr>
+<tr><td>7</td><td>etcd ↔ etcd (멤버끼리) <span class="ca e">etcd CA</span></td><td colspan="2"><code>--peer-cert-file=…/etcd/peer.crt</code>, <code>--peer-key-file=…/etcd/peer.key</code>, <code>--peer-trusted-ca-file=…/etcd/ca.crt</code>, <code>--peer-client-cert-auth=true</code></td></tr>
+</tbody>
+</table>
+</div>
+<div class="blk">
+<p>6번은 처음 보면 헷갈린다. <span class="t">aggregation layer</span>에서 apiserver는 사용자 요청을 확장 API 서버로 대신 전달하는 <span class="t">프록시</span> 역할을 한다. 이때 "원래 요청한 사람은 누구"인지를 <code>X-Remote-User</code>, <code>X-Remote-Group</code> 헤더로 넘기는데, 확장 서버는 그 헤더를 front-proxy CA로 서명된 클라이언트 인증서(<code>--requestheader-allowed-names=front-proxy-client</code>)로 들어온 요청에서만 믿는다. 아무나 헤더를 붙여 사람 행세를 못 하게 하려고 CA를 따로 둔 것이다.</p>
+<aside class="notes"><dl>
+<div><dt>aggregation layer</dt><dd>apiserver 뒤에 별도 API 서버를 붙여 <code>kubectl top</code>(metrics.k8s.io) 같은 새 API를 같은 주소로 제공하는 구조.</dd></div>
+<div><dt>프록시</dt><dd>요청을 받아서 다른 서버로 대신 보내 주는 중간 서버.</dd></div>
+</dl></aside>
+</div>
+<div class="blk">
+<p>scheduler와 controller-manager는 <span class="t">static pod</span>로 뜨고, 각자 manifest의 <code>--kubeconfig</code> 한 줄로 인증서를 받는다. 이 둘은 서버 인증서도 갖고 있지만(10259, 10257 포트의 헬스·메트릭용) kubeadm은 그걸 파일로 두지 않고 실행할 때 스스로 만든다.</p>
+<aside class="notes"><dl>
+<div><dt>static pod</dt><dd>apiserver를 거치지 않고 kubelet이 <code>/etc/kubernetes/manifests/</code>의 YAML 파일을 직접 읽어 띄우는 파드. 파일을 고치면 kubelet이 알아서 다시 띄운다.</dd></div>
+</dl></aside>
+</div>
+
+<h2 id="flow">3. 요청 하나가 거치는 길: 인증 → 인가 → 어드미션</h2>
+<div class="blk">
+<p>TLS 연결이 맺어졌다고 끝이 아니다. apiserver는 요청마다 세 단계를 거친다. <b>인증</b>은 "너는 누구냐"를 정하고, <b>인가</b>는 "그 사람이 이 동작을 해도 되냐"를 정하고, <b>어드미션</b>은 "허락된 요청이라도 내용이 규칙에 맞냐"를 보고 필요하면 고친다. 세 단계를 다 지나야 etcd에 저장된다.</p>
+</div>
+<figure>
+<div class="fig">
+<svg viewBox="0 0 960 300" role="img" aria-labelledby="flow-t">
+<title id="flow-t">apiserver 요청 처리 단계</title>
+<defs><marker id="mk-n" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="s-mk"/></marker></defs>
+<rect x="16" y="40" width="120" height="74" rx="10" class="s-card"/>
+<text x="30" y="70" class="s-ttl">요청</text><text x="30" y="92" class="s-sub">kubectl, 파드,</text><text x="30" y="108" class="s-sub">kubelet …</text>
+<rect x="166" y="24" width="220" height="252" rx="12" class="s-k"/>
+<text x="182" y="52" class="s-ttl">① 인증 Authentication</text>
+<text x="182" y="74" class="s-sub">"누구냐" → 사용자명 + 그룹</text>
+<text x="182" y="104" class="s-f">X.509 클라이언트 인증서</text><text x="182" y="121" class="s-sub">CN=사용자, O=그룹 (--client-ca-file)</text>
+<text x="182" y="150" class="s-f">ServiceAccount 토큰</text><text x="182" y="167" class="s-sub">sa.pub으로 서명 확인</text>
+<text x="182" y="196" class="s-f">부트스트랩 토큰</text><text x="182" y="213" class="s-sub">새 노드 join 때</text>
+<text x="182" y="246" class="s-sub">실패 → 401 Unauthorized</text>
+<rect x="416" y="24" width="220" height="252" rx="12" class="s-card"/>
+<text x="432" y="52" class="s-ttl">② 인가 Authorization</text>
+<text x="432" y="74" class="s-sub">--authorization-mode=Node,RBAC</text>
+<text x="432" y="104" class="s-f">Node</text><text x="432" y="121" class="s-sub">kubelet은 자기 노드 파드 것만</text>
+<text x="432" y="150" class="s-f">RBAC</text><text x="432" y="167" class="s-sub">Role/ClusterRole + Binding</text>
+<text x="432" y="184" class="s-sub">에 그 사용자·그룹이 있나</text>
+<text x="432" y="213" class="s-sub">하나라도 허용하면 통과</text>
+<text x="432" y="246" class="s-sub">실패 → 403 Forbidden</text>
+<rect x="666" y="24" width="210" height="252" rx="12" class="s-card"/>
+<text x="682" y="52" class="s-ttl">③ 어드미션 Admission</text>
+<text x="682" y="74" class="s-sub">쓰기 요청만 (생성·수정·삭제)</text>
+<text x="682" y="104" class="s-f">Mutating</text><text x="682" y="121" class="s-sub">기본값 채우기 등 내용 수정</text>
+<text x="682" y="150" class="s-f">Validating</text><text x="682" y="167" class="s-sub">PodSecurity(PSA),</text><text x="682" y="184" class="s-sub">NodeRestriction, 웹훅 …</text>
+<text x="682" y="246" class="s-sub">실패 → 요청 거부</text>
+<rect x="896" y="100" width="54" height="100" rx="10" class="s-e"/>
+<text x="905" y="156" class="s-ttl">etcd</text>
+<path d="M136 77 L164 77" class="s-ln" marker-end="url(#mk-n)"/>
+<path d="M386 150 L414 150" class="s-ln" marker-end="url(#mk-n)"/>
+<path d="M636 150 L664 150" class="s-ln" marker-end="url(#mk-n)"/>
+<path d="M876 150 L894 150" class="s-ln" marker-end="url(#mk-n)"/>
+</svg>
+</div>
+<figcaption><b>그림 3.</b> apiserver 안의 세 관문. Mutating 다음에 스키마 검사, 그다음 Validating 순서다. <span class="fact">【사실】 kubernetes.io "Controlling Access to the Kubernetes API", "Admission Control in Kubernetes"</span></figcaption>
+</figure>
+<div class="blk">
+<p>kubeadm 클러스터의 apiserver manifest에는 <code>--authorization-mode=Node,RBAC</code>와 <code>--enable-admission-plugins=NodeRestriction</code>이 들어 있다. <span class="t">Node 인가자</span>와 NodeRestriction은 짝이다. 하나는 kubelet이 읽을 수 있는 것을, 다른 하나는 kubelet이 고칠 수 있는 것을 자기 노드로 좁힌다. <span class="t">PSA</span>는 기본으로 켜져 있어서 플래그 없이 네임스페이스 라벨만으로 쓴다.</p>
+<aside class="notes"><dl>
+<div><dt>Node 인가자</dt><dd>사용자명이 <code>system:node:&lt;노드이름&gt;</code>이고 그룹이 <code>system:nodes</code>인 요청에만 적용되는 인가 모듈. kubelet 인증서의 CN·O가 정확히 이 모양이다.</dd></div>
+<div><dt>PSA</dt><dd>Pod Security Admission. 네임스페이스에 <code>pod-security.kubernetes.io/enforce=baseline</code> 같은 라벨을 달면 그 수준을 어기는 파드(예: privileged)를 거부한다. 수준은 privileged / baseline / restricted.</dd></div>
+</dl></aside>
+</div>
+
+<h3>ServiceAccount 토큰은 어떻게 만들어지고 확인되나</h3>
+<figure>
+<div class="fig">
+<svg viewBox="0 0 960 300" role="img" aria-labelledby="sa-t">
+<title id="sa-t">ServiceAccount 토큰 발급과 검증 순서</title>
+<defs><marker id="mk-s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="s-mks"/></marker></defs>
+<rect x="40" y="16" width="170" height="40" rx="8" class="s-card"/><text x="94" y="42" class="s-ttl">kubelet</text>
+<rect x="395" y="16" width="170" height="40" rx="8" class="s-s"/><text x="420" y="42" class="s-ttl">kube-apiserver</text>
+<rect x="750" y="16" width="170" height="40" rx="8" class="s-card"/><text x="790" y="42" class="s-ttl">파드 안 앱</text>
+<path d="M125 56 V290 M480 56 V290 M835 56 V290" class="s-ln" stroke-dasharray="3 4"/>
+<path d="M125 92 H476" class="s-ls" marker-end="url(#mk-s)"/>
+<text x="140" y="84" class="s-sub">1. TokenRequest API로 "이 파드용 토큰 줘"</text>
+<path d="M480 132 H129" class="s-ls" marker-end="url(#mk-s)"/>
+<text x="140" y="124" class="s-sub">2. sa.key로 서명한 JWT (만료·대상 포함)</text>
+<path d="M125 172 H831" class="s-ls" marker-end="url(#mk-s)"/>
+<text x="140" y="164" class="s-sub">3. projected 볼륨으로 /var/run/secrets/kubernetes.io/serviceaccount/token 에 넣고 주기적으로 갱신</text>
+<path d="M835 222 H484" class="s-ls" marker-end="url(#mk-s)"/>
+<text x="500" y="214" class="s-sub">4. Authorization: Bearer &lt;토큰&gt;</text>
+<text x="300" y="262" class="s-f">5. sa.pub으로 서명 확인 → system:serviceaccount:&lt;ns&gt;:&lt;이름&gt; → RBAC</text>
+</svg>
+</div>
+<figcaption><b>그림 4.</b> 서명 키는 <code>--service-account-signing-key-file=/etc/kubernetes/pki/sa.key</code>, 검증 키는 <code>--service-account-key-file=…/sa.pub</code>(둘 다 apiserver manifest). controller-manager도 <code>--service-account-private-key-file=…/sa.key</code>를 갖는다. <span class="fact">【사실】 kubernetes.io "Managing Service Accounts", "Service account token volume projection"</span></figcaption>
+</figure>
+<div class="blk">
+<p>그래서 ServiceAccount의 신원은 인증서가 아니라 <span class="t">JWT</span> 토큰이다. 인증 단계에서 토큰이 통과하면 사용자명은 <code>system:serviceaccount:&lt;네임스페이스&gt;:&lt;이름&gt;</code>, 그룹은 <code>system:serviceaccounts</code>와 <code>system:serviceaccounts:&lt;네임스페이스&gt;</code>가 된다. 이후 인가는 사람과 똑같이 RBAC로 본다. 테넌트 격리에서 "네임스페이스마다 ServiceAccount 하나, RoleBinding은 그 네임스페이스 안에만"이 통하는 이유다.</p>
+<aside class="notes"><dl>
+<div><dt>JWT</dt><dd>JSON Web Token. 헤더·내용·서명 세 부분을 점으로 이은 문자열. 내용에 발급자, 대상, 만료 시각, 파드 이름이 들어 있고, 서명으로 위조를 막는다.</dd></div>
+</dl></aside>
+</div>
+
+<h2 id="openssl">4. openssl로 인증서 읽기, 그리고 CN·O가 RBAC 신원이 되는 원리</h2>
+<div class="blk">
+<p>인증서 파일은 <span class="t">PEM</span> 형식이라 그냥 열면 알아볼 수 없다. <code>openssl x509</code>가 사람이 읽을 수 있게 풀어 준다.</p>
+<aside class="notes"><dl>
+<div><dt>PEM</dt><dd><code>-----BEGIN CERTIFICATE-----</code>로 시작하는 base64 텍스트 형식. 안에 X.509라는 표준 구조의 인증서가 들어 있다.</dd></div>
+</dl></aside>
+</div>
+<pre><code><span class="c"># 전부 보기 (-noout: PEM 원문은 다시 찍지 않음)</span>
+openssl x509 -in /etc/kubernetes/pki/apiserver.crt -text -noout
+
+<span class="c"># 필요한 줄만 골라 보기</span>
+openssl x509 -in &lt;파일&gt; -noout -subject -issuer -dates
+openssl x509 -in &lt;파일&gt; -noout -ext subjectAltName
+
+<span class="c"># kubeconfig 안에 박힌 인증서 보기 (admin.conf 예)</span>
+kubectl config view --raw -o jsonpath='{.users[0].user.client-certificate-data}' \
+  | base64 -d | openssl x509 -noout -subject -issuer -dates
+
+<span class="c"># kubeadm이 만든 인증서 만료일을 한 번에</span>
+kubeadm certs check-expiration</code></pre>
+<p><code>-text</code> 출력에서 볼 곳은 다섯 군데다. 값은 일부러 비워 뒀다. 직접 찍어서 채워 봐.</p>
+<pre><code>Certificate:
+    Data:
+        ...
+        Issuer: CN = <span class="k">&lt;누가 서명했나 = CA의 CN&gt;</span>
+        Validity
+            Not Before: <span class="k">&lt;발급 시각&gt;</span>
+            Not After : <span class="k">&lt;만료 시각&gt;</span>
+        Subject: CN = <span class="k">&lt;이 인증서의 이름&gt;</span>   (O = &lt;조직&gt; 이 붙기도 함)
+        ...
+        X509v3 extensions:
+            X509v3 Extended Key Usage:
+                <span class="k">TLS Web Server Authentication</span> 또는 <span class="k">TLS Web Client Authentication</span>
+            X509v3 Subject Alternative Name:
+                <span class="k">&lt;이 서버로 접속할 때 쓸 수 있는 DNS 이름·IP 목록&gt;</span></code></pre>
+<div class="blk">
+<p>서버 인증서에서는 <span class="t">SAN</span>이 중요하다. 클라이언트는 "내가 접속한 주소가 SAN 목록에 있는가"를 확인하기 때문에, apiserver를 새 IP나 도메인으로 부르려면 그 이름이 SAN에 있어야 한다. 클라이언트 인증서에서는 Subject가 중요하다.</p>
+<aside class="notes"><dl>
+<div><dt>SAN</dt><dd>Subject Alternative Name. 인증서가 유효한 호스트 이름과 IP 목록. 요즘 TLS 검사는 CN이 아니라 이 목록을 본다.</dd></div>
+</dl></aside>
+</div>
+<div class="blk">
+<p>클라이언트 인증서로 들어온 요청에서 apiserver는 Subject의 <b>CN을 사용자명</b>으로, <b>O(여러 개 가능)를 그룹</b>으로 쓴다. 쿠버네티스에는 사람 계정을 저장하는 곳이 따로 없다. 클러스터 CA가 서명했다는 사실만으로 "CN이라는 사람, O라는 그룹 소속"으로 믿는다. 예를 들어 kubeadm v1.29부터 <code>admin.conf</code>의 인증서는 <code>O = kubeadm:cluster-admins, CN = kubernetes-admin</code>이고, kubeadm이 만든 ClusterRoleBinding <code>kubeadm:cluster-admins</code>가 이 그룹을 <code>cluster-admin</code> 역할에 묶어서 관리자가 된다. <code>system:masters</code> 그룹은 특별해서 RBAC를 아예 건너뛰는 슈퍼유저라, kubeadm은 그 그룹 인증서를 <code>super-admin.conf</code>에만 따로 둔다.</p>
+</div>
+<pre><code><span class="c"># 그룹이 어떤 역할에 묶였는지 확인</span>
+kubectl get clusterrolebinding kubeadm:cluster-admins -o yaml
+<span class="c"># 그 신원으로 무엇을 할 수 있는지 시험</span>
+kubectl auth can-i create pods --as=jane --as-group=dev -n team-a</code></pre>
+<div class="blk">
+<p>그래서 새 사용자를 만든다는 건, 개인키를 만들고 원하는 CN·O로 <span class="t">CSR</span>을 만들어 클러스터 CA에 서명받은 뒤(<code>CertificateSigningRequest</code> 오브젝트를 approve), RoleBinding으로 그 CN이나 O에 권한을 주는 것이다. 인증서는 한 번 발급하면 만료 전까지 취소할 방법이 마땅치 않다는 점도 기억해 둬. 권한은 Binding을 지워서 거두고, 인증서 자체는 짧은 만료로 관리한다.</p>
+<aside class="notes"><dl>
+<div><dt>CSR</dt><dd>Certificate Signing Request. "이 공개키와 이 이름으로 인증서를 만들어 달라"는 요청서. 쿠버네티스에서는 controller-manager가 <code>--cluster-signing-cert-file/key-file</code>(클러스터 CA)로 서명한다.</dd></div>
+</dl></aside>
+</div>
+<details>
+<summary>랩 끝난 뒤 펼쳐 보기: kubeadm 기본 CN·만료 표</summary>
+<div class="tbl" style="margin-top:10px">
+<table>
+<thead><tr><th>파일</th><th>CN</th><th>O</th><th>서명 CA</th><th>용도</th></tr></thead>
+<tbody>
+<tr><td><code>ca.crt</code></td><td>kubernetes</td><td></td><td>자기 서명</td><td>CA</td></tr>
+<tr><td><code>apiserver.crt</code></td><td>kube-apiserver</td><td></td><td>kubernetes</td><td>서버</td></tr>
+<tr><td><code>apiserver-kubelet-client.crt</code></td><td>kube-apiserver-kubelet-client</td><td>kubeadm:cluster-admins (구버전 system:masters)</td><td>kubernetes</td><td>클라이언트</td></tr>
+<tr><td><code>etcd/ca.crt</code></td><td>etcd-ca</td><td></td><td>자기 서명</td><td>CA</td></tr>
+<tr><td><code>etcd/server.crt</code></td><td>노드 호스트 이름</td><td></td><td>etcd-ca</td><td>서버+클라이언트</td></tr>
+<tr><td><code>etcd/peer.crt</code></td><td>노드 호스트 이름</td><td></td><td>etcd-ca</td><td>서버+클라이언트</td></tr>
+<tr><td><code>apiserver-etcd-client.crt</code></td><td>kube-apiserver-etcd-client</td><td></td><td>etcd-ca</td><td>클라이언트</td></tr>
+<tr><td><code>front-proxy-client.crt</code></td><td>front-proxy-client</td><td></td><td>front-proxy-ca</td><td>클라이언트</td></tr>
+<tr><td>kubelet 클라이언트</td><td>system:node:&lt;노드&gt;</td><td>system:nodes</td><td>kubernetes</td><td>클라이언트</td></tr>
+</tbody>
+</table>
+</div>
+<p>만료: kubeadm 기본값은 CA 10년, 나머지 인증서 1년(v1.31부터 <code>caCertificateValidityPeriod</code>, <code>certificateValidityPeriod</code>로 바꿀 수 있음). <code>kubeadm upgrade</code>를 하면 인증서도 갱신된다. 【사실】 kubernetes.io "Certificate Management with kubeadm" 【확인 필요】 O 값과 etcd CN은 kubeadm 버전마다 달라질 수 있으니 랩 클러스터(v1.35)에서 openssl로 직접 확인할 것.</p>
+</details>
+
+<h2 id="trouble">5. 흔한 장애와 확인 순서</h2>
+<div class="blk">
+<p>인증서 문제로 apiserver나 etcd가 죽으면 <code>kubectl</code>부터 안 된다(<code>connection refused … :6443</code>). 그래서 kubectl 대신 노드에서 컨테이너 런타임을 직접 본다. <span class="t">crictl</span>이 그 도구다.</p>
+<aside class="notes"><dl>
+<div><dt>crictl</dt><dd>containerd 같은 CRI 런타임에 직접 묻는 CLI. 사용법은 docker 명령과 거의 같다. 노드에 docker가 없어도 쓸 수 있다.</dd></div>
+</dl></aside>
+</div>
+<pre><code><span class="c"># 1) 컨트롤 플레인 컨테이너가 떠 있나, 계속 죽고 있나 (-a: 종료된 것도)</span>
+crictl ps -a | grep -E 'kube-apiserver|etcd'
+<span class="c"># 2) 죽은 컨테이너의 마지막 로그</span>
+crictl logs &lt;컨테이너ID&gt;
+<span class="c"># 3) 컨테이너조차 안 뜨면 kubelet 쪽 로그 (manifest 문법 오류, 이미지 등)</span>
+journalctl -u kubelet --since "10 min ago" | tail -50
+<span class="c"># 4) manifest에서 인증서 옵션만 모아 보기</span>
+grep -E 'cert|key|ca' /etc/kubernetes/manifests/kube-apiserver.yaml
+<span class="c"># 5) 옵션이 가리키는 파일이 정말 있나</span>
+ls -l /etc/kubernetes/pki/ /etc/kubernetes/pki/etcd/</code></pre>
+<div class="tbl">
+<table>
+<thead><tr><th>증상 (로그에 보이는 말)</th><th>뜻</th><th>어디를 보나</th></tr></thead>
+<tbody>
+<tr><td><code>open …: no such file or directory</code></td><td>옵션의 파일 경로가 틀림(오타, 폴더 착각)</td><td>그 로그를 낸 컴포넌트의 manifest 옵션 값과 <code>ls</code> 결과 비교</td></tr>
+<tr><td><code>x509: certificate signed by unknown authority</code></td><td>상대 인증서를 서명한 CA와 내가 믿는 CA가 다름</td><td>확인하는 쪽의 <code>*ca*</code> 옵션. 그림 1에서 상대 인증서가 어느 색 CA인지 보고 맞춰 보기</td></tr>
+<tr><td><code>x509: certificate has expired or is not yet valid</code></td><td>만료(또는 노드 시계가 틀림)</td><td><code>openssl … -dates</code>, <code>kubeadm certs check-expiration</code> → <code>kubeadm certs renew</code></td></tr>
+<tr><td><code>x509: certificate is valid for A, B, not C</code></td><td>접속한 주소가 SAN에 없음</td><td><code>openssl … -ext subjectAltName</code></td></tr>
+<tr><td><code>authentication handshake failed</code> (apiserver 로그, etcd 연결)</td><td>3번 연결의 TLS 실패. 위 x509 원인 중 하나</td><td>apiserver의 <code>--etcd-*</code> 세 옵션과 etcd의 <code>--trusted-ca-file</code></td></tr>
+</tbody>
+</table>
+</div>
+<div class="blk">
+<p>static pod manifest를 고치면 kubelet이 몇십 초 안에 컨테이너를 새로 띄운다. 고친 직후 <code>crictl ps -a</code>를 다시 보고 CREATED 시간이 바뀌었는지 확인해. manifest 백업을 <code>/etc/kubernetes/manifests/</code> 안에 두면 kubelet이 그것도 파드로 띄우려 하니, 백업은 다른 폴더에 둔다.</p>
+</div>
+
+<h2 id="wrap">정리</h2>
+<div class="end">
+<h3>핵심 결정 3개 (쿠버네티스가 이렇게 설계한 이유와 대안)</h3>
+<ol>
+<li><b>CA를 셋으로 나눔.</b> 대안: CA 하나로 전부 서명. 버린 이유: 하나면 관리자 인증서로 etcd에 직접 붙어 모든 데이터를 읽을 수 있고, 아무 클라이언트 인증서로나 front-proxy 헤더를 위조할 수 있다. 대가는 관리할 CA와 옵션이 늘어나는 것.</li>
+<li><b>사람 신원은 인증서 CN·O, 저장소 없음.</b> 대안: OIDC(외부 로그인) 연동. 인증서는 설정이 단순하지만 취소가 어렵고, OIDC는 그룹 관리·회수가 쉽지만 외부 IdP가 필요하다. 본선 PoC처럼 사람 수가 적으면 인증서, 테넌트 사용자가 많아지면 OIDC.</li>
+<li><b>파드 신원은 sa.key로 서명한 짧은 JWT.</b> 대안: 예전 방식(Secret에 만료 없는 토큰). 버린 이유: 유출되면 영원히 쓰인다. projected 토큰은 만료·대상이 있고 kubelet이 갱신한다. FaaS 테넌트 격리 설계에서 "테넌트별 ServiceAccount + 네임스페이스 RoleBinding"의 근거가 된다.</li>
+</ol>
+<h3>셀프 연습 1개</h3>
+<p>랩 클러스터에서 그림 2의 7개 연결 중 3번(apiserver → etcd)을 골라, 클라이언트 쪽 옵션 3개와 서버 쪽 옵션 3개를 각각 manifest에서 찾아 적고, 각 파일의 Issuer를 openssl로 찍어서 "양쪽이 같은 CA를 가리키는지" 표로 채워 봐.</p>
+<h3>검증 명령과 기대 출력</h3>
+<pre><code>ls /etc/kubernetes/pki /etc/kubernetes/pki/etcd
+<span class="c"># 기대: ca.crt apiserver.crt apiserver-etcd-client.crt apiserver-kubelet-client.crt front-proxy-ca.crt front-proxy-client.crt sa.key sa.pub … / etcd/ 에 ca.crt server.crt peer.crt healthcheck-client.crt</span>
+openssl x509 -in /etc/kubernetes/pki/apiserver-etcd-client.crt -noout -issuer
+openssl x509 -in /etc/kubernetes/pki/etcd/ca.crt -noout -subject
+<span class="c"># 기대: 첫 줄의 issuer 와 둘째 줄의 subject 가 같은 CN (그래야 etcd가 apiserver를 믿는다)</span>
+kubectl auth can-i '*' '*' --all-namespaces
+<span class="c"># 기대: yes (admin.conf 의 O 그룹이 cluster-admin 에 묶여 있으므로)</span></code></pre>
+<p class="fact">출처: kubernetes.io/docs/setup/best-practices/certificates/ · /docs/tasks/administer-cluster/kubeadm/kubeadm-certs/ · /docs/concepts/security/controlling-access/ · /docs/reference/access-authn-authz/authentication/ · /docs/concepts/architecture/control-plane-node-communication/ · /docs/reference/access-authn-authz/service-accounts-admin/</p>
+</div>
+</article>
