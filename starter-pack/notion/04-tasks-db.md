@@ -8,19 +8,16 @@
 |---|---|---|
 | 제목 | Title | 동사로. `함수 배포 API POST /functions 구현` |
 | 담당 | Person | 1명. 둘이면 쪼갠다 |
-| 상태 | Select | Todo / Doing / Review / Done / Blocked |
-| 파트 | Select | 인프라 / 배포 / 백엔드 / 프론트 / 관측 / AI / 문서·데모 |
+| 상태 | Status | Todo / Doing / Review / Blocked / Done |
 | 우선순위 | Select | Must / Should / Could |
 | 마감 | Date | |
 | 링크 | URL | GitHub 이슈 URL (이슈 본문 첫 줄엔 이 카드 URL — 양방향). PR은 `Closes #N`으로 이슈에 붙음 |
-| 회의 | Relation → Meetings | 어느 회의에서 나왔나 |
-| 메모 | Text | 막힌 이유 등 한 줄 |
+
+(Lite 10/28: 파트·메모·회의 관계는 뺐다. 파트는 제목 앞 `[인프라]` 식으로, 막힌 이유는 본문 첫 줄에.)
 
 ## 뷰
 
-- **보드 (상태별 그룹)** — 홈에 임베드. 카드에 담당·파트·우선순위·마감 표시.
-- **담당별 테이블** — 회의 때 한 사람씩 훑기.
-- **Must만** 필터 — 11/5 이후는 이 뷰만 본다.
+- **보드 (상태별 그룹, compact)** — 홈에 임베드. 담당·우선순위·마감 표시. 11/5 이후는 보드에서 Must 필터만 켠다.
 
 ## 상태 규칙
 

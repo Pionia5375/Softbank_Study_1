@@ -22,49 +22,48 @@
 | 대안·이유 기록 없음 | 팀 개발 20점의 핵심이 안 남음 | **Decisions DB** (선택/대안/이유/측정값) |
 | Personal Memo (멤버별) | 좋음. 개인 평가에 유리 | 유지. 템플릿만 통일 |
 
-## 2. 최종 구조 (페이지 1 + DB 3 + 하위 페이지 4)
+## 2. 최종 구조 — Lite (10/28 Jeong 확정: "번잡하다, 딱 필요한 것만")
+
+실제 페이지: https://app.notion.com/p/3867a82c52e280c68e3fd6148d6cf0cb
 
 ```
-🏠 Home                      ← 00-home.md
-├ 📌 Now (콜아웃, 매일 갱신)   한 줄 상태 · 오늘 Must · 다음 회의 · 막힌 것
-├ 📅 Meetings (DB)          ← 02-meetings-db.md   일정 + 회의록 + 허들 AI 요약
-├ 🧭 Decisions (DB)         ← 03-decisions-db.md  ADR: 선택/대안/이유/측정값
-├ ✅ Tasks (DB, 보드)        ← 04-tasks-db.md      담당/상태/파트/PR 링크
-├ 📐 Design Doc (페이지)     ← 05-design-doc.md    심사·발표용. 문제→아키텍처→명세→API→스키마→측정→데모
-├ 👥 Team (페이지)           ← 01-team.md          멤버·역할·가능 시간·스킬
-├ 📚 Runbook (페이지)        ← 06-runbook.md       환경 접속, 레포 규칙 링크, 정책, 참고자료
-└ 📝 Personal (멤버별 페이지) ← 07-personal-memo.md 개인 일지
+🏠 Home                      ← 00-home.md     Now 콜아웃(규칙·링크 포함) + Tasks 보드 임베드 + DB·페이지 목록
+├ 📅 Meetings (DB)          ← 02-meetings-db.md   제목·날짜·종류. 요약/결정/액션은 본문
+├ 🧭 Decisions (DB)         ← 03-decisions-db.md  제목·날짜·영역. 본문 = 선택/대안/이유/측정값
+├ ✅ Tasks (DB, 보드)        ← 04-tasks-db.md      제목·담당·상태·우선순위·마감·링크
+├ 📐 Design Doc (페이지)     ← 05-design-doc.md    §0~7 (인터페이스는 §2에, 회고는 §7 끝 한 줄)
+└ 👥 Team & Runbook (페이지) ← 01-team.md          멤버·역할 + 환경 접속·레포 규칙·비용·참고
 ```
 
 하나의 원칙: **대화는 슬랙, 결론은 노션, 코드는 GitHub.** 노션에는 "결론과 현재 상태"만 쓴다.
 
-### DB 3개의 속성 (요약; 상세는 각 파일)
+1차안에서 뺀 것 (Lite): 홈의 바로가기 2단·운영 규칙 섹션·Meetings 캘린더 임베드·Decisions 임베드 / Meetings↔Decisions·Tasks 관계 속성 / 속성 9개(참석자·허들 링크·상태·ADR 상태·담당·심사항목·파트·메모·회의) / 뷰 5개 / Runbook 별도 페이지(Team에 합침) / Personal 메모 페이지. 이유: 1주짜리 팀에서 속성·뷰가 늘수록 안 채우게 되고, 안 채운 칸은 "진행 가시성"을 오히려 떨어뜨린다.
+
+### DB 3개의 속성 (Lite)
 
 | DB | 속성 | 뷰 |
 |---|---|---|
-| Meetings | 제목, 날짜(시간 포함), 종류(킥오프/정기/긴급/중간보고), 참석자(Person), 허들 녹음·요약 링크, 결정(Relation→Decisions), 액션(Relation→Tasks), 상태(예정/완료) | 캘린더(일정표 대체), 리스트(회의록 목록) |
-| Decisions | 제목, 날짜, 상태(제안/확정/폐기), 영역(인프라/백엔드/프론트/CI·CD/관측/AI), 담당(Person), 심사항목(완성도/클라우드/팀개발/독창성/AI), 본문=선택·대안·이유·측정값 | 테이블(날짜순), 영역별 그룹 |
-| Tasks | 제목, 담당(Person), 상태(Todo/Doing/Review/Done/Blocked), 파트, 우선순위(Must/Should/Could), 마감(날짜), PR/이슈 링크(URL), 회의(Relation→Meetings) | 보드(상태별) = 홈에 임베드, 담당별 테이블 |
+| Meetings | 제목, 날짜(시간 포함), 종류(킥오프/정기/긴급/중간보고/최종발표). 본문: 안건 / 허들 AI 요약 / 결정(→ Decisions 링크) / 액션(→ Tasks 링크) / 미결 | 캘린더 |
+| Decisions | 제목(D-NN 번호), 날짜, 영역(인프라/배포/백엔드/프론트/관측/AI/운영). 본문 = 선택·대안·이유·측정값·영향 | 테이블(날짜 내림차순) |
+| Tasks | 제목, 담당(Person 1명), 상태(Todo/Doing/Review/Blocked/Done), 우선순위(Must/Should/Could), 마감, 링크(GitHub 이슈 URL) | 보드(상태별) = 홈에 임베드 |
 
-## 3. 노션에서 만드는 순서 (30~40분)
+## 3. 노션 상태 (10/28 기준: 이미 만들어져 있음)
 
-md 파일은 "페이지 본문"만 붙여넣기가 된다(제목·불릿·표·체크박스 OK). **DB와 콜아웃은 손으로 만든다.**
+위 구조는 Claude가 Notion API로 10/28에 만들었다. 다시 만들 일이 있을 때의 순서:
 
-1. 새 페이지 `SoftBank Hackathon 2026 (Team ___)` → 아이콘·커버.
-2. `/callout` → `00-home.md`의 "Now" 부분 붙여넣기.
-3. `/database - inline` → 이름 `Meetings` → `02-meetings-db.md` 속성대로 추가 → 뷰 2개(캘린더, 리스트) → 템플릿 "회의록" 만들어 `02`의 템플릿 본문 붙여넣기.
-4. `/database - inline` → `Decisions` → `03` 속성 → 템플릿 "ADR".
-5. `/database - inline` → `Tasks` → `04` 속성 → 보드 뷰(상태별 그룹).
-6. Meetings의 `결정`·`액션` 속성을 Relation으로 Decisions·Tasks에 연결 (양방향 켜기).
-7. 하위 페이지 4개 만들고 `05`·`01`·`06`·`07` 본문 붙여넣기.
-8. 홈 하단에 `/linked view of database` 로 Tasks 보드, Meetings 캘린더 임베드.
-9. 팀원 초대 후 `07` 템플릿으로 각자 Personal 페이지 복제.
+1. 새 페이지 → `00-home.md` 본문. Now는 `/callout`.
+2. `/database` × 3 (Meetings · Decisions · Tasks) → `02`·`03`·`04`의 속성대로. Tasks는 보드 뷰(상태별), Meetings는 캘린더 뷰.
+3. 하위 페이지 2개 → `05`·`01` 본문.
+4. 홈 하단에 `/linked view` → Tasks 보드.
 
-속도 팁: 멤버 이름·역할·파트 선택지는 킥오프 끝나고 채운다. 나머지는 지금 다 만들어 둘 수 있다.
+**API로 못 한 것 (Jeong 수동, 2분):**
+- DB 템플릿 "회의록"(Meetings, 10/30 킥오프 레코드 본문 복붙)과 "ADR"(Decisions, D-00 본문 복붙).
+- 남은 뷰 탭 삭제: Meetings `회의록`, Decisions `영역별`, Tasks `담당별`·`Must만` (뷰 삭제 API 없음). 두어도 해는 없음.
+- 팀원 초대는 킥오프 후 멤버로(게스트 아님).
 
-## 4. 뺄 것 후보 — Jeong이 정할 것
+## 4. 뺀 것 — 10/28 확정 (Lite)
 
-단순함이 1순위라 아래는 **기본값 = 뺌**. 필요해지면 그날 추가.
+단순함이 1순위. 아래는 **뺌**. 필요해지면 그날 추가. (§2의 "1차안에서 뺀 것"도 같은 결정)
 
 | 후보 | 기본값 | 이유 |
 |---|---|---|
@@ -73,7 +72,8 @@ md 파일은 "페이지 본문"만 붙여넣기가 된다(제목·불릿·표·�
 | 구체적 요구사항 페이지 (Yellow) | 합침 → Design Doc §3 기능 명세의 Must/Should/Could | 명세와 요구사항 두 벌은 어긋남 |
 | 파트별 MVP 명세 페이지 (Yellow) | 합침 → Design Doc §3 + Tasks 보드 파트 필터 | 같은 이유 |
 | 일일 스탠드업 DB | 뺌 → Now 블록 + 슬랙 스레드 | DB가 늘수록 안 씀 |
-| Personal Memo | **유지** (단, 쓰기 싫은 사람은 안 써도 됨) | 개인 평가에 자기 기여가 보임 |
+| Personal Memo | 뺌 (Lite에서 삭제) | 쓰는 사람이 없을 가능성이 큼. 개인 기여는 Decisions 담당·커밋·발표 분담으로 보임 |
+| Runbook 별도 페이지 | 합침 → Team & Runbook 한 페이지 | 페이지 수 줄이기 |
 | 위키/용어집 | 뺌 | 1주짜리엔 과함 |
 
 **Tasks 위치는 GitHub 스레드와 합의 완료** (`starter-pack/github/02-strategy.md` §3·§9):
@@ -92,7 +92,7 @@ md 파일은 "페이지 본문"만 붙여넣기가 된다(제목·불릿·표·�
 
 ## 핵심 결정 3개 (+대안)
 
-1. **Meetings·Decisions·Tasks를 DB 3개로 분리** — 대안: Yellow처럼 회의록 페이지 안에 다 쓰기(단순하지만 결정·진행이 묻힘), 또는 DB 1개에 종류 속성(필터 지옥). 3개가 "진행 가시성"의 최소.
+1. **Meetings·Decisions·Tasks를 DB 3개로 분리, 단 속성은 DB당 3~6개로 제한(Lite)** — 대안: Yellow처럼 회의록 페이지 안에 다 쓰기(단순하지만 결정·진행이 묻힘), DB 1개에 종류 속성(필터 지옥), 1차안처럼 관계 속성·심사항목까지 넣기(10/28 Jeong: "번잡하다"). 3개가 "진행 가시성"의 최소이고, 속성은 안 채우면 없는 것만 못하다.
 2. **Design Doc 1페이지 = 발표 자료** — 대안: Yellow식 Docs 9페이지 나열. 2분 안에 보여줄 수 없고 스키마·측정이 흩어짐.
 3. **Tasks는 노션 보드(기능 단위), 코드 세부는 GitHub 이슈, Projects 보드 없음** — 대안: GitHub Projects만 쓰고 노션에 임베드(노션 임베드는 로그인 벽·갱신 지연 【추정】). GitHub 스레드와 합의 완료(`starter-pack/github/02-strategy.md`).
 
