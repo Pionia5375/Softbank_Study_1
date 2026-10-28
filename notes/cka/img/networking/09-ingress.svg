@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="500" viewBox="0 0 960 500">
+<defs>
+<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#374151"/></marker>
+<marker id="ahs" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#374151"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="480.0" y="34" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="20" font-weight="700" fill="#111827" text-anchor="middle">13장 · 바깥 입구는 하나, 경로에 따라 안쪽 Service로 나눈다</text>
+<rect x="30" y="200" width="150" height="64" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+<text x="105.0" y="227.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">사용자</text>
+<text x="105.0" y="246.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">my-online-store.com</text>
+<rect x="220" y="200" width="150" height="64" rx="10" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.6"/>
+<text x="295.0" y="227.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">NodePort 또는</text>
+<text x="295.0" y="246.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">클라우드 LB (한 번만)</text>
+<rect x="410" y="60" width="520" height="410" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="422" y="82" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#64748b" text-anchor="start">클러스터</text>
+<rect x="440" y="180" width="200" height="104" rx="10" fill="#ffedd5" stroke="#ea580c" stroke-width="1.6"/>
+<text x="540.0" y="208.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">Ingress 컨트롤러</text>
+<text x="540.0" y="227.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">nginx Deployment</text>
+<text x="540.0" y="246.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">+ Service + ConfigMap</text>
+<text x="540.0" y="265.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">+ ServiceAccount</text>
+<rect x="440" y="330" width="200" height="104" rx="10" fill="#fef9c3" stroke="#ca8a04" stroke-width="1.6"/>
+<text x="540.0" y="359.2" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="700" fill="#111827" text-anchor="middle">Ingress 리소스 (규칙)</text>
+<text x="540.0" y="377.2" font-family="'DejaVu Sans Mono',monospace" font-size="11" font-weight="400" fill="#4b5563" text-anchor="middle">/wear  → wear-service</text>
+<text x="540.0" y="395.2" font-family="'DejaVu Sans Mono',monospace" font-size="11" font-weight="400" fill="#4b5563" text-anchor="middle">/watch → video-service</text>
+<text x="540.0" y="413.2" font-family="'DejaVu Sans Mono',monospace" font-size="11" font-weight="400" fill="#4b5563" text-anchor="middle">그 밖  → default backend</text>
+<line x1="540" y1="330" x2="540" y2="286" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<text x="600" y="314" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">watch 해서 nginx 설정</text>
+<line x1="180" y1="232" x2="218" y2="232" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<line x1="370" y1="232" x2="438" y2="232" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<rect x="720" y="100" width="190" height="60" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.6"/>
+<text x="815.0" y="125.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">wear-service</text>
+<text x="815.0" y="144.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">→ wear Pod들</text>
+<rect x="720" y="210" width="190" height="60" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.6"/>
+<text x="815.0" y="235.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">video-service</text>
+<text x="815.0" y="254.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">→ video Pod들</text>
+<rect x="720" y="320" width="190" height="60" rx="10" fill="#fee2e2" stroke="#dc2626" stroke-width="1.6"/>
+<text x="815.0" y="345.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">default-http-backend</text>
+<text x="815.0" y="364.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">→ 404 페이지</text>
+<line x1="640" y1="205" x2="718" y2="130" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<text x="660" y="150" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">/wear</text>
+<line x1="640" y1="232" x2="718" y2="240" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<text x="679.0" y="230.0" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">/watch</text>
+<line x1="640" y1="260" x2="718" y2="350" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<text x="708" y="292" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">기타</text>
+<text x="670" y="455" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">앱이 / 에서만 동작하면 rewrite-target: / , 인증서 없으면 ssl-redirect: "false"</text>
+</svg>

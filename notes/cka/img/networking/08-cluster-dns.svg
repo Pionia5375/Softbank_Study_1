@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560">
+<defs>
+<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#374151"/></marker>
+<marker id="ahs" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#374151"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="480.0" y="34" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="20" font-weight="700" fill="#111827" text-anchor="middle">11·12장 · Pod가 web-service 이름을 IP로 바꾸는 길</text>
+<rect x="30" y="80" width="300" height="110" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+<text x="180.0" y="111.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">test Pod (default 네임스페이스)</text>
+<text x="180.0" y="130.05" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">/etc/resolv.conf</text>
+<text x="180.0" y="149.05" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">nameserver 10.96.0.10</text>
+<text x="180.0" y="168.05" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">search default.svc.cluster.local ...</text>
+<rect x="390" y="100" width="190" height="70" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.6"/>
+<text x="485.0" y="129.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="14" font-weight="700" fill="#111827" text-anchor="middle">kube-dns Service</text>
+<text x="485.0" y="149.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">10.96.0.10 :53</text>
+<rect x="640" y="60" width="290" height="210" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="652" y="82" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#64748b" text-anchor="start">kube-system 네임스페이스</text>
+<rect x="660" y="95" width="120" height="50" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+<text x="720.0" y="115.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">CoreDNS</text>
+<text x="720.0" y="134.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">Pod 1</text>
+<rect x="790" y="95" width="120" height="50" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+<text x="850.0" y="115.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">CoreDNS</text>
+<text x="850.0" y="134.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">Pod 2</text>
+<rect x="660" y="160" width="250" height="96" rx="10" fill="#fef9c3" stroke="#ca8a04" stroke-width="1.6"/>
+<text x="785.0" y="184.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">ConfigMap coredns</text>
+<text x="785.0" y="203.05" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">→ /etc/coredns/Corefile</text>
+<text x="785.0" y="222.05" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">kubernetes cluster.local</text>
+<text x="785.0" y="241.05" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">pods insecure</text>
+<line x1="330" y1="135" x2="388" y2="135" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<text x="359.0" y="129.0" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">질의</text>
+<line x1="580" y1="135" x2="658" y2="120" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<rect x="30" y="230" width="300" height="64" rx="10" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.6"/>
+<text x="180.0" y="257.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">kubelet 설정</text>
+<text x="180.0" y="276.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">clusterDNS 10.96.0.10 · clusterDomain cluster.local</text>
+<line x1="180" y1="230" x2="180" y2="192" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<text x="270" y="215" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">Pod 만들 때 resolv.conf 채움</text>
+<rect x="660" y="290" width="270" height="50" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+<text x="795.0" y="310.2" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="700" fill="#111827" text-anchor="middle">클러스터 밖 이름 (www.google.com)</text>
+<text x="795.0" y="328.2" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="11" font-weight="400" fill="#4b5563" text-anchor="middle">→ 노드의 resolv.conf 네임서버로 forward</text>
+<line x1="785" y1="270" x2="785" y2="288" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<text x="480" y="390" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="16" font-weight="700" fill="#111827" text-anchor="middle">FQDN 해부</text>
+<rect x="110" y="405" width="150" height="44" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.6"/>
+<text x="185.0" y="432.25" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="15" font-weight="700" fill="#111827" text-anchor="middle">web-service</text>
+<text x="185.0" y="470" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">Service 이름</text>
+<text x="270" y="433" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="22" font-weight="700" fill="#111827" text-anchor="middle">.</text>
+<rect x="280" y="405" width="150" height="44" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+<text x="355.0" y="432.25" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="15" font-weight="700" fill="#111827" text-anchor="middle">apps</text>
+<text x="355.0" y="470" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">네임스페이스</text>
+<text x="440" y="433" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="22" font-weight="700" fill="#111827" text-anchor="middle">.</text>
+<rect x="450" y="405" width="150" height="44" rx="10" fill="#ffedd5" stroke="#ea580c" stroke-width="1.6"/>
+<text x="525.0" y="432.25" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="15" font-weight="700" fill="#111827" text-anchor="middle">svc</text>
+<text x="525.0" y="470" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">종류 (svc / pod)</text>
+<text x="610" y="433" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="22" font-weight="700" fill="#111827" text-anchor="middle">.</text>
+<rect x="620" y="405" width="170" height="44" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+<text x="705.0" y="432.25" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="15" font-weight="700" fill="#111827" text-anchor="middle">cluster.local</text>
+<text x="705.0" y="470" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">루트 도메인</text>
+<text x="480" y="505" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">Pod 레코드: 10-244-2-5.apps.pod.cluster.local (IP의 점을 대시로)</text>
+<text x="480" y="530" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">search 줄은 Service용만 있어서 Pod는 FQDN 전체를 적어야 한다</text>
+</svg>

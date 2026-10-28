@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="470" viewBox="0 0 960 470">
+<defs>
+<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#374151"/></marker>
+<marker id="ahs" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#374151"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="480.0" y="34" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="20" font-weight="700" fill="#111827" text-anchor="middle">5·8·9장 · Pod가 만들어질 때 CNI 플러그인이 불리는 순서</text>
+<rect x="30" y="80" width="170" height="60" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="115.0" y="104.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="14" font-weight="700" fill="#111827" text-anchor="middle">kubelet</text>
+<text x="115.0" y="124.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">Pod 만들어라</text>
+<rect x="250" y="80" width="210" height="60" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="355.0" y="104.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="14" font-weight="700" fill="#111827" text-anchor="middle">컨테이너 런타임</text>
+<text x="355.0" y="124.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">containerd / CRI-O</text>
+<rect x="510" y="80" width="200" height="60" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+<text x="610.0" y="104.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="14" font-weight="700" fill="#111827" text-anchor="middle">① 네트워크 네임스페이스</text>
+<text x="610.0" y="124.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">생성</text>
+<line x1="200" y1="110" x2="248" y2="110" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<line x1="460" y1="110" x2="508" y2="110" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<rect x="250" y="200" width="260" height="70" rx="10" fill="#fef9c3" stroke="#ca8a04" stroke-width="1.6"/>
+<text x="380.0" y="220.55" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">② 설정 읽기: /etc/cni/net.d/</text>
+<text x="380.0" y="239.55" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">10-flannel.conflist</text>
+<text x="380.0" y="258.55" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">(여러 개면 알파벳 순 첫 번째)</text>
+<rect x="560" y="200" width="370" height="70" rx="10" fill="#ffedd5" stroke="#ea580c" stroke-width="1.6"/>
+<text x="745.0" y="220.55" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">③ 실행: /opt/cni/bin/flannel</text>
+<text x="745.0" y="239.55" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">ADD &lt;container-id&gt; &lt;netns&gt;</text>
+<text x="745.0" y="258.55" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">(이어서 portmap 등 체인)</text>
+<line x1="355" y1="140" x2="375" y2="198" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<line x1="510" y1="235" x2="558" y2="235" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<rect x="560" y="310" width="370" height="130" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="572" y="332" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#2563eb" text-anchor="start">플러그인이 하는 일 (7.3의 스크립트와 같음)</text>
+<text x="578" y="352" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#111827" text-anchor="start">· veth 쌍 만들고 한쪽은 Pod, 한쪽은 브리지(cni0)에</text>
+<text x="578" y="374" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#111827" text-anchor="start">· IPAM(host-local / dhcp)에서 빈 IP 받기 → Pod에 붙이기</text>
+<text x="578" y="396" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#111827" text-anchor="start">· 기본 게이트웨이 라우트 넣고 인터페이스 켜기</text>
+<text x="578" y="418" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#111827" text-anchor="start">· Pod 삭제 때는 DEL: 인터페이스 지우고 IP 반납</text>
+<line x1="745" y1="270" x2="745" y2="308" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<rect x="30" y="330" width="480" height="90" rx="10" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.6"/>
+<text x="270.0" y="360.55" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">CNI가 정한 책임 나누기</text>
+<text x="270.0" y="379.55" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">런타임: 네임스페이스 만들고, 설정 읽고, 플러그인을 ADD/DEL로 부른다</text>
+<text x="270.0" y="398.55" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">플러그인: ADD/DEL/CHECK 지원, 네트워크 연결과 IP 할당을 맡는다</text>
+</svg>

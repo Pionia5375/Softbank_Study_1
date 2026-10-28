@@ -1,0 +1,57 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="450" viewBox="0 0 960 450">
+<defs>
+<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#374151"/></marker>
+<marker id="ahs" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#374151"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="480.0" y="34" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="20" font-weight="700" fill="#111827" text-anchor="middle">1장 · 스위치는 같은 네트워크를, 라우터는 네트워크와 네트워크를 잇는다</text>
+<rect x="30" y="60" width="330" height="250" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="42" y="82" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#2563eb" text-anchor="start">네트워크 192.168.1.0/24</text>
+<rect x="600" y="60" width="330" height="250" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="612" y="82" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#2563eb" text-anchor="start">네트워크 192.168.2.0/24</text>
+<rect x="130" y="100" width="130" height="46" rx="10" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.6"/>
+<text x="195.0" y="127.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="14" font-weight="700" fill="#111827" text-anchor="middle">스위치</text>
+<rect x="50" y="210" width="130" height="56" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="115.0" y="232.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="14" font-weight="700" fill="#111827" text-anchor="middle">A</text>
+<text x="115.0" y="252.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">192.168.1.10</text>
+<rect x="210" y="210" width="130" height="56" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="275.0" y="232.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="14" font-weight="700" fill="#111827" text-anchor="middle">B</text>
+<text x="275.0" y="252.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">192.168.1.11</text>
+<line x1="195" y1="146" x2="115" y2="210" stroke="#374151" stroke-width="1.8"/>
+<line x1="195" y1="146" x2="275" y2="210" stroke="#374151" stroke-width="1.8"/>
+<rect x="700" y="100" width="130" height="46" rx="10" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.6"/>
+<text x="765.0" y="127.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="14" font-weight="700" fill="#111827" text-anchor="middle">스위치</text>
+<rect x="620" y="210" width="130" height="56" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="685.0" y="232.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="14" font-weight="700" fill="#111827" text-anchor="middle">C</text>
+<text x="685.0" y="252.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">192.168.2.10</text>
+<rect x="780" y="210" width="130" height="56" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="845.0" y="232.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="14" font-weight="700" fill="#111827" text-anchor="middle">D</text>
+<text x="845.0" y="252.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">192.168.2.11</text>
+<line x1="765" y1="146" x2="685" y2="210" stroke="#374151" stroke-width="1.8"/>
+<line x1="765" y1="146" x2="845" y2="210" stroke="#374151" stroke-width="1.8"/>
+<rect x="400" y="95" width="160" height="70" rx="10" fill="#ffedd5" stroke="#ea580c" stroke-width="1.6"/>
+<text x="480.0" y="124.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="14" font-weight="700" fill="#111827" text-anchor="middle">라우터</text>
+<text x="480.0" y="144.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">.1.1  |  .2.1</text>
+<line x1="260" y1="123" x2="398" y2="123" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)" marker-start="url(#ahs)"/>
+<line x1="562" y1="123" x2="698" y2="123" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)" marker-start="url(#ahs)"/>
+<rect x="400" y="220" width="160" height="56" rx="10" fill="#dcfce7" stroke="#16a34a" stroke-width="1.6"/>
+<text x="480.0" y="242.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="14" font-weight="700" fill="#111827" text-anchor="middle">인터넷 (구글)</text>
+<text x="480.0" y="262.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">172.217.194.0/24</text>
+<line x1="480" y1="165" x2="480" y2="218" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<rect x="30" y="340" width="330" height="74" rx="6" fill="#fef9c3" stroke="#ca8a04" stroke-width="1.6"/>
+<text x="38" y="360" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="700" fill="#111827" text-anchor="start">B의 라우팅 테이블</text>
+<text x="168" y="360" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="700" fill="#111827" text-anchor="start"></text>
+<text x="38" y="382" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#111827" text-anchor="start">192.168.2.0/24</text>
+<text x="168" y="382" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#111827" text-anchor="start">via 192.168.1.1</text>
+<text x="38" y="404" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#111827" text-anchor="start">default</text>
+<text x="168" y="404" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#111827" text-anchor="start">via 192.168.1.1</text>
+<rect x="600" y="340" width="330" height="74" rx="6" fill="#fef9c3" stroke="#ca8a04" stroke-width="1.6"/>
+<text x="608" y="360" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="700" fill="#111827" text-anchor="start">C의 라우팅 테이블</text>
+<text x="738" y="360" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="700" fill="#111827" text-anchor="start"></text>
+<text x="608" y="382" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#111827" text-anchor="start">192.168.1.0/24</text>
+<text x="738" y="382" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#111827" text-anchor="start">via 192.168.2.1</text>
+<text x="608" y="404" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#111827" text-anchor="start">default</text>
+<text x="738" y="404" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#111827" text-anchor="start">via 192.168.2.1</text>
+<text x="480" y="380" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">라우트는 양쪽 모두에 넣어야</text>
+<text x="480" y="400" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">답장이 돌아온다</text>
+</svg>

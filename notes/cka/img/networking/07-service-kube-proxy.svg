@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="470" viewBox="0 0 960 470">
+<defs>
+<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#374151"/></marker>
+<marker id="ahs" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#374151"/></marker>
+</defs>
+<rect width="100%" height="100%" fill="#ffffff"/>
+<text x="480.0" y="34" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="20" font-weight="700" fill="#111827" text-anchor="middle">10장 · Service IP는 어디에도 없다. kube-proxy가 심은 iptables 규칙만 있다</text>
+<rect x="370" y="60" width="220" height="56" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="480.0" y="82.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="14" font-weight="700" fill="#111827" text-anchor="middle">kube-apiserver</text>
+<text x="480.0" y="102.9" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="400" fill="#4b5563" text-anchor="middle">Service 생성 이벤트</text>
+<rect x="30" y="150" width="430" height="270" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="42" y="172" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#64748b" text-anchor="start">node1</text>
+<rect x="500" y="150" width="430" height="270" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="512" y="172" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#64748b" text-anchor="start">node2</text>
+<rect x="60" y="190" width="170" height="50" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="145.0" y="210.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">kube-proxy</text>
+<text x="145.0" y="229.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">(DaemonSet)</text>
+<rect x="530" y="190" width="170" height="50" rx="10" fill="#f8fafc" stroke="#64748b" stroke-width="1.6"/>
+<text x="615.0" y="210.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">kube-proxy</text>
+<text x="615.0" y="229.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">(DaemonSet)</text>
+<line x1="420" y1="116" x2="150" y2="188" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<text x="250" y="140" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">watch</text>
+<line x1="540" y1="116" x2="615" y2="188" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<text x="610" y="140" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">watch</text>
+<rect x="250" y="190" width="190" height="50" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+<text x="345.0" y="210.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">db Pod</text>
+<text x="345.0" y="229.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">10.244.1.2:3306</text>
+<rect x="720" y="190" width="190" height="50" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+<text x="815.0" y="210.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">web Pod</text>
+<text x="815.0" y="229.05" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">10.244.2.5</text>
+<rect x="60" y="280" width="380" height="80" rx="10" fill="#fef9c3" stroke="#ca8a04" stroke-width="1.6"/>
+<text x="250.0" y="305.55" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">iptables nat (모든 노드에 같은 규칙)</text>
+<text x="250.0" y="324.55" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">dst 10.103.132.104:3306</text>
+<text x="250.0" y="343.55" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">→ DNAT 10.244.1.2:3306</text>
+<line x1="145" y1="240" x2="145" y2="278" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<text x="190" y="262" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">규칙 생성</text>
+<rect x="530" y="280" width="380" height="80" rx="10" fill="#fef9c3" stroke="#ca8a04" stroke-width="1.6"/>
+<text x="720.0" y="305.55" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">iptables nat (모든 노드에 같은 규칙)</text>
+<text x="720.0" y="324.55" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">dst 10.103.132.104:3306</text>
+<text x="720.0" y="343.55" font-family="'DejaVu Sans Mono',monospace" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">→ DNAT 10.244.1.2:3306</text>
+<line x1="615" y1="240" x2="615" y2="278" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<text x="660" y="262" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">규칙 생성</text>
+<line x1="815" y1="240" x2="720" y2="278" stroke="#374151" stroke-width="1.8" marker-end="url(#ah)"/>
+<text x="860" y="262" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">db-service:3306 로 접속</text>
+<line x1="530" y1="345" x2="345" y2="242" stroke="#374151" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#ah)"/>
+<text x="300" y="268" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="12" font-weight="400" fill="#4b5563" text-anchor="middle">Pod IP로 전달</text>
+<rect x="30" y="430" width="430" height="30" rx="10" fill="#dbeafe" stroke="#2563eb" stroke-width="1.6"/>
+<text x="245.0" y="449.55" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">Pod CIDR 10.244.0.0/16 (CNI가 할당)</text>
+<rect x="500" y="430" width="430" height="30" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="1.6"/>
+<text x="715.0" y="449.55" font-family="'WenQuanYi Zen Hei','Noto Sans KR','Apple SD Gothic Neo',sans-serif" font-size="13" font-weight="700" fill="#111827" text-anchor="middle">Service CIDR 10.96.0.0/12 (apiserver가 할당) · 겹치면 안 됨</text>
+</svg>
