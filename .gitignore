@@ -17,3 +17,6 @@ labs/**/results/*.log
 
 # Claude Code / oh-my-claudecode 플러그인 상태 파일
 .omc/
+# 드릴 스크립트가 쓰는 원본 기록 (git 제외)
+starter-pack/**/results/*.csv
+starter-pack/**/results/*.log

@@ -1,0 +1,40 @@
+# 샘플 앱 podinfo 를 Helm 차트로 올리는 Application. Claude 작성, 완성본.
+# podinfo = Go 로 짠 작은 데모 웹앱. /metrics(Prometheus 지표), /status/500(일부러 에러), /delay/2(일부러 느리게) 가 있어서
+#   골든 시그널·알림 실험에 앱 코드를 안 고쳐도 된다. https://github.com/stefanprodan/podinfo
+# 차트 값 전체: helm show values podinfo --repo https://stefanprodan.github.io/podinfo --version 6.17.0
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: podinfo
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    # Git 이 아니라 Helm 저장소를 source 로 쓸 때는 repoURL = 차트 저장소, chart = 차트 이름, targetRevision = 차트 버전
+    repoURL: https://stefanprodan.github.io/podinfo
+    chart: podinfo
+    targetRevision: 6.17.0    # 【사실: charts/podinfo/Chart.yaml master, 2026-10-28 조회】. 범위(6.*)도 되지만 재현성을 위해 고정
+    helm:
+      # values.yaml 을 따로 두지 않고 여기 바로 쓴다 (valuesObject). 파일이 하나라 읽기 쉽다
+      valuesObject:
+        replicaCount: 2            # 셀프 연습: 3 으로 바꿔 push → 반영까지 몇 초?
+        service:
+          type: NodePort           # 맥 9898 → kind 노드 31198 → 여기 (cluster/kind-config.yaml)
+          nodePort: 31198
+        serviceMonitor:
+          enabled: true            # Prometheus Operator 에게 "podinfo Service 의 http 포트 /metrics 를 15초마다 긁어라" 를 YAML 로 알린다
+          interval: 15s
+        resources:
+          requests: { cpu: 20m, memory: 32Mi }
+          limits: { memory: 128Mi }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: podinfo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true       # podinfo 네임스페이스가 없으면 만든다

@@ -1,0 +1,28 @@
+# 30분 드릴용 kind 클러스터. Claude 작성, 완성본.
+# kind = 쿠버네티스 "노드" 하나를 Docker 컨테이너 하나로 흉내 내는 도구. 아래 노드 3개 = 컨테이너 3개.
+# poc/01 설정(노드 2개)과 다른 점: 워커가 2개(파드가 두 노드에 퍼지는 걸 보기 위해), 맥 9898 포트 → podinfo.
+# Cilium·taint 는 안 쓴다 (드릴은 "빨리, 매번 같게" 가 목적. 그건 poc/03·04 의 몫).
+# 문서: https://kind.sigs.k8s.io/docs/user/configuration/
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+# kubectl 컨텍스트 이름은 kind-prep 이 된다
+name: prep
+nodes:
+  # 컨트롤 플레인: API 서버·etcd·스케줄러·컨트롤러 매니저가 사는 노드 (01-cluster-boot.md 1절)
+  - role: control-plane
+    image: kindest/node:v1.37.0
+    extraPortMappings:
+      # 맥 localhost:9898 → 이 노드의 31198 → podinfo Service(NodePort 31198) → podinfo 파드
+      # podinfo 차트의 service.nodePort 기본값이 31198 이라 그대로 썼다 (gitops/apps/podinfo.yaml)
+      # NodePort 는 모든 노드에 열리므로 컨트롤 플레인에만 매핑해도 워커의 파드까지 간다
+      - containerPort: 31198
+        hostPort: 9898
+        protocol: TCP
+  # 워커 2개: podinfo 2개가 각각 다른 노드에 뜨는지 kubectl get pods -o wide 로 본다
+  - role: worker
+    image: kindest/node:v1.37.0
+  - role: worker
+    image: kindest/node:v1.37.0
+networking:
+  # false = kind 기본 CNI(kindnet). 설치 시간 0초. Cilium 이 필요하면 poc/04 rebuild-cluster.sh 를 쓴다
+  disableDefaultCNI: false

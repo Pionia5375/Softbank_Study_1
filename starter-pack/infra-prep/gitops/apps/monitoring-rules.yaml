@@ -1,0 +1,27 @@
+# 알림 규칙(PrometheusRule) + Grafana 대시보드(ConfigMap) 를 Git 에서 올리는 Application. Claude 작성, 완성본.
+# "알림 규칙도 코드" 의 최소 모양: gitops/monitoring/ 폴더의 YAML 을 그대로 monitoring 네임스페이스에 적용한다.
+# 전제: kube-prometheus-stack 이 먼저 깔려 있어야 한다 (PrometheusRule 이라는 종류(CRD)를 그 차트가 만든다).
+#   drill-30.sh 가 순서를 지킨다. 순서가 꼬이면 이 앱이 "CRD 없음" 으로 잠깐 실패하다가 kps 가 뜨면 알아서 성공한다.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring-rules
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1
+    targetRevision: main
+    path: starter-pack/infra-prep/gitops/monitoring
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 5                    # CRD 가 아직 없을 때를 대비해 5번까지 다시 시도
+      backoff: { duration: 10s, factor: 2, maxDuration: 2m }

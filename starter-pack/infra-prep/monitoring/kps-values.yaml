@@ -1,0 +1,79 @@
+# kube-prometheus-stack 드릴용 다이어트 값. Claude 작성, 완성본.
+#   helm upgrade --install kps prometheus-community/kube-prometheus-stack --version 92.14.1 \
+#     -n monitoring --create-namespace -f starter-pack/infra-prep/monitoring/kps-values.yaml --wait --timeout 10m
+# 차트 92.14.1 = Prometheus Operator v0.94.2 【사실: charts/kube-prometheus-stack/Chart.yaml main, 2026-10-28 조회】
+# labs/06/values/kps-values.yaml 과 거의 같고, Loki 데이터소스만 뺐다 (드릴엔 로그 스택 없음).
+# 키 이름은 차트 values.yaml 기준: https://github.com/prometheus-community/helm-charts/blob/main/charts/kube-prometheus-stack/values.yaml
+
+# 릴리스 이름을 짧게 → Service 가 kps-prometheus, kps-grafana, kps-operator 가 된다 (ports.sh 가 이 이름을 쓴다)
+fullnameOverride: kps
+
+# 알림 "발송기". 규칙 평가(울리는 것)는 Prometheus 가 하고, Alertmanager 는 그걸 Slack·메일로 보낸다.
+# 드릴은 Prometheus UI 의 Alerts 탭에서 "FIRING" 을 보는 것까지. Slack 으로 보내는 건 03-monitoring-basics.md 5절
+alertmanager:
+  enabled: false
+
+# kind 에선 이 네 부품이 127.0.0.1 에만 열려 있어 Prometheus 가 못 긁는다 → "target down" 소음만 생기니 끈다
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+grafana:
+  adminPassword: admin            # 로컬 전용. 실제 환경은 admin.existingSecret
+  defaultDashboardsEnabled: true  # 차트가 주는 K8s 기본 대시보드 (노드·파드 CPU/메모리). 유용해서 켠다
+  defaultDashboardsTimezone: browser
+  testFramework:
+    enabled: false
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { memory: 384Mi }
+  sidecar:
+    resources:
+      requests: { cpu: 10m, memory: 48Mi }
+      limits: { memory: 128Mi }
+    dashboards:
+      # label grafana_dashboard="1" 이 붙은 ConfigMap 을 모든 네임스페이스에서 주워 대시보드로 올린다.
+      # gitops/monitoring/podinfo-dashboard.yaml 이 이 라벨을 달고 있다 → Argo CD 가 올리면 Grafana 에 자동으로 뜬다
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: ALL
+    datasources:
+      alertmanager:
+        enabled: false
+
+prometheusOperator:
+  resources:
+    requests: { cpu: 20m, memory: 64Mi }
+    limits: { memory: 192Mi }
+
+prometheus:
+  prometheusSpec:
+    scrapeInterval: 15s        # 15초마다 긁는다. rate([2m]) 창에 점 8개
+    evaluationInterval: 15s    # 알림 규칙도 15초마다 평가
+    retention: 1d
+    retentionSize: 1GB
+    # 핵심 3줄: false = "이 Helm 릴리스가 만든 것만" 이 아니라 클러스터의 모든 ServiceMonitor / PodMonitor / PrometheusRule 을 본다.
+    # podinfo 차트의 ServiceMonitor 와 gitops/monitoring/ 의 PrometheusRule 은 Argo CD 가 따로 올리므로 이게 없으면 무시된다
+    serviceMonitorSelectorNilUsesHelmValues: false
+    podMonitorSelectorNilUsesHelmValues: false
+    ruleSelectorNilUsesHelmValues: false
+    resources:
+      requests: { cpu: 100m, memory: 256Mi }
+      limits: { memory: 1Gi }
+    # storageSpec 없음 = emptyDir. 파드가 지워지면 지표도 사라진다. 드릴엔 충분
+
+kube-state-metrics:
+  resources:
+    requests: { cpu: 10m, memory: 32Mi }
+    limits: { memory: 128Mi }
+
+prometheus-node-exporter:
+  resources:
+    requests: { cpu: 10m, memory: 24Mi }
+    limits: { memory: 64Mi }

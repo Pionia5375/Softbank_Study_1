@@ -1,0 +1,25 @@
+# 드릴의 App of Apps "뿌리". Claude 작성, 완성본. (poc/01-argocd/gitops/root.yaml 과 같은 구조)
+# 이 Application 하나를 kubectl apply 하면 Argo CD 가 apps/ 폴더의 Application 들(podinfo, monitoring-rules)을 만들고,
+# 그 Application 들이 각자 차트·YAML 을 올린다. 새 앱 = apps/ 에 파일 하나 + git push.
+# 문서: https://argo-cd.readthedocs.io/en/stable/operator-manual/cluster-bootstrapping/
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    # root 를 지우면 자식 Application 과 그 리소스까지 같이 지운다 (cascade). 없으면 Application 만 사라지고 파드는 남는다
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Pionia5375/Softbank_Study_1
+    targetRevision: main
+    path: starter-pack/infra-prep/gitops/apps   # Chart.yaml 이 없는 폴더 = "YAML 묶음(directory)" 으로 읽는다
+  destination:
+    server: https://kubernetes.default.svc      # Argo CD 가 깔린 바로 그 클러스터
+    namespace: argocd                           # Application 오브젝트는 argocd 네임스페이스에 있어야 Argo CD 가 알아본다
+  syncPolicy:
+    automated:
+      prune: true      # Git 에서 파일을 지우면 클러스터에서도 지운다
+      selfHeal: true   # 누가 kubectl 로 손대면 Git 상태로 되돌린다

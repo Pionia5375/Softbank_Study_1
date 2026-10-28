@@ -1,0 +1,67 @@
+# podinfo 골든 시그널 4개 대시보드. Claude 작성, 완성본.
+# Grafana 사이드카가 label grafana_dashboard="1" 인 ConfigMap 을 찾아 자동으로 올린다 (monitoring/kps-values.yaml).
+# Grafana → Dashboards → "podinfo · 골든 시그널 4개". 패널 4개 = 지연 / 트래픽 / 에러 / 포화 (03-monitoring-basics.md 1절)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: podinfo-golden-signals
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  podinfo-golden-signals.json: |
+    {
+      "title": "podinfo · 골든 시그널 4개",
+      "uid": "podinfo-golden",
+      "schemaVersion": 39,
+      "editable": true,
+      "time": { "from": "now-15m", "to": "now" },
+      "refresh": "10s",
+      "panels": [
+        {
+          "id": 1, "type": "timeseries", "title": "1. 지연 (p50 / p95 / p99, 초)",
+          "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+          "targets": [
+            { "refId": "p50", "legendFormat": "p50", "expr": "histogram_quantile(0.50, sum by (le) (rate(http_request_duration_seconds_bucket{namespace=\"podinfo\"}[2m])))" },
+            { "refId": "p95", "legendFormat": "p95", "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{namespace=\"podinfo\"}[2m])))" },
+            { "refId": "p99", "legendFormat": "p99", "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{namespace=\"podinfo\"}[2m])))" }
+          ]
+        },
+        {
+          "id": 2, "type": "timeseries", "title": "2. 트래픽 (초당 요청 수, 파드별)",
+          "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+          "targets": [
+            { "refId": "A", "legendFormat": "{{pod}}", "expr": "sum by (pod) (rate(http_requests_total{namespace=\"podinfo\"}[2m]))" }
+          ]
+        },
+        {
+          "id": 3, "type": "timeseries", "title": "3. 에러 (5xx 비율, 알림 문턱 5%)",
+          "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit", "min": 0, "max": 1,
+              "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 0.05 } ] },
+              "custom": { "thresholdsStyle": { "mode": "line" } }
+            }, "overrides": []
+          },
+          "targets": [
+            { "refId": "A", "legendFormat": "5xx 비율", "expr": "1 - podinfo:http_success_ratio:rate2m" }
+          ]
+        },
+        {
+          "id": 4, "type": "timeseries", "title": "4. 포화 (CPU 사용 ÷ requests, 메모리 ÷ limit)",
+          "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0 }, "overrides": [] },
+          "targets": [
+            { "refId": "cpu", "legendFormat": "cpu {{pod}}", "expr": "sum by (pod) (rate(container_cpu_usage_seconds_total{namespace=\"podinfo\", container=\"podinfo\"}[2m])) / sum by (pod) (kube_pod_container_resource_requests{namespace=\"podinfo\", container=\"podinfo\", resource=\"cpu\"})" },
+            { "refId": "mem", "legendFormat": "mem {{pod}}", "expr": "sum by (pod) (container_memory_working_set_bytes{namespace=\"podinfo\", container=\"podinfo\"}) / sum by (pod) (kube_pod_container_resource_limits{namespace=\"podinfo\", container=\"podinfo\", resource=\"memory\"})" }
+          ]
+        }
+      ]
+    }

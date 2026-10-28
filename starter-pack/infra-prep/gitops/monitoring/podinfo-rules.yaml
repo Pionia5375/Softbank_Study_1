@@ -1,0 +1,44 @@
+# podinfo 의 SLO 와 알림 1개. Claude 작성, 완성본. 설명은 03-monitoring-basics.md 3~4절.
+# PrometheusRule = "Prometheus 설정 파일에 넣을 규칙" 을 K8s 리소스로 쓴 것. Operator 가 보고 Prometheus 설정에 넣어 준다.
+# 문서: https://prometheus.io/docs/prometheus/latest/configuration/alerting_rules/
+#       https://prometheus-operator.dev/docs/developer/alerting/
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: podinfo-slo
+  namespace: monitoring
+spec:
+  groups:
+    - name: podinfo.slo
+      interval: 15s
+      rules:
+        # ---- 기록 규칙(record): 자주 쓰는 계산을 미리 해서 새 지표 이름으로 저장. 대시보드·알림이 같은 숫자를 쓴다 ----
+        # 요청 성공률(5xx 가 아닌 비율), 최근 2분. podinfo 의 http_requests_total 은 status 라벨 하나만 있고,
+        # namespace 라벨은 Prometheus 가 긁을 때 붙인다 (ServiceMonitor 경유)
+        - record: podinfo:http_success_ratio:rate2m
+          expr: |
+            1 - (
+              (sum(rate(http_requests_total{namespace="podinfo", status=~"5.."}[2m])) or vector(0))
+              /
+              sum(rate(http_requests_total{namespace="podinfo"}[2m]))
+            )
+        # p95 지연(초), 최근 2분. _bucket 은 "0.005초 이하 몇 개, 0.01초 이하 몇 개..." 칸별 누적이고 le 가 칸 경계
+        - record: podinfo:http_latency_p95_seconds:rate2m
+          expr: |
+            histogram_quantile(0.95,
+              sum by (le) (rate(http_request_duration_seconds_bucket{namespace="podinfo"}[2m])))
+
+        # ---- 알림 1개: 에러율이 5% 를 1분 넘게 넘으면 ----
+        # SLO 는 "성공률 99% (30일)" 인데 알림 문턱은 5% 로 더 느슨하다. 이유:
+        #   알림은 "지금 당장 사람이 봐야 하나" 를 묻는 것이고, 1% 를 잠깐 넘는 건 30일 예산 안에서 흡수된다.
+        #   5% 실패가 이어지면 예산을 평소의 5배 속도로 태우는 것(burn rate 5) = 30일 예산이 6일 만에 바닥 (계산은 03 문서 3절)
+        - alert: PodinfoHighErrorRate
+          expr: podinfo:http_success_ratio:rate2m < 0.95
+          for: 1m                      # 조건이 1분 내내 참이어야 FIRING. 그 전엔 PENDING (한 번 튄 값에 안 울리게)
+          labels:
+            severity: warning
+            team: platform
+          annotations:
+            summary: "podinfo 성공률 {{ $value | humanizePercentage }} (5% 넘게 실패 중)"
+            description: "최근 2분 podinfo 5xx 비율이 5% 를 넘은 지 1분. 먼저 kubectl -n podinfo get pods, 그다음 최근 배포 확인."
+            runbook: "starter-pack/infra-prep/03-monitoring-basics.md#4-알림-1개"

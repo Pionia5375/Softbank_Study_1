@@ -1,0 +1,40 @@
+# 본선 팀 공용 도구 목록. 맥에서 `brew bundle --file=starter-pack/infra-prep/Brewfile` 한 줄로 전부 설치/확인.
+#   brew bundle = 이 파일에 적힌 것 중 없는 것만 깐다. 이미 있으면 건너뛴다 (두 번 돌려도 안전).
+#   확인만: brew bundle check --file=starter-pack/infra-prep/Brewfile
+# 문서: https://docs.brew.sh/Brew-Bundle-and-Brewfile
+
+# ---- 컨테이너 ----
+cask "docker"                 # Docker Desktop. kind·k3d 가 이 위에서 돈다. Settings → Resources 메모리 10GB 이상
+
+# ---- 클러스터 만들기 ----
+brew "kind"                   # k8s 노드를 Docker 컨테이너로. 연습 기본
+brew "k3d"                    # k3s 를 Docker 컨테이너로. k3s 빠른 길
+cask "multipass"              # Ubuntu VM 을 한 줄로. k3s 를 "진짜 노드 2대" 로 해 볼 때
+
+# ---- 클러스터 다루기 ----
+brew "kubernetes-cli"         # kubectl
+brew "helm"                   # 차트 설치
+brew "kubectx"                # kubectx(컨텍스트 전환) + kubens(네임스페이스 전환). 클러스터가 여럿일 때 사고 방지
+brew "stern"                  # 여러 파드 로그를 한 번에 tail
+brew "k9s"                    # 터미널 UI. 파드·로그·이벤트를 키보드로. 데모 때 화면 공유용으로도 좋다
+brew "jq"                     # JSON 자르기 (스크립트가 쓴다)
+brew "yq"                     # YAML 자르기
+
+# ---- GitOps · 배포 ----
+brew "argocd"                 # argocd CLI (UI 없이 app sync/get)
+brew "argoproj/tap/kubectl-argo-rollouts"   # Rollout 상태 보기 (poc/02)
+
+# ---- 네트워크 ----
+brew "cilium-cli"             # Cilium 설치·상태 (poc/03·04 에서만 필요)
+
+# ---- 부하 · 측정 ----
+brew "k6"                     # 부하 도구 (labs/06)
+brew "hey"                    # 한 줄 부하 (`hey -z 30s -q 20 url`). 알림 울릴 때 편하다
+
+# ---- 코드로 인프라 ----
+brew "hashicorp/tap/terraform"   # labs/07, poc/07. AWS 는 승인 후 로컬에서만
+brew "awscli"                 # aws CLI v2. 본선 당일 쓰게 되면 필요
+cask "session-manager-plugin" # SSH 없이 EC2 접속 (poc/07)
+
+# ---- 선택 ----
+brew "gh"                     # GitHub CLI (PR·이슈를 터미널에서)
