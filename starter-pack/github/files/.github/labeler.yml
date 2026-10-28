@@ -1,0 +1,29 @@
+# PR이 바꾼 경로를 보고 area 라벨을 자동으로 붙인다 (actions/labeler v5 형식).
+# 주제가 정해져 apps/ 아래가 나뉘면 여기에 줄을 추가한다. 예:
+#   area:api:
+#     - changed-files:
+#         - any-glob-to-any-file: "apps/api/**"
+
+area:apps:
+  - changed-files:
+      - any-glob-to-any-file: "apps/**"
+
+area:infra:
+  - changed-files:
+      - any-glob-to-any-file: "infra/**"
+
+area:manifests:
+  - changed-files:
+      - any-glob-to-any-file: "manifests/**"
+
+area:docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "**/*.md"
+
+area:ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"
+          - "scripts/**"

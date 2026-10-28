@@ -1,0 +1,5 @@
+# 기본 방침은 CODEOWNERS를 쓰지 않는 것 (02-strategy.md 6절).
+# 결정 기록만 리드 리뷰를 강제하고 싶으면 이 파일을 CODEOWNERS로 이름을 바꾸고 핸들을 채운다.
+# 규칙: "경로  @깃허브핸들" — 그 경로가 바뀐 PR은 그 사람 승인이 있어야 병합된다.
+
+# docs/decisions/  @TODO-lead-handle

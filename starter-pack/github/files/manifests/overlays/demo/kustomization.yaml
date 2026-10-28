@@ -1,0 +1,16 @@
+# demo: 발표 때 쓰는 환경. replica 2로 고정 (오토스케일 데모가 아니면 흔들리지 않게).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base/hello
+labels:
+  - pairs:
+      env: demo
+patches:
+  - target:
+      kind: Deployment
+      name: hello
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 2

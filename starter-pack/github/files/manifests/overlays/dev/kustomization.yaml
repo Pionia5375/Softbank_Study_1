@@ -1,0 +1,9 @@
+# dev: 로컬 kind와 CI가 쓰는 환경. 최소 자원, replica 1.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base/hello
+# 모든 리소스 metadata에 env 라벨을 붙인다 (selector에는 안 붙임)
+labels:
+  - pairs:
+      env: dev

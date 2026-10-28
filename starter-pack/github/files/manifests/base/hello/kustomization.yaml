@@ -1,0 +1,8 @@
+# CI와 로컬 smoke 테스트가 "클러스터에 뭔가 뜨는지"를 확인하는 데 쓰는 최소 앱.
+# 주제가 정해지면 실제 서비스로 바꾸거나, 이 폴더를 지우고 overlays의 resources에서 뺀다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml

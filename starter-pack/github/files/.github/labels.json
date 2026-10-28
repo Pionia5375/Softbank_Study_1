@@ -1,0 +1,14 @@
+[
+  { "name": "area:apps",        "color": "1d76db", "description": "apps/ 변경 (자동)" },
+  { "name": "area:infra",       "color": "5319e7", "description": "infra/ Terraform 변경 (자동)" },
+  { "name": "area:manifests",   "color": "0e8a16", "description": "manifests/ k8s 변경 (자동)" },
+  { "name": "area:docs",        "color": "c5def5", "description": "docs/·README 변경 (자동)" },
+  { "name": "area:ci",          "color": "bfdadc", "description": ".github/·scripts/ 변경 (자동)" },
+  { "name": "P0-demo",          "color": "b60205", "description": "데모 경로. 이것부터" },
+  { "name": "P1",               "color": "d93f0b", "description": "발표 전까지" },
+  { "name": "P2",               "color": "fbca04", "description": "시간 남으면" },
+  { "name": "blocked",          "color": "000000", "description": "다른 작업·결정·외부 요인에 막힘. 본문에 무엇에 막혔는지" },
+  { "name": "needs-decision",   "color": "e99695", "description": "팀 결정 필요. Notion 안건으로" },
+  { "name": "skip-review",      "color": "cccccc", "description": "리뷰 1시간 무응답으로 본인 병합. 사유 필수" },
+  { "name": "judging-evidence", "color": "006b75", "description": "측정값·ADR·대안 비교 포함. 발표 증거 목록" }
+]

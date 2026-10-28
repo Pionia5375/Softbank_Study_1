@@ -1,0 +1,6 @@
+# 빈 이슈(템플릿 없음)를 막는다. 계획·회의록은 Notion으로 보낸다.
+blank_issues_enabled: false
+contact_links:
+  - name: 기능 계획 · 회의록 · 일정 (Notion)
+    url: https://www.notion.so/TODO-team-workspace
+    about: 기능 단위 태스크(T01~)와 회의록은 Notion에. 여기는 코드 단위 작업만.

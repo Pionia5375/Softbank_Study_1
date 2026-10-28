@@ -1,0 +1,25 @@
+# 시크릿·로컬 상태. 절대 커밋하지 않는다
+.env
+*.tfvars
+!*.tfvars.example
+kubeconfig*
+*.pem
+*.key
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+
+# OS·에디터
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# 빌드 산출물 (언어 확정 후 추가)
+node_modules/
+dist/
+build/
+target/

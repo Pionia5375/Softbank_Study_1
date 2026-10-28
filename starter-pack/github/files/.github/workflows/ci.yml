@@ -1,0 +1,138 @@
+# PR마다 돈다. 바뀐 경로에 해당하는 잡만 실행하고, 마지막 `ci` 잡이 결과를 하나로 모은다.
+# main 보호 규칙은 `ci` 하나만 요구한다 (건너뛴 잡 때문에 PR이 "대기"에 걸리지 않게).
+# 클러스터 배포·AWS 접근은 하지 않는다. kind-smoke는 러너 안에 임시 클러스터를 만든다.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 같은 PR에 새 커밋이 오면 이전 실행은 취소한다
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 1) 무엇이 바뀌었는지 분류
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      workflows: ${{ steps.filter.outputs.workflows }}
+      manifests: ${{ steps.filter.outputs.manifests }}
+      infra: ${{ steps.filter.outputs.infra }}
+      apps: ${{ steps.filter.outputs.apps }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            workflows:
+              - ".github/**"
+            manifests:
+              - "manifests/**"
+              - "scripts/smoke.sh"
+            infra:
+              - "infra/**"
+            apps:
+              - "apps/**"
+
+  # 2) 워크플로 YAML 자체 검사
+  workflows:
+    needs: changes
+    if: needs.changes.outputs.workflows == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
+
+  # 3) 매니페스트 렌더링 + 스키마 검증 (overlay마다)
+  manifests:
+    needs: changes
+    if: needs.changes.outputs.manifests == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        overlay: [dev, demo]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-kubectl@v4
+      - name: Install kubeconform
+        run: |
+          curl -fsSL https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | sudo tar xz -C /usr/local/bin kubeconform
+      - name: Render and validate manifests/overlays/${{ matrix.overlay }}
+        run: |
+          kubectl kustomize "manifests/overlays/${{ matrix.overlay }}" \
+            | kubeconform -strict -summary -ignore-missing-schemas
+
+  # 4) Terraform 문법만 (init은 backend 없이, apply 없음, AWS 자격증명 없음)
+  infra:
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: terraform fmt
+        run: terraform fmt -check -recursive infra
+      - name: terraform validate (모든 .tf 디렉터리)
+        run: |
+          for d in $(find infra -name '*.tf' -printf '%h\n' | sort -u); do
+            echo "== $d"
+            terraform -chdir="$d" init -backend=false -input=false >/dev/null
+            terraform -chdir="$d" validate
+          done
+
+  # 5) 실제로 뜨나: 러너 안 kind 클러스터에 dev overlay 적용 → 대기 → curl
+  kind-smoke:
+    needs: changes
+    if: needs.changes.outputs.manifests == 'true' || needs.changes.outputs.apps == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: ci
+      - name: Apply dev overlay
+        run: kubectl apply -k manifests/overlays/dev
+      - name: Smoke test
+        run: bash scripts/smoke.sh
+      - name: Dump state on failure
+        if: failure()
+        run: |
+          kubectl get all -A
+          kubectl describe pods -A | tail -n 200
+
+  # 6) TODO(team): 앱 언어가 정해지면 빌드·테스트 추가
+  # app:
+  #   needs: changes
+  #   if: needs.changes.outputs.apps == 'true'
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - run: make -C apps test
+
+  # 7) 결과 집계. 보호 규칙이 요구하는 체크는 이것 하나.
+  ci:
+    needs: [changes, workflows, manifests, infra, kind-smoke]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any needed job failed or was cancelled
+        run: |
+          echo '${{ toJSON(needs) }}' | tee needs.json
+          if grep -Eq '"result": "(failure|cancelled)"' needs.json; then
+            echo "::error::some CI job failed"; exit 1
+          fi
+          echo "all good (skipped jobs count as pass)"

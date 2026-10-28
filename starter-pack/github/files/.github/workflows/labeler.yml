@@ -1,0 +1,18 @@
+# PR이 열리거나 커밋이 추가될 때 .github/labeler.yml 규칙대로 area 라벨을 붙인다.
+name: labeler
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/labeler@v5
+        with:
+          sync-labels: true
