@@ -16,10 +16,10 @@
 
 ## 2. 레포 · 브랜치 · PR 규칙
 
-- GitHub 스레드 결론 링크: (레포 `CONTRIBUTING.md`)
-- 한 줄 요약: 브랜치 `feat/파트-기능`, PR은 작게·하루 안에 머지, 리뷰 1명.
-- 커밋 접두어: feat / fix / chore / docs
-- 정적 분석·린트: CI가 돌림. 정책 문서 따로 없음.
+- 전체 규칙: 레포 `CONTRIBUTING.md` (출처: `starter-pack/github/02-strategy.md`)
+- 한 줄 요약: 모노레포, `main` 하나 + squash, PR은 작게·하루 안에 머지, 리뷰 1명.
+- 이슈 1 = PR 1. 이슈 첫 줄에 노션 Task URL, PR 첫 줄에 `Closes #N`. GitHub Projects·Wiki 안 씀.
+- 정적 분석·린트: CI(`.github/workflows/ci.yml`)가 돌림. 정책 문서 따로 없음.
 
 ## 3. 공통 도구
 

@@ -76,7 +76,10 @@ md 파일은 "페이지 본문"만 붙여넣기가 된다(제목·불릿·표·�
 | Personal Memo | **유지** (단, 쓰기 싫은 사람은 안 써도 됨) | 개인 평가에 자기 기여가 보임 |
 | 위키/용어집 | 뺌 | 1주짜리엔 과함 |
 
-결정 필요 1개: **Tasks를 노션 보드로 할지, GitHub Issues/Projects로 할지.** 내 추천은 노션 보드(기능 단위 15~30개, PR 링크 속성)이고, 코드 수준 세부는 GitHub 이슈에. 이유: 심사위원·비개발 관점에서 "진행 상황"을 노션 한 화면에서 보여야 하고, 두 군데에 같은 보드를 두면 하나는 죽는다. GitHub 스레드 결론과 맞춰 하나로 정한다.
+**Tasks 위치는 GitHub 스레드와 합의 완료** (`starter-pack/github/02-strategy.md` §3·§9):
+- 노션 Tasks DB = 기능 단위 보드(15~30개). GitHub Issue = 코드 단위(이슈 1 = PR 1). **GitHub Projects 보드는 안 만든다** (보드가 둘이면 둘 다 안 맞게 됨).
+- 연결은 URL 양방향: 노션 카드 `링크` 속성에 이슈 URL ↔ 이슈 본문 첫 줄에 노션 카드 URL. PR 본문 첫 줄 `Closes #N`으로 이슈는 자동 닫힘, 노션 카드는 작업자가 Done으로.
+- ADR 원본은 노션 Decisions DB. 레포 `docs/decisions/`는 11/6에 한 번 export한 사본. PR 템플릿 "대안" 칸에 노션 ADR 링크.
 
 ## 5. 운영 규칙 (홈에도 적어 둠)
 
@@ -91,7 +94,7 @@ md 파일은 "페이지 본문"만 붙여넣기가 된다(제목·불릿·표·�
 
 1. **Meetings·Decisions·Tasks를 DB 3개로 분리** — 대안: Yellow처럼 회의록 페이지 안에 다 쓰기(단순하지만 결정·진행이 묻힘), 또는 DB 1개에 종류 속성(필터 지옥). 3개가 "진행 가시성"의 최소.
 2. **Design Doc 1페이지 = 발표 자료** — 대안: Yellow식 Docs 9페이지 나열. 2분 안에 보여줄 수 없고 스키마·측정이 흩어짐.
-3. **Tasks는 노션 보드(기능 단위), 코드 세부는 GitHub 이슈** — 대안: GitHub Projects만 쓰고 노션에 임베드(노션 임베드는 로그인 벽·갱신 지연 【추정】). GitHub 스레드와 합의 후 확정.
+3. **Tasks는 노션 보드(기능 단위), 코드 세부는 GitHub 이슈, Projects 보드 없음** — 대안: GitHub Projects만 쓰고 노션에 임베드(노션 임베드는 로그인 벽·갱신 지연 【추정】). GitHub 스레드와 합의 완료(`starter-pack/github/02-strategy.md`).
 
 ## 셀프 연습 1개
 
