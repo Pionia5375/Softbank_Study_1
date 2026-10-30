@@ -144,7 +144,7 @@ card(890, 640, 420, 176, "환경 추상화 (Helm)", [
     "앱 = Helm chart 하나 · values-aws/gcp/azure/onprem",
     "테넌트마다 AppProject: 자기 레포·클러스터에만 배포",
     "Helm = k8s 층 · Terraform = 클라우드 층(VPC·클러스터·DB)",
-    "?결정: 데모 이전 경로 (AWS→GCP / GCP→Azure …)",
+    "?가정: 데모 = AWS ECS → GCP GKE (팀 확정)",
 ], ["MUST", "예선"], tag="IR · PRF · ADP")
 arrow("M650 612 L650 636", "e-api"); arrow("M1100 612 L1100 636", "e-api")
 
