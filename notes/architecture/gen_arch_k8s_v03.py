@@ -136,9 +136,9 @@ arrow("M650 382 L650 408", "e-api"); arrow("M1100 382 L1100 408", "e-api")
 
 card(440, 640, 420, 176, "보안 수집기 (같은 기준)", [
     "점검: Kyverno · Prowler · Trivy = 같은 통제 ID",
-    "위협: GuardDuty·SCC·Defender·Falco → OCSF",
+    "위협: GuardDuty·SCC·Defender → OCSF (Falco EXTRA)",
     "매트릭스: 통제 12개 × 환경 4개, 빈칸 0 (NFR-09)",
-    "?결정: 클라우드 보안 서비스 실제로 켜나 (Q4)",
+    "!확정: 데모 2곳 실제로 켬 (GuardDuty·SCC)",
 ], ["MUST", "신규"], tag="SEC · POL")
 card(890, 640, 420, 176, "환경 추상화 (Helm)", [
     "앱 = Helm chart 하나 · values-aws/gcp/azure/onprem",
@@ -246,7 +246,7 @@ ENV = [
 for x, code, bd, title, bdg, head, rows, q in ENV:
     env4(x, code, bd, title, bdg, head, rows)
 env4(1509, "ON", "on", "온프레", ["EXTRA", "신규"], "k3s 1노드 · Tunnel로 등록", [
-    ("앱", "Compose (출발) / k3s (도착)"), ("DB", "CloudNativePG + 백업"), ("보안", "Falco"),
+    ("앱", "Compose (출발) / k3s (도착)"), ("DB", "CloudNativePG + 백업"), ("보안", "kube-bench · Falco(EXTRA)"),
     ("감사", "k8s audit log"), ("시크릿", "Vault (ESO)"), ("연결", "Agent 설치 한 줄 (예선)"), ("점검", "kube-bench · Kyverno")],
     cls="optc", q="결정: 온프레를 4번째로 넣나")
 
