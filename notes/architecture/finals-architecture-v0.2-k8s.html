@@ -434,24 +434,24 @@ svg{display:block;min-width:1900px;font-family:var(--font)}
 <rect x="900.0" y="1860" width="560" height="26" rx="4" class="bg"/>
 <text x="1180" y="1878" class="lbl" text-anchor="middle">가중치 전환 중 출발·도착 동시 서빙 → 실패 요청 0건 측정 (NFR-01)</text>
 <rect x="405" y="1900" width="1451" height="150" rx="14" class="agent" style="stroke-dasharray:6 4"/>
-<text x="431" y="1940" class="ttl">샌드박스 (vCluster · 플랫폼 관리 EKS 안)</text>
+<text x="431" y="1940" class="ttl">샌드박스 (플랫폼 소유 · 단계별)</text>
 <rect x="800" y="1924" width="46" height="20" rx="10" class="bm"/>
 <text x="823.0" y="1938.5" class="newt" text-anchor="middle">MUST</text>
 <rect x="852" y="1924" width="40" height="20" rx="10" class="bn"/>
 <text x="872.0" y="1938.5" class="newt" text-anchor="middle">신규</text>
-<text x="1832" y="1938" class="lbl" text-anchor="end">플랫폼이 만들고 지움 · 에이전트는 그 안에서만 · 프로덕션은 읽기만</text>
+<text x="1832" y="1938" class="lbl" text-anchor="end">관리 EKS + 3사 샌드박스 계정 = 플랫폼 것 · 고객 수고 0 · 반영은 승인 → PR</text>
 <rect x="431" y="1958" width="340" height="74" rx="12" class="card"/>
-<text x="449" y="1986" class="ttl-s">격리</text>
-<text x="449" y="2012" class="sub">vCluster + NetworkPolicy 차단 + gVisor</text>
+<text x="449" y="1986" class="ttl-s">1 k8s 층 · MUST</text>
+<text x="449" y="2012" class="sub">vCluster: 매니페스트·Helm 수정 → Kyverno</text>
 <rect x="787" y="1958" width="340" height="74" rx="12" class="card"/>
-<text x="805" y="1986" class="ttl-s">실행</text>
-<text x="805" y="2012" class="sub">같은 chart를 띄워 테스트 · Kyverno 평가</text>
+<text x="805" y="1986" class="ttl-s">2 클라우드 층 · MUST</text>
+<text x="805" y="2012" class="sub">plan + 정적 점검만 (실제로 안 띄움)</text>
 <rect x="1143" y="1958" width="340" height="74" rx="12" class="card"/>
-<text x="1161" y="1986" class="ttl-s">게이트</text>
-<text x="1161" y="2012" class="sub">통과 + approver 승인 → GitOps PR 머지</text>
+<text x="1161" y="1986" class="ttl-s">3 전체 재현 · EXTRA</text>
+<text x="1161" y="2012" class="sub">도착 1곳: 이전 모듈을 샌드박스 계정에</text>
 <rect x="1499" y="1958" width="340" height="74" rx="12" class="card"/>
-<text x="1517" y="1986" class="ttl-s">기록</text>
-<text x="1517" y="2012" class="sub">점검 내용 · 이유 · diff · 결과 → 증거 저장소</text>
+<text x="1517" y="1986" class="ttl-s">4 3사 전체 재현</text>
+<text x="1517" y="2012" class="sub">설계 문서만 (시간·비용 문제)</text>
 <path d="M1100 1374 L1100 1400 L1880 1400 L1880 1975 L1860 1975" class="e-gate" marker-end="url(#m-e-gate)"/>
 <rect x="1650.0" y="1394" width="220" height="26" rx="4" class="bg"/>
 <text x="1760" y="1412" class="lbl" text-anchor="middle">에이전트 작업 → 샌드박스</text>

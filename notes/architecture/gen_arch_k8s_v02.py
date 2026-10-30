@@ -267,13 +267,13 @@ label(1180, 1878, "가중치 전환 중 출발·도착 동시 서빙 → 실패 
 # ---------- sandbox strip ----------
 SB = 1900
 E(f'<rect x="405" y="{SB}" width="1451" height="150" rx="14" class="agent" style="stroke-dasharray:6 4"/>')
-t(431, SB + 40, "ttl", "샌드박스 (vCluster · 플랫폼 관리 EKS 안)")
+t(431, SB + 40, "ttl", "샌드박스 (플랫폼 소유 · 단계별)")
 badge(800, SB + 24, "MUST"); badge(852, SB + 24, "신규")
-t(1832, SB + 38, "lbl", "플랫폼이 만들고 지움 · 에이전트는 그 안에서만 · 프로덕션은 읽기만", "end")
-for i, (ttl_, s) in enumerate([("격리", "vCluster + NetworkPolicy 차단 + gVisor"),
-                               ("실행", "같은 chart를 띄워 테스트 · Kyverno 평가"),
-                               ("게이트", "통과 + approver 승인 → GitOps PR 머지"),
-                               ("기록", "점검 내용 · 이유 · diff · 결과 → 증거 저장소")]):
+t(1832, SB + 38, "lbl", "관리 EKS + 3사 샌드박스 계정 = 플랫폼 것 · 고객 수고 0 · 반영은 승인 → PR", "end")
+for i, (ttl_, s) in enumerate([("1 k8s 층 · MUST", "vCluster: 매니페스트·Helm 수정 → Kyverno"),
+                               ("2 클라우드 층 · MUST", "plan + 정적 점검만 (실제로 안 띄움)"),
+                               ("3 전체 재현 · EXTRA", "도착 1곳: 이전 모듈을 샌드박스 계정에"),
+                               ("4 3사 전체 재현", "설계 문서만 (시간·비용 문제)")]):
     x = 431 + i * 356
     E(f'<rect x="{x}" y="{SB+58}" width="340" height="74" rx="12" class="card"/>')
     t(x + 18, SB + 86, "ttl-s", ttl_)
