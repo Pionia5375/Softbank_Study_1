@@ -245,7 +245,7 @@ for x, code, bd, title, bdg, head, rows, q in ENV:
 env4(1141, "ON", "on", "온프레", ["MUST", "신규"], "노트북 VM · k3s 1노드 · Tunnel로 등록", [
     ("앱", "Compose (출발) / k3s (도착)"), ("DB", "CloudNativePG + 백업"), ("보안", "kube-bench · Falco(EXTRA)"),
     ("감사", "k8s audit log"), ("시크릿", "Vault (ESO)"), ("연결", "Agent 설치 한 줄 (예선)"), ("점검", "kube-bench · Kyverno")],
-    q="결정: FR-ONP 6개 중 어디까지 MUST")
+    q="FR-ONP 6개 모두 MUST (RBAC·Vault·audit·OTel·CNPG)")
 env4(1509, "AZ", "az", "Azure", ["EXTRA", "신규"], "어댑터 코드 + Mock 응답 (실계정 X)", [
         ("앱", "Container Apps / AKS"), ("DB", "Azure DB for PostgreSQL"), ("보안", "Defender for Cloud"),
         ("감사", "Activity Log"), ("시크릿", "Key Vault"), ("연결", "ARM 템플릿 → Lighthouse"), ("검증", "계약 테스트 (녹화 응답)")],
