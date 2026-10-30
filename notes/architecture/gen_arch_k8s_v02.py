@@ -72,7 +72,7 @@ def label(x, y, s, w=None):
 # ---------- header ----------
 E(f'<rect width="{W}" height="{H}" class="bg"/>')
 t(48, 70, "h1", "멀티 클라우드 관리 플랫폼 — 본선 아키텍처 v0.2-k8s")
-t(48, 106, "h2", "운영 모델 A: 고객 계정은 고객 것 · 플랫폼은 역할만 빌림 | 출발 = 고객 AWS에서 돌던 ECS 앱 → 가져오기 → GKE / k3s | 2026-10-30 인터뷰 반영")
+t(48, 106, "h2", "운영 모델 A: 고객 계정은 고객 것 · 플랫폼은 역할만 빌림 | AWS · GCP · Azure 대칭, 어느 쪽이든 출발·도착 | 2026-10-30 인터뷰 반영")
 
 legend = [
     (980, 52, "e-api", "API 호출 (HTTPS · SSE)"), (980, 86, "e-prov", "GitOps 동기화 (Argo CD)"),
@@ -119,11 +119,11 @@ card(440, 232, 870, 150, "API 서버 + 오케스트레이터", [
 arrow("M380 257 L436 257", "e-api")
 
 card(440, 412, 420, 200, "가져오기 + 이전 플래너", [
-    "!가져오기: 고객 AWS의 ECS·ALB·RDS를 읽기만 함",
+    "!가져오기: 출발 환경의 앱·LB·DB 설정을 읽기만 함",
     "AI가 초안 → 확신 낮은 칸 표시 → 사람 확인 → Helm values",
     "사전 점검: 대상에 대응 없는 서비스·버전·권한 (FR-MIG-06)",
     "계획: 단계·예상 시간·롤백 조건 → 승인 후 실행 (FR-MIG-07)",
-    "?결정: 가져오기 대상 범위 (ECS만 / EKS·Terraform까지)",
+    "?결정: 가져오기 범위 (컨테이너 서비스만 / k8s·TF까지)",
 ], ["MUST", "신규"], tag="IMP · PLN · CHK")
 card(890, 412, 420, 200, "AI 에이전트 (플랫폼 통합)", [
     "입력: Kyverno 위반 · 이전 계획 · 매니페스트 diff",
@@ -136,15 +136,15 @@ arrow("M650 382 L650 408", "e-api"); arrow("M1100 382 L1100 408", "e-api")
 
 card(440, 640, 420, 176, "보안 수집기 (같은 기준)", [
     "점검: Kyverno · Prowler · Trivy = 같은 통제 ID",
-    "위협: GuardDuty · SCC · Falco → OCSF로 통일",
-    "매트릭스: 통제 12개 × 환경 3개, 빈칸 0 (NFR-09)",
+    "위협: GuardDuty·SCC·Defender·Falco → OCSF",
+    "매트릭스: 통제 12개 × 환경 4개, 빈칸 0 (NFR-09)",
     "?결정: 클라우드 보안 서비스 실제로 켜나 (Q4)",
 ], ["MUST", "신규"], tag="SEC · POL")
 card(890, 640, 420, 176, "환경 추상화 (Helm)", [
-    "앱 = Helm chart 하나 · 환경 차이 = values-aws/gcp/onprem",
+    "앱 = Helm chart 하나 · values-aws/gcp/azure/onprem",
     "ApplicationSet cluster generator: 라벨로 대상 클러스터 선택",
     "Helm = k8s 층 · Terraform = 클라우드 층(VPC·클러스터·DB)",
-    "?결정: 클라우드 B = GKE / NKS(NAVER) / AKS (Q3)",
+    "?결정: 데모 이전 경로 (AWS→GCP / GCP→Azure …)",
 ], ["MUST", "예선"], tag="IR · PRF · ADP")
 arrow("M650 612 L650 636", "e-api"); arrow("M1100 612 L1100 636", "e-api")
 
@@ -188,9 +188,9 @@ stores = [
     ("Postgres (플랫폼)", ["단일 진실 원천 · 이전 상태 · 측정표 · 감사 로그", "작업 큐 SKIP LOCKED · LISTEN/NOTIFY"], ["MUST", "예선"], "st-pg"),
     ("증거 저장소 (오브젝트)", ["단계 로그 · 스캔 결과 · 에이전트 diff · 테스트 출력", "데모 직후 ‘근거 보기’ 링크의 원천"], ["MUST", "신규"], "st-ob"),
     ("IaC State (Terraform)", ["클러스터·VPC·DB만 Terraform (앱은 Git)", "S3 backend · use_lockfile (예선 방식)"], ["MUST", "예선"], "st-ob"),
-    ("시크릿 (External Secrets)", ["값은 고객 저장소에 그대로 · 플랫폼은 이름만", "ESO가 Secrets Manager·Secret Manager·Vault에서 읽음"], ["MUST", "신규"], "st-vt"),
+    ("시크릿 (External Secrets)", ["값은 고객 저장소에 그대로 · 플랫폼은 이름만", "ESO: Secrets Manager·Secret Manager·Key Vault·Vault"], ["MUST", "신규"], "st-vt"),
     ("LLM API", ["Anthropic 직접 또는 Bedrock (AI_PROVIDER 한 곳, 예선)", "AI 리소스 현황: 모델·리전·호출량·비용 (FR-AIR-01)"], ["MUST", "예선"], "st-ai"),
-    ("레지스트리 · 고정 진입점", ["GHCR 하나: 같은 digest를 3클러스터 pull", "Cloudflare LB: URL 불변 · 클러스터 간 가중치"], ["MUST", "예선"], "st-rg"),
+    ("레지스트리 · 고정 진입점", ["GHCR 하나: 같은 digest를 모든 클러스터 pull", "Cloudflare LB: URL 불변 · 클러스터 간 가중치"], ["MUST", "예선"], "st-rg"),
     ("GitOps 레포 (원천)", ["Helm values · ApplicationSet · Kyverno 정책", "모든 변경 = PR, Argo CD가 읽어 감"], ["MUST", "신규"], "st-rg"),
 ]
 y = 180
@@ -216,39 +216,53 @@ card(48, 1664, 310, 176, "트래픽 전환", [
 arrow("M358 1724 L401 1724", "e-user")
 
 ENV_Y = 1470
-env(405, ENV_Y, 470, 330, "A", "aws", "A · 고객 AWS (출발)", ["MUST", "신규"], "이미 운영 중 · 플랫폼이 배포한 것 아님", [
-    ["#워크로드", "ECS Fargate + ALB", "가져오기의 원본", "#데이터", "RDS PG (소스 DB)", "논리 복제 publisher"],
-    ["#보안", "GuardDuty · Sec Hub", "Prowler (같은 통제)", "#관측", "CloudWatch → OTel", "CloudTrail → 감사"],
-])
-env(897, ENV_Y, 470, 330, "B", "gcp", "B · 고객 GCP (도착)", ["MUST", "신규"], "GKE · 서울 · operate 역할로 생성", [
-    ["#워크로드", "같은 Helm chart · values-gcp", "Argo 허브가 원격 sync", "#데이터", "Cloud SQL PG (타깃 DB)", "복제 subscriber · lag 0"],
-    ["#보안", "Kyverno · Trivy", "Workload Identity · SCC", "#관측", "OTel Operator", "k8s audit → 감사"],
-])
-E(f'<rect x="1389" y="{ENV_Y}" width="467" height="330" rx="14" class="optc"/>')
-E(f'<rect x="1411" y="{ENV_Y+24}" width="56" height="30" rx="7" class="bd-on"/>')
-t(1439, ENV_Y + 44, "bdt", "ON", "middle")
-t(1481, ENV_Y + 47, "ttl", "온프레 · k3s (VM)")
-badge(1660, ENV_Y + 31, "EXTRA"); badge(1716, ENV_Y + 31, "신규")
-t(1411, ENV_Y + 86, "pt", "k3s 1노드 · Argo CD 허브가 Tunnel로 등록")
-for i, s in enumerate(["Ingress = Cloudflare Tunnel (인바운드 0)", "CloudNativePG + 백업 → 복구 (FR-ONP-05)", "Kyverno · Trivy · Falco → 매트릭스 행", "ESO + Vault 로 시크릿 재현", "연결: Agent 설치 한 줄 (예선)"]):
-    yy = ENV_Y + 118 + i * 26
-    E(f'<circle cx="{1417}" cy="{yy-5}" r="3.2" class="dot-on"/>')
-    t(1429, yy, "sub", s)
-t(1411, ENV_Y + 290, "qt", "결정: 온프레를 3번째 환경으로 넣나 (범위)")
+def env4(x, code, bd, title, badges, head, rows, w=347, cls=None, q=None):
+    E(f'<rect x="{x}" y="{ENV_Y}" width="{w}" height="330" rx="14" class="{cls or "env env-" + bd}"/>')
+    E(f'<rect x="{x+18}" y="{ENV_Y+22}" width="48" height="30" rx="7" class="bd-{bd}"/>')
+    t(x + 42, ENV_Y + 42, "bdt", code, "middle")
+    t(x + 78, ENV_Y + 45, "ttl", title)
+    bx = x + 78 + tw(title, 19) * 1.25 + 14
+    for bb in badges:
+        bx = badge(bx, ENV_Y + 29, bb)
+    t(x + 18, ENV_Y + 84, "pt", head)
+    for i, (k, v) in enumerate(rows):
+        yy = ENV_Y + 116 + i * 26
+        t(x + 18, yy, "lbl", k, extra=f' fill="var(--{bd})"')
+        t(x + 88, yy, "sub", v)
+    if q:
+        t(x + 18, ENV_Y + 308, "qt", q)
+
+ENV = [
+    (405, "AWS", "aws", "AWS", ["MUST", "신규"], "예: 출발 (고객이 이미 운영 중)", [
+        ("앱", "ECS·ALB (출발) / EKS (도착)"), ("DB", "RDS PostgreSQL"), ("보안", "GuardDuty · Security Hub"),
+        ("감사", "CloudTrail"), ("시크릿", "Secrets Manager"), ("연결", "CloudFormation → AssumeRole"), ("점검", "Prowler · Kyverno · Trivy")], None),
+    (773, "GCP", "gcp", "GCP", ["MUST", "신규"], "예: 도착 (operate 역할로 생성)", [
+        ("앱", "Cloud Run (출발) / GKE (도착)"), ("DB", "Cloud SQL PostgreSQL"), ("보안", "SCC"),
+        ("감사", "Cloud Audit Logs"), ("시크릿", "Secret Manager"), ("연결", "SA impersonation · WIF"), ("점검", "Prowler · Kyverno · Trivy")], None),
+    (1141, "AZ", "az", "Azure", ["MUST", "신규"], "출발·도착 둘 다 가능 (대칭)", [
+        ("앱", "Container Apps / AKS (도착)"), ("DB", "Azure DB for PostgreSQL"), ("보안", "Defender for Cloud"),
+        ("감사", "Activity Log"), ("시크릿", "Key Vault"), ("연결", "ARM 템플릿 → Lighthouse"), ("점검", "Prowler · Kyverno · Trivy")], None),
+]
+for x, code, bd, title, bdg, head, rows, q in ENV:
+    env4(x, code, bd, title, bdg, head, rows)
+env4(1509, "ON", "on", "온프레", ["EXTRA", "신규"], "k3s 1노드 · Tunnel로 등록", [
+    ("앱", "Compose (출발) / k3s (도착)"), ("DB", "CloudNativePG + 백업"), ("보안", "Falco"),
+    ("감사", "k8s audit log"), ("시크릿", "Vault (ESO)"), ("연결", "Agent 설치 한 줄 (예선)"), ("점검", "kube-bench · Kyverno")],
+    cls="optc", q="결정: 온프레를 4번째로 넣나")
 
 # provisioning arrows from worker to envs
 E('<path d="M650 1394 L650 1440" class="e-prov"/>')
-E('<line x1="650" y1="1440" x2="1620" y2="1440" class="e-prov"/>')
-for x in (640, 1132, 1620):
+E('<line x1="578" y1="1440" x2="1682" y2="1440" class="e-prov"/>')
+for x in (578, 946, 1314, 1682):
     arrow(f"M{x} 1440 L{x} {ENV_Y-4}", "e-prov")
-label(1000, 1450, "operate 역할: Terraform = 클라우드 층 → Argo CD = k8s 층 (B · ON)")
-# data replication A -> B
-arrow(f"M875 {ENV_Y+290} L893 {ENV_Y+290}", "e-sync")
-label(886, ENV_Y + 356, "DB 논리 복제 RDS → Cloud SQL (RPO 0)", 330)
+label(1130, 1450, "operate 역할: Terraform = 클라우드 층 → Argo CD = k8s 층 (어느 환경이든 같은 방식)")
+# data replication source -> target
+arrow(f"M752 {ENV_Y+200} L769 {ENV_Y+200}", "e-sync")
+label(762, ENV_Y + 356, "DB 논리 복제 출발 → 도착 (RPO 0)", 300)
 # user traffic to envs
-arrow(f"M203 1840 L203 1860 L640 1860 L640 {ENV_Y+334}", "e-user")
-arrow(f"M203 1860 L1132 1860 L1132 {ENV_Y+334}", "e-user")
-label(886, 1878, "가중치 전환 중 A·B 동시 서빙 → 실패 요청 0건 측정 (NFR-01)")
+arrow(f"M203 1840 L203 1860 L578 1860 L578 {ENV_Y+334}", "e-user")
+arrow(f"M203 1860 L946 1860 L946 {ENV_Y+334}", "e-user")
+label(1180, 1878, "가중치 전환 중 출발·도착 동시 서빙 → 실패 요청 0건 측정 (NFR-01)", 560)
 
 # ---------- sandbox strip ----------
 SB = 1900
@@ -264,8 +278,8 @@ for i, (ttl_, s) in enumerate([("격리", "vCluster + NetworkPolicy 차단 + gVi
     E(f'<rect x="{x}" y="{SB+58}" width="340" height="74" rx="12" class="card"/>')
     t(x + 18, SB + 86, "ttl-s", ttl_)
     t(x + 18, SB + 112, "sub", s)
-arrow(f"M1100 1374 L1100 1394 L1360 1394 L1360 {SB-4}", "e-gate")
-label(1360, 1412, "에이전트 작업 → 샌드박스", 220)
+arrow(f"M1100 1374 L1100 1400 L1880 1400 L1880 {SB+75} L1860 {SB+75}", "e-gate")
+label(1760, 1412, "에이전트 작업 → 샌드박스", 220)
 
 # ---------- observability ----------
 OB = 2080
@@ -273,7 +287,7 @@ E(f'<rect x="405" y="{OB}" width="1451" height="150" rx="14" class="obsc" style=
 t(431, OB + 40, "ttl", "횡단 관측 · 이전 측정 (OpenTelemetry)")
 badge(830, OB + 24, "MUST"); badge(882, OB + 24, "신규")
 t(1832, OB + 38, "lbl", "이전 1회마다 자동 표: 시작·단계·컷오버·롤백 시각 · 실패 요청 수 · 복제 lag (FR-OBS-04)", "end")
-for i, (ttl_, s) in enumerate([("OTel Operator", "3클러스터 자동 계측 · cluster 라벨"),
+for i, (ttl_, s) in enumerate([("OTel Operator", "모든 클러스터 자동 계측 · env 라벨"),
                                ("Prometheus", "Rollouts 분석 + 클러스터 간 롤백 입력"),
                                ("Grafana", "한 그래프에 A·B 선 교차 (FR-OBS-01)"),
                                ("OpenCost", "클러스터별 비용 · 50만 원 예산 (EXTRA)")]):
@@ -293,12 +307,12 @@ t(48, OB + 120, "sub", "롤백 ≤ 60초 · 이전 ≤ 90초")
 FL = 2260
 E(f'<rect x="48" y="{FL}" width="1808" height="180" rx="14" class="strip"/>')
 t(72, FL + 38, "cpt", "이전 흐름 9단계 (장면 1)")
-t(1832, FL + 36, "lbl", "1~3 = 읽기만(observe) · 4~9 = 승인 후 operate · 실패하면 어느 단계든 A로 롤백", "end")
-STEPS = [("1 연결", "원클릭 템플릿", "역할 2개 생성"), ("2 가져오기", "ECS·ALB·RDS 읽기", "AI 초안 → 사람 확인"),
+t(1832, FL + 36, "lbl", "1~3 = 읽기만(observe) · 4~9 = 승인 후 operate · 실패하면 어느 단계든 출발 환경으로 롤백", "end")
+STEPS = [("1 연결", "원클릭 템플릿", "역할 2개 생성"), ("2 가져오기", "출발 환경 읽기", "AI 초안 → 사람 확인"),
          ("3 계획·점검", "precheck · plan", "approver 승인"), ("4 기반 생성", "Terraform", "VPC·클러스터·DB"),
-         ("5 배포", "Helm values", "Kyverno → Argo sync"), ("6 DB 복제", "RDS → Cloud SQL", "lag 0 확인"),
+         ("5 배포", "Helm values", "Kyverno → Argo sync"), ("6 DB 복제", "출발 DB → 도착 DB", "lag 0 확인"),
          ("7 전환", "10 → 50 → 100 %", "이상 시 자동 롤백"), ("8 컷오버", "쓰기 전환", "실패 요청 수 기록"),
-         ("9 정리", "A 축소·삭제", "operate 역할 회수")]
+         ("9 정리", "출발 축소·삭제", "operate 역할 회수")]
 for i, (a, b, c) in enumerate(STEPS):
     x = 72 + i * 196
     E(f'<rect x="{x}" y="{FL+58}" width="184" height="100" rx="12" class="card"/>')
@@ -315,9 +329,9 @@ t(48, PR + 72, "sub", "장면 1: 이전 → 진입점·이전·롤백")
 t(48, PR + 96, "sub", "장면 2: 보안 → 수집기·매트릭스")
 t(48, PR + 120, "sub", "장면 3: 에이전트 → 샌드박스")
 cols = [
-    ("v0.1 → v0.2 바뀐 것", "운영 모델 A(고객 계정·역할만) · 원클릭 연결 · 가져오기 단계 · 출발 = 고객 ECS · 보안 수집기 = 같은 통제 ID + OCSF · 이전 9단계"),
+    ("v0.1 → v0.2 바뀐 것", "운영 모델 A(고객 계정·역할만) · 클라우드 3사 대칭 · 원클릭 연결 · 가져오기 단계 · 보안 수집기 = 같은 통제 ID + OCSF · 이전 9단계"),
     ("k8s로 공짜로 얻는 것", "카나리·자동 롤백(Rollouts) · 같은 정책(Kyverno) · vcluster 샌드박스 · GitOps 이력 · OTel Operator"),
-    ("대신 치르는 비용", "클러스터 3개 구축·운영 · 예선 배포 엔진 대부분 폐기 · EKS+GKE 컨트롤 플레인 비용 · 팀원 k8s 숙련도"),
+    ("대신 치르는 비용", "클러스터 4개 운영 · 예선 배포 엔진 대부분 폐기 · EKS·GKE·AKS 비용과 계정 3개 · 팀원 k8s 숙련도"),
 ]
 for i, (h, s) in enumerate(cols):
     x = 435 + i * 483
@@ -339,17 +353,17 @@ STYLE = """
 --cp-fill:#EFF6F2;--cp-line:#7DB596;--cp-text:#2F7A55;--pool:#9AA7B5;
 --ag-fill:#F3F0FD;--ag-line:#A99BE6;--async:#7B61D9;--prov:#D9731A;--user:#2F6FD1;--sync:#B4327A;
 --pg-f:#EEF3FB;--pg-l:#BCCDEA;--ob-f:#F2F4F6;--ob-l:#D2D8DF;--vt-f:#FBF4E6;--vt-l:#E4CC9C;--ai-f:#F3F0FD;--ai-l:#CFC5F1;--rg-f:#EEF6F1;--rg-l:#BCDAC8;
---on:#5B6B7F;--obs:#1F9E89;--obs-f:#EAF6F4;--obs-l:#9FD3C8;--aws:#E07A1F;--gcp:#3B7BE0;--strip:#FFFFFF;
+--on:#5B6B7F;--obs:#1F9E89;--obs-f:#EAF6F4;--obs-l:#9FD3C8;--aws:#E07A1F;--gcp:#3B7BE0;--az:#0E8FB0;--strip:#FFFFFF;
 --gate:#C98A12;--must:#2F7A55;--extra:#8A95A3;--prelim:#2F6FD1;--new:#C98A12;--q:#B4327A;
 --font:'IBM Plex Sans KR','Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',system-ui,sans-serif;--mono:'IBM Plex Mono','DejaVu Sans Mono',monospace}
 @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#13181F;--card:#1B222B;--line:#2E3843;--text:#E6ECF2;--muted:#A3AFBC;--edge:#8A96A4;
 --cp-fill:#17221C;--cp-line:#4E8A68;--cp-text:#7CC79C;--pool:#5E6B7A;--ag-fill:#201C30;--ag-line:#6F62B0;--async:#A28FF0;--prov:#F0944A;--user:#6C9CF0;--sync:#E06AAE;
 --pg-f:#1A2230;--pg-l:#3A4E6C;--ob-f:#1C2229;--ob-l:#3A444F;--vt-f:#2A2418;--vt-l:#7A6436;--ai-f:#221E33;--ai-l:#5E5490;--rg-f:#172219;--rg-l:#3C6B4C;
---on:#8E9DB0;--obs:#3FC9AF;--obs-f:#15261F;--obs-l:#2E6B5B;--aws:#F0944A;--gcp:#6C9CF0;--strip:#1B222B;--gate:#E0A838;--must:#4FA574;--extra:#6B7684;--prelim:#6C9CF0;--new:#E0A838;--q:#E06AAE;color-scheme:dark}}
+--on:#8E9DB0;--obs:#3FC9AF;--obs-f:#15261F;--obs-l:#2E6B5B;--aws:#F0944A;--gcp:#6C9CF0;--az:#3CC4CF;--strip:#1B222B;--gate:#E0A838;--must:#4FA574;--extra:#6B7684;--prelim:#6C9CF0;--new:#E0A838;--q:#E06AAE;color-scheme:dark}}
 :root[data-theme="dark"]{--bg:#13181F;--card:#1B222B;--line:#2E3843;--text:#E6ECF2;--muted:#A3AFBC;--edge:#8A96A4;
 --cp-fill:#17221C;--cp-line:#4E8A68;--cp-text:#7CC79C;--pool:#5E6B7A;--ag-fill:#201C30;--ag-line:#6F62B0;--async:#A28FF0;--prov:#F0944A;--user:#6C9CF0;--sync:#E06AAE;
 --pg-f:#1A2230;--pg-l:#3A4E6C;--ob-f:#1C2229;--ob-l:#3A444F;--vt-f:#2A2418;--vt-l:#7A6436;--ai-f:#221E33;--ai-l:#5E5490;--rg-f:#172219;--rg-l:#3C6B4C;
---on:#8E9DB0;--obs:#3FC9AF;--obs-f:#15261F;--obs-l:#2E6B5B;--aws:#F0944A;--gcp:#6C9CF0;--strip:#1B222B;--gate:#E0A838;--must:#4FA574;--extra:#6B7684;--prelim:#6C9CF0;--new:#E0A838;--q:#E06AAE;color-scheme:dark}
+--on:#8E9DB0;--obs:#3FC9AF;--obs-f:#15261F;--obs-l:#2E6B5B;--aws:#F0944A;--gcp:#6C9CF0;--az:#3CC4CF;--strip:#1B222B;--gate:#E0A838;--must:#4FA574;--extra:#6B7684;--prelim:#6C9CF0;--new:#E0A838;--q:#E06AAE;color-scheme:dark}
 body{background:var(--bg);color:var(--text);font-family:var(--font);margin:0}
 .wrap{padding-block:12px 24px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 .bar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;font-size:13px;color:var(--muted);margin-bottom:8px}
@@ -363,8 +377,8 @@ svg{display:block;min-width:1900px;font-family:var(--font)}
 .st-pg{fill:var(--pg-f);stroke:var(--pg-l)}.st-ob{fill:var(--ob-f);stroke:var(--ob-l)}.st-vt{fill:var(--vt-f);stroke:var(--vt-l)}.st-ai{fill:var(--ai-f);stroke:var(--ai-l)}.st-rg{fill:var(--rg-f);stroke:var(--rg-l)}
 .cp{fill:var(--cp-fill);stroke:var(--cp-line);stroke-width:1.5;stroke-dasharray:7 6}
 .pool{fill:none;stroke:var(--pool);stroke-width:1.2;stroke-dasharray:5 5}
-.env{fill:var(--card);stroke-width:1.5}.env-on{stroke:var(--on)}.env-aws{stroke:var(--aws)}.env-gcp{stroke:var(--gcp)}
-.bd-on{fill:var(--on)}.bd-aws{fill:var(--aws)}.bd-gcp{fill:var(--gcp)}
+.env{fill:var(--card);stroke-width:1.5}.env-on{stroke:var(--on)}.env-aws{stroke:var(--aws)}.env-gcp{stroke:var(--gcp)}.env-az{stroke:var(--az)}
+.bd-on{fill:var(--on)}.bd-aws{fill:var(--aws)}.bd-gcp{fill:var(--gcp)}.bd-az{fill:var(--az)}
 .dot-on{fill:var(--on)}.dot-aws{fill:var(--aws)}.dot-gcp{fill:var(--gcp)}
 .strip{fill:var(--strip);stroke:var(--line)}.obsc{fill:var(--obs-f);stroke:var(--obs-l)}
 .optc{fill:var(--card);stroke:var(--pool);stroke-width:1.3;stroke-dasharray:6 4}
