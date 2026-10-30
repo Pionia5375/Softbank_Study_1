@@ -56,7 +56,7 @@ svg{display:block;min-width:1900px;font-family:var(--font)}
 <div class="scroll" id="scroll"><svg id="dg" width="1900" height="2850" viewBox="0 0 1900 2850" xmlns="http://www.w3.org/2000/svg"><defs><marker id="m-e-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="mk-e-api"/></marker><marker id="m-e-async" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="mk-e-async"/></marker><marker id="m-e-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="mk-e-prov"/></marker><marker id="m-e-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="mk-e-user"/></marker><marker id="m-e-obs" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="mk-e-obs"/></marker><marker id="m-e-gate" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="mk-e-gate"/></marker><marker id="m-e-sync" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="mk-e-sync"/></marker></defs>
 <rect width="1900" height="2850" class="bg"/>
 <text x="48" y="70" class="h1">멀티 클라우드 관리 플랫폼 — 본선 아키텍처 v0.3-k8s</text>
-<text x="48" y="106" class="h2">운영 모델 A: 고객 계정은 고객 것 · 플랫폼은 역할만 빌림 | AWS · GCP · Azure 대칭 | 멀티 테넌트 | 2026-10-30 인터뷰 반영</text>
+<text x="48" y="106" class="h2">운영 모델 A: 고객 계정은 고객 것 · 플랫폼은 역할만 빌림 | 실환경 AWS · GCP · 온프레 + Azure 어댑터(Mock) | 멀티 테넌트 | 2026-10-30 인터뷰 반영</text>
 <line x1="980" y1="52" x2="1030" y2="52" class="e-api"/>
 <text x="1046" y="57" class="leg">API 호출 (HTTPS · SSE)</text>
 <line x1="980" y1="86" x2="1030" y2="86" class="e-prov"/>
@@ -174,7 +174,7 @@ svg{display:block;min-width:1900px;font-family:var(--font)}
 <text x="840" y="802" class="tag" text-anchor="end">SEC · POL</text>
 <text x="462" y="708" class="sub">점검: Kyverno · Prowler · Trivy = 같은 통제 ID</text>
 <text x="462" y="733" class="sub">위협: GuardDuty·SCC·Defender → OCSF (Falco EXTRA)</text>
-<text x="462" y="758" class="sub">매트릭스: 통제 12개 × 환경 4개, 빈칸 0 (NFR-09)</text>
+<text x="462" y="758" class="sub">매트릭스: 통제 12개 × 환경 3개(+Azure Mock), 빈칸 0</text>
 <text x="462" y="783" class="subd">확정: 데모 2곳 실제로 켬 (GuardDuty·SCC)</text>
 <rect x="890" y="640" width="420" height="176" rx="12" class="card"/>
 <text x="912" y="678" class="ttl">환경 추상화 (Helm)</text>
@@ -374,59 +374,59 @@ svg{display:block;min-width:1900px;font-family:var(--font)}
 <text x="861" y="1716" class="sub">SA impersonation · WIF</text>
 <text x="791" y="1742" class="lbl" fill="var(--gcp)">점검</text>
 <text x="861" y="1742" class="sub">Prowler · Kyverno · Trivy</text>
-<rect x="1141" y="1470" width="347" height="330" rx="14" class="env env-az"/>
-<rect x="1159" y="1492" width="48" height="30" rx="7" class="bd-az"/>
-<text x="1183" y="1512" class="bdt" text-anchor="middle">AZ</text>
-<text x="1219" y="1515" class="ttl">Azure</text>
-<rect x="1299.5" y="1499" width="46" height="20" rx="10" class="bm"/>
-<text x="1322.5" y="1513.5" class="newt" text-anchor="middle">MUST</text>
-<rect x="1351.5" y="1499" width="40" height="20" rx="10" class="bn"/>
-<text x="1371.5" y="1513.5" class="newt" text-anchor="middle">신규</text>
-<text x="1159" y="1554" class="pt">출발·도착 둘 다 가능 (대칭)</text>
-<text x="1159" y="1586" class="lbl" fill="var(--az)">앱</text>
-<text x="1229" y="1586" class="sub">Container Apps / AKS (도착)</text>
-<text x="1159" y="1612" class="lbl" fill="var(--az)">DB</text>
-<text x="1229" y="1612" class="sub">Azure DB for PostgreSQL</text>
-<text x="1159" y="1638" class="lbl" fill="var(--az)">보안</text>
-<text x="1229" y="1638" class="sub">Defender for Cloud</text>
-<text x="1159" y="1664" class="lbl" fill="var(--az)">감사</text>
-<text x="1229" y="1664" class="sub">Activity Log</text>
-<text x="1159" y="1690" class="lbl" fill="var(--az)">시크릿</text>
-<text x="1229" y="1690" class="sub">Key Vault</text>
-<text x="1159" y="1716" class="lbl" fill="var(--az)">연결</text>
-<text x="1229" y="1716" class="sub">ARM 템플릿 → Lighthouse</text>
-<text x="1159" y="1742" class="lbl" fill="var(--az)">점검</text>
-<text x="1229" y="1742" class="sub">Prowler · Kyverno · Trivy</text>
+<rect x="1141" y="1470" width="347" height="330" rx="14" class="env env-on"/>
+<rect x="1159" y="1492" width="48" height="30" rx="7" class="bd-on"/>
+<text x="1183" y="1512" class="bdt" text-anchor="middle">ON</text>
+<text x="1219" y="1515" class="ttl">온프레</text>
+<rect x="1302.825" y="1499" width="46" height="20" rx="10" class="bm"/>
+<text x="1325.825" y="1513.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="1354.825" y="1499" width="40" height="20" rx="10" class="bn"/>
+<text x="1374.825" y="1513.5" class="newt" text-anchor="middle">신규</text>
+<text x="1159" y="1554" class="pt">노트북 VM · k3s 1노드 · Tunnel로 등록</text>
+<text x="1159" y="1586" class="lbl" fill="var(--on)">앱</text>
+<text x="1229" y="1586" class="sub">Compose (출발) / k3s (도착)</text>
+<text x="1159" y="1612" class="lbl" fill="var(--on)">DB</text>
+<text x="1229" y="1612" class="sub">CloudNativePG + 백업</text>
+<text x="1159" y="1638" class="lbl" fill="var(--on)">보안</text>
+<text x="1229" y="1638" class="sub">kube-bench · Falco(EXTRA)</text>
+<text x="1159" y="1664" class="lbl" fill="var(--on)">감사</text>
+<text x="1229" y="1664" class="sub">k8s audit log</text>
+<text x="1159" y="1690" class="lbl" fill="var(--on)">시크릿</text>
+<text x="1229" y="1690" class="sub">Vault (ESO)</text>
+<text x="1159" y="1716" class="lbl" fill="var(--on)">연결</text>
+<text x="1229" y="1716" class="sub">Agent 설치 한 줄 (예선)</text>
+<text x="1159" y="1742" class="lbl" fill="var(--on)">점검</text>
+<text x="1229" y="1742" class="sub">kube-bench · Kyverno</text>
+<text x="1159" y="1778" class="qt">결정: FR-ONP 6개 중 어디까지 MUST</text>
 <rect x="1509" y="1470" width="347" height="330" rx="14" class="optc"/>
-<rect x="1527" y="1492" width="48" height="30" rx="7" class="bd-on"/>
-<text x="1551" y="1512" class="bdt" text-anchor="middle">ON</text>
-<text x="1587" y="1515" class="ttl">온프레</text>
-<rect x="1670.825" y="1499" width="50" height="20" rx="10" class="bx"/>
-<text x="1695.825" y="1513.5" class="newt" text-anchor="middle">EXTRA</text>
-<rect x="1726.825" y="1499" width="40" height="20" rx="10" class="bn"/>
-<text x="1746.825" y="1513.5" class="newt" text-anchor="middle">신규</text>
-<text x="1527" y="1554" class="pt">k3s 1노드 · Tunnel로 등록</text>
-<text x="1527" y="1586" class="lbl" fill="var(--on)">앱</text>
-<text x="1597" y="1586" class="sub">Compose (출발) / k3s (도착)</text>
-<text x="1527" y="1612" class="lbl" fill="var(--on)">DB</text>
-<text x="1597" y="1612" class="sub">CloudNativePG + 백업</text>
-<text x="1527" y="1638" class="lbl" fill="var(--on)">보안</text>
-<text x="1597" y="1638" class="sub">kube-bench · Falco(EXTRA)</text>
-<text x="1527" y="1664" class="lbl" fill="var(--on)">감사</text>
-<text x="1597" y="1664" class="sub">k8s audit log</text>
-<text x="1527" y="1690" class="lbl" fill="var(--on)">시크릿</text>
-<text x="1597" y="1690" class="sub">Vault (ESO)</text>
-<text x="1527" y="1716" class="lbl" fill="var(--on)">연결</text>
-<text x="1597" y="1716" class="sub">Agent 설치 한 줄 (예선)</text>
-<text x="1527" y="1742" class="lbl" fill="var(--on)">점검</text>
-<text x="1597" y="1742" class="sub">kube-bench · Kyverno</text>
-<text x="1527" y="1778" class="qt">결정: 온프레를 4번째로 넣나</text>
+<rect x="1527" y="1492" width="48" height="30" rx="7" class="bd-az"/>
+<text x="1551" y="1512" class="bdt" text-anchor="middle">AZ</text>
+<text x="1587" y="1515" class="ttl">Azure</text>
+<rect x="1667.5" y="1499" width="50" height="20" rx="10" class="bx"/>
+<text x="1692.5" y="1513.5" class="newt" text-anchor="middle">EXTRA</text>
+<rect x="1723.5" y="1499" width="40" height="20" rx="10" class="bn"/>
+<text x="1743.5" y="1513.5" class="newt" text-anchor="middle">신규</text>
+<text x="1527" y="1554" class="pt">어댑터 코드 + Mock 응답 (실계정 X)</text>
+<text x="1527" y="1586" class="lbl" fill="var(--az)">앱</text>
+<text x="1597" y="1586" class="sub">Container Apps / AKS</text>
+<text x="1527" y="1612" class="lbl" fill="var(--az)">DB</text>
+<text x="1597" y="1612" class="sub">Azure DB for PostgreSQL</text>
+<text x="1527" y="1638" class="lbl" fill="var(--az)">보안</text>
+<text x="1597" y="1638" class="sub">Defender for Cloud</text>
+<text x="1527" y="1664" class="lbl" fill="var(--az)">감사</text>
+<text x="1597" y="1664" class="sub">Activity Log</text>
+<text x="1527" y="1690" class="lbl" fill="var(--az)">시크릿</text>
+<text x="1597" y="1690" class="sub">Key Vault</text>
+<text x="1527" y="1716" class="lbl" fill="var(--az)">연결</text>
+<text x="1597" y="1716" class="sub">ARM 템플릿 → Lighthouse</text>
+<text x="1527" y="1742" class="lbl" fill="var(--az)">검증</text>
+<text x="1597" y="1742" class="sub">계약 테스트 (녹화 응답)</text>
+<text x="1527" y="1778" class="qt">화면엔 &#x27;Mock&#x27; 표시 · 데모 경로 아님</text>
 <path d="M650 1394 L650 1440" class="e-prov"/>
-<line x1="578" y1="1440" x2="1682" y2="1440" class="e-prov"/>
+<line x1="578" y1="1440" x2="1314" y2="1440" class="e-prov"/>
 <path d="M578 1440 L578 1466" class="e-prov" marker-end="url(#m-e-prov)"/>
 <path d="M946 1440 L946 1466" class="e-prov" marker-end="url(#m-e-prov)"/>
 <path d="M1314 1440 L1314 1466" class="e-prov" marker-end="url(#m-e-prov)"/>
-<path d="M1682 1440 L1682 1466" class="e-prov" marker-end="url(#m-e-prov)"/>
 <rect x="686.8" y="1432" width="886.4" height="26" rx="4" class="bg"/>
 <text x="1130" y="1450" class="lbl" text-anchor="middle">operate 역할: Terraform = 클라우드 층 → Argo CD = k8s 층 (어느 환경이든 같은 방식)</text>
 <path d="M752 1670 L769 1670" class="e-sync" marker-end="url(#m-e-sync)"/>
@@ -572,8 +572,8 @@ svg{display:block;min-width:1900px;font-family:var(--font)}
 <text x="918" y="2754" class="sub">카나리·자동 롤백(Rollouts) · 같은 정책(Kyverno) ·</text>
 <text x="918" y="2776" class="sub">vcluster 샌드박스 · GitOps 이력 · OTel Operator</text>
 <text x="1401" y="2726" class="stt">대신 치르는 비용</text>
-<text x="1401" y="2754" class="sub">클러스터 4개 운영 · 예선 배포 엔진 대부분 폐기 · EKS·GKE·AKS 비용과</text>
-<text x="1401" y="2776" class="sub">계정 3개 · 팀원 k8s 숙련도</text>
+<text x="1401" y="2754" class="sub">클러스터 3개 운영(EKS·GKE·k3s) · 예선 배포 엔진 대부분 폐기 ·</text>
+<text x="1401" y="2776" class="sub">EKS·GKE 비용 · 노트북 메모리 · 팀원 k8s 숙련도</text>
 </svg></div></div>
 <script>
 (function(){var s=document.getElementById('dg'),box=document.getElementById('scroll'),z=1,W=1900,H=2850;

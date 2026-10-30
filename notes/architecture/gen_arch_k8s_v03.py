@@ -72,7 +72,7 @@ def label(x, y, s, w=None):
 # ---------- header ----------
 E(f'<rect width="{W}" height="{H}" class="bg"/>')
 t(48, 70, "h1", "멀티 클라우드 관리 플랫폼 — 본선 아키텍처 v0.3-k8s")
-t(48, 106, "h2", "운영 모델 A: 고객 계정은 고객 것 · 플랫폼은 역할만 빌림 | AWS · GCP · Azure 대칭 | 멀티 테넌트 | 2026-10-30 인터뷰 반영")
+t(48, 106, "h2", "운영 모델 A: 고객 계정은 고객 것 · 플랫폼은 역할만 빌림 | 실환경 AWS · GCP · 온프레 + Azure 어댑터(Mock) | 멀티 테넌트 | 2026-10-30 인터뷰 반영")
 
 legend = [
     (980, 52, "e-api", "API 호출 (HTTPS · SSE)"), (980, 86, "e-prov", "GitOps 동기화 (Argo CD)"),
@@ -137,7 +137,7 @@ arrow("M650 382 L650 408", "e-api"); arrow("M1100 382 L1100 408", "e-api")
 card(440, 640, 420, 176, "보안 수집기 (같은 기준)", [
     "점검: Kyverno · Prowler · Trivy = 같은 통제 ID",
     "위협: GuardDuty·SCC·Defender → OCSF (Falco EXTRA)",
-    "매트릭스: 통제 12개 × 환경 4개, 빈칸 0 (NFR-09)",
+    "매트릭스: 통제 12개 × 환경 3개(+Azure Mock), 빈칸 0",
     "!확정: 데모 2곳 실제로 켬 (GuardDuty·SCC)",
 ], ["MUST", "신규"], tag="SEC · POL")
 card(890, 640, 420, 176, "환경 추상화 (Helm)", [
@@ -239,21 +239,22 @@ ENV = [
     (773, "GCP", "gcp", "GCP", ["MUST", "신규"], "예: 도착 (operate 역할로 생성)", [
         ("앱", "Cloud Run (출발) / GKE (도착)"), ("DB", "Cloud SQL PostgreSQL"), ("보안", "SCC"),
         ("감사", "Cloud Audit Logs"), ("시크릿", "Secret Manager"), ("연결", "SA impersonation · WIF"), ("점검", "Prowler · Kyverno · Trivy")], None),
-    (1141, "AZ", "az", "Azure", ["MUST", "신규"], "출발·도착 둘 다 가능 (대칭)", [
-        ("앱", "Container Apps / AKS (도착)"), ("DB", "Azure DB for PostgreSQL"), ("보안", "Defender for Cloud"),
-        ("감사", "Activity Log"), ("시크릿", "Key Vault"), ("연결", "ARM 템플릿 → Lighthouse"), ("점검", "Prowler · Kyverno · Trivy")], None),
 ]
 for x, code, bd, title, bdg, head, rows, q in ENV:
     env4(x, code, bd, title, bdg, head, rows)
-env4(1509, "ON", "on", "온프레", ["EXTRA", "신규"], "k3s 1노드 · Tunnel로 등록", [
+env4(1141, "ON", "on", "온프레", ["MUST", "신규"], "노트북 VM · k3s 1노드 · Tunnel로 등록", [
     ("앱", "Compose (출발) / k3s (도착)"), ("DB", "CloudNativePG + 백업"), ("보안", "kube-bench · Falco(EXTRA)"),
     ("감사", "k8s audit log"), ("시크릿", "Vault (ESO)"), ("연결", "Agent 설치 한 줄 (예선)"), ("점검", "kube-bench · Kyverno")],
-    cls="optc", q="결정: 온프레를 4번째로 넣나")
+    q="결정: FR-ONP 6개 중 어디까지 MUST")
+env4(1509, "AZ", "az", "Azure", ["EXTRA", "신규"], "어댑터 코드 + Mock 응답 (실계정 X)", [
+        ("앱", "Container Apps / AKS"), ("DB", "Azure DB for PostgreSQL"), ("보안", "Defender for Cloud"),
+        ("감사", "Activity Log"), ("시크릿", "Key Vault"), ("연결", "ARM 템플릿 → Lighthouse"), ("검증", "계약 테스트 (녹화 응답)")],
+    cls="optc", q="화면엔 'Mock' 표시 · 데모 경로 아님")
 
 # provisioning arrows from worker to envs
 E('<path d="M650 1394 L650 1440" class="e-prov"/>')
-E('<line x1="578" y1="1440" x2="1682" y2="1440" class="e-prov"/>')
-for x in (578, 946, 1314, 1682):
+E('<line x1="578" y1="1440" x2="1314" y2="1440" class="e-prov"/>')
+for x in (578, 946, 1314):
     arrow(f"M{x} 1440 L{x} {ENV_Y-4}", "e-prov")
 label(1130, 1450, "operate 역할: Terraform = 클라우드 층 → Argo CD = k8s 층 (어느 환경이든 같은 방식)")
 # data replication source -> target
@@ -346,7 +347,7 @@ t(48, PR + 120, "sub", "장면 3: 에이전트 → 샌드박스")
 cols = [
     ("v0.2 → v0.3 바뀐 것", "멀티 테넌트 격리(RLS·AppProject·큐 상한) · 큐는 Postgres 유지 + 교체 인터페이스 + 부하 측정 · 장부 경로 테넌트별 · 샌드박스 단계별"),
     ("k8s로 공짜로 얻는 것", "카나리·자동 롤백(Rollouts) · 같은 정책(Kyverno) · vcluster 샌드박스 · GitOps 이력 · OTel Operator"),
-    ("대신 치르는 비용", "클러스터 4개 운영 · 예선 배포 엔진 대부분 폐기 · EKS·GKE·AKS 비용과 계정 3개 · 팀원 k8s 숙련도"),
+    ("대신 치르는 비용", "클러스터 3개 운영(EKS·GKE·k3s) · 예선 배포 엔진 대부분 폐기 · EKS·GKE 비용 · 노트북 메모리 · 팀원 k8s 숙련도"),
 ]
 for i, (h, s) in enumerate(cols):
     x = 435 + i * 483
