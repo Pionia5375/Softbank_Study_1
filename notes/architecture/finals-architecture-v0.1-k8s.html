@@ -126,17 +126,17 @@ svg{display:block;min-width:1900px;font-family:var(--font)}
 <text x="462" y="350" class="sub">감사 로그: 누가·언제·무엇을·결과 (FR-BASE-07) · 권한 없는 요청 → 거부 + 기록</text>
 <path d="M380 257 L436 257" class="e-api" marker-end="url(#m-e-api)"/>
 <rect x="440" y="412" width="420" height="200" rx="12" class="card"/>
-<text x="462" y="450" class="ttl">이전 플래너</text>
-<rect x="577.74" y="434" width="46" height="20" rx="10" class="bm"/>
-<text x="600.74" y="448.5" class="newt" text-anchor="middle">MUST</text>
-<rect x="629.74" y="434" width="40" height="20" rx="10" class="bn"/>
-<text x="649.74" y="448.5" class="newt" text-anchor="middle">신규</text>
-<text x="840" y="598" class="tag" text-anchor="end">PLN · CHK</text>
-<text x="462" y="480" class="sub">사전 점검: B 클러스터 버전·CRD·StorageClass·쿼터 (FR-MIG-06)</text>
-<text x="462" y="505" class="sub">계획 생성: 단계 · 예상 시간 · 롤백 조건 (FR-MIG-07)</text>
-<text x="462" y="530" class="sub">레지던시 규칙: KR 전용 데이터는 이전 차단 (FR-AIR-02)</text>
-<text x="462" y="555" class="sub">출력 = 승인 대기 계획 → approver 승인 후 실행</text>
-<text x="462" y="580" class="qt">결정: 계획을 AI가 쓰나, 규칙이 쓰나 (Q)</text>
+<text x="462" y="450" class="ttl">가져오기 + 이전 플래너</text>
+<rect x="684.14" y="434" width="46" height="20" rx="10" class="bm"/>
+<text x="707.14" y="448.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="736.14" y="434" width="40" height="20" rx="10" class="bn"/>
+<text x="756.14" y="448.5" class="newt" text-anchor="middle">신규</text>
+<text x="840" y="598" class="tag" text-anchor="end">IMP · PLN · CHK</text>
+<text x="462" y="480" class="subd">가져오기: 돌던 ECS·ALB·RDS를 observe로 읽어 명세 초안</text>
+<text x="462" y="505" class="sub">AI가 초안 → 확신 낮은 칸 표시 → 사람 확인 → Helm values</text>
+<text x="462" y="530" class="sub">사전 점검: 대상에 대응 없는 서비스·버전·권한 (FR-MIG-06)</text>
+<text x="462" y="555" class="sub">계획: 단계·예상 시간·롤백 조건 → 승인 후 실행 (FR-MIG-07)</text>
+<text x="462" y="580" class="qt">결정: 가져오기 대상 범위 (ECS만 / EKS·Terraform까지)</text>
 <rect x="890" y="412" width="420" height="200" rx="12" class="agent"/>
 <text x="912" y="450" class="ttl">AI 에이전트 (플랫폼 통합)</text>
 <rect x="1166.06" y="434" width="46" height="20" rx="10" class="bm"/>
