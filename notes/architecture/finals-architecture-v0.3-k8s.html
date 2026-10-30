@@ -177,15 +177,15 @@ svg{display:block;min-width:1900px;font-family:var(--font)}
 <text x="462" y="758" class="sub">매트릭스: 통제 12개 × 환경 3개(+Azure Mock), 빈칸 0</text>
 <text x="462" y="783" class="subd">확정: 데모 2곳 실제로 켬 (GuardDuty·SCC)</text>
 <rect x="890" y="640" width="420" height="176" rx="12" class="card"/>
-<text x="912" y="678" class="ttl">환경 추상화 (Helm)</text>
-<rect x="1102.22" y="662" width="46" height="20" rx="10" class="bm"/>
-<text x="1125.22" y="676.5" class="newt" text-anchor="middle">MUST</text>
-<rect x="1154.22" y="662" width="40" height="20" rx="10" class="bp"/>
-<text x="1174.22" y="676.5" class="newt" text-anchor="middle">예선</text>
+<text x="912" y="678" class="ttl">환경 어댑터 (번역기)</text>
+<rect x="1115.52" y="662" width="46" height="20" rx="10" class="bm"/>
+<text x="1138.52" y="676.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="1167.52" y="662" width="40" height="20" rx="10" class="bp"/>
+<text x="1187.52" y="676.5" class="newt" text-anchor="middle">예선</text>
 <text x="1290" y="802" class="tag" text-anchor="end">IR · PRF · ADP</text>
-<text x="912" y="708" class="sub">앱 = Helm chart 하나 · values-aws/gcp/azure/onprem</text>
-<text x="912" y="733" class="sub">테넌트마다 AppProject: 자기 레포·클러스터에만 배포</text>
-<text x="912" y="758" class="sub">Helm = k8s 층 · Terraform = 클라우드 층(VPC·클러스터·DB)</text>
+<text x="912" y="708" class="sub">공통 명세 → 환경별 어댑터(AWS·GCP·온프레·Azure Mock)</text>
+<text x="912" y="733" class="sub">출력 ① Terraform 입력값 → 클라우드 자원 생성</text>
+<text x="912" y="758" class="sub">출력 ② Helm values → Argo CD가 앱 배포 (AppProject)</text>
 <text x="912" y="783" class="qt">(별개) 데모 경로 가정: AWS → GCP → 온프레</text>
 <path d="M650 612 L650 636" class="e-api" marker-end="url(#m-e-api)"/>
 <path d="M1100 612 L1100 636" class="e-api" marker-end="url(#m-e-api)"/>

@@ -140,10 +140,10 @@ card(440, 640, 420, 176, "보안 수집기 (같은 기준)", [
     "매트릭스: 통제 12개 × 환경 3개(+Azure Mock), 빈칸 0",
     "!확정: 데모 2곳 실제로 켬 (GuardDuty·SCC)",
 ], ["MUST", "신규"], tag="SEC · POL")
-card(890, 640, 420, 176, "환경 추상화 (Helm)", [
-    "앱 = Helm chart 하나 · values-aws/gcp/azure/onprem",
-    "테넌트마다 AppProject: 자기 레포·클러스터에만 배포",
-    "Helm = k8s 층 · Terraform = 클라우드 층(VPC·클러스터·DB)",
+card(890, 640, 420, 176, "환경 어댑터 (번역기)", [
+    "공통 명세 → 환경별 어댑터(AWS·GCP·온프레·Azure Mock)",
+    "출력 ① Terraform 입력값 → 클라우드 자원 생성",
+    "출력 ② Helm values → Argo CD가 앱 배포 (AppProject)",
     "?(별개) 데모 경로 가정: AWS → GCP → 온프레",
 ], ["MUST", "예선"], tag="IR · PRF · ADP")
 arrow("M650 612 L650 636", "e-api"); arrow("M1100 612 L1100 636", "e-api")
