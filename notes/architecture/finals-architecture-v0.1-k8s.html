@@ -1,0 +1,474 @@
+<title>본선 아키텍처 v0.1-k8s</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;700&display=swap">
+<style>
+:root{--bg:#F6F8FA;--card:#FFFFFF;--line:#D5DBE3;--text:#1C2430;--muted:#5E6B7A;--edge:#7C8896;
+--cp-fill:#EFF6F2;--cp-line:#7DB596;--cp-text:#2F7A55;--pool:#9AA7B5;
+--ag-fill:#F3F0FD;--ag-line:#A99BE6;--async:#7B61D9;--prov:#D9731A;--user:#2F6FD1;--sync:#B4327A;
+--pg-f:#EEF3FB;--pg-l:#BCCDEA;--ob-f:#F2F4F6;--ob-l:#D2D8DF;--vt-f:#FBF4E6;--vt-l:#E4CC9C;--ai-f:#F3F0FD;--ai-l:#CFC5F1;--rg-f:#EEF6F1;--rg-l:#BCDAC8;
+--on:#5B6B7F;--obs:#1F9E89;--obs-f:#EAF6F4;--obs-l:#9FD3C8;--aws:#E07A1F;--gcp:#3B7BE0;--strip:#FFFFFF;
+--gate:#C98A12;--must:#2F7A55;--extra:#8A95A3;--prelim:#2F6FD1;--new:#C98A12;--q:#B4327A;
+--font:'IBM Plex Sans KR','Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',system-ui,sans-serif;--mono:'IBM Plex Mono','DejaVu Sans Mono',monospace}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){--bg:#13181F;--card:#1B222B;--line:#2E3843;--text:#E6ECF2;--muted:#A3AFBC;--edge:#8A96A4;
+--cp-fill:#17221C;--cp-line:#4E8A68;--cp-text:#7CC79C;--pool:#5E6B7A;--ag-fill:#201C30;--ag-line:#6F62B0;--async:#A28FF0;--prov:#F0944A;--user:#6C9CF0;--sync:#E06AAE;
+--pg-f:#1A2230;--pg-l:#3A4E6C;--ob-f:#1C2229;--ob-l:#3A444F;--vt-f:#2A2418;--vt-l:#7A6436;--ai-f:#221E33;--ai-l:#5E5490;--rg-f:#172219;--rg-l:#3C6B4C;
+--on:#8E9DB0;--obs:#3FC9AF;--obs-f:#15261F;--obs-l:#2E6B5B;--aws:#F0944A;--gcp:#6C9CF0;--strip:#1B222B;--gate:#E0A838;--must:#4FA574;--extra:#6B7684;--prelim:#6C9CF0;--new:#E0A838;--q:#E06AAE;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#13181F;--card:#1B222B;--line:#2E3843;--text:#E6ECF2;--muted:#A3AFBC;--edge:#8A96A4;
+--cp-fill:#17221C;--cp-line:#4E8A68;--cp-text:#7CC79C;--pool:#5E6B7A;--ag-fill:#201C30;--ag-line:#6F62B0;--async:#A28FF0;--prov:#F0944A;--user:#6C9CF0;--sync:#E06AAE;
+--pg-f:#1A2230;--pg-l:#3A4E6C;--ob-f:#1C2229;--ob-l:#3A444F;--vt-f:#2A2418;--vt-l:#7A6436;--ai-f:#221E33;--ai-l:#5E5490;--rg-f:#172219;--rg-l:#3C6B4C;
+--on:#8E9DB0;--obs:#3FC9AF;--obs-f:#15261F;--obs-l:#2E6B5B;--aws:#F0944A;--gcp:#6C9CF0;--strip:#1B222B;--gate:#E0A838;--must:#4FA574;--extra:#6B7684;--prelim:#6C9CF0;--new:#E0A838;--q:#E06AAE;color-scheme:dark}
+body{background:var(--bg);color:var(--text);font-family:var(--font);margin:0}
+.wrap{padding-block:12px 24px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.bar{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;font-size:13px;color:var(--muted);margin-bottom:8px}
+.bar b{color:var(--text)}
+.bar button{font:inherit;color:var(--text);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:4px 10px;cursor:pointer}
+.bar button:focus-visible{outline:2px solid var(--cp-line);outline-offset:2px}
+.scroll{overflow:auto;border:1px solid var(--line);border-radius:12px;background:var(--bg)}
+svg{display:block;min-width:1900px;font-family:var(--font)}
+.bg{fill:var(--bg)}.card{fill:var(--card);stroke:var(--line);stroke-width:1}
+.agent{fill:var(--ag-fill);stroke:var(--ag-line);stroke-width:1.5}
+.st-pg{fill:var(--pg-f);stroke:var(--pg-l)}.st-ob{fill:var(--ob-f);stroke:var(--ob-l)}.st-vt{fill:var(--vt-f);stroke:var(--vt-l)}.st-ai{fill:var(--ai-f);stroke:var(--ai-l)}.st-rg{fill:var(--rg-f);stroke:var(--rg-l)}
+.cp{fill:var(--cp-fill);stroke:var(--cp-line);stroke-width:1.5;stroke-dasharray:7 6}
+.pool{fill:none;stroke:var(--pool);stroke-width:1.2;stroke-dasharray:5 5}
+.env{fill:var(--card);stroke-width:1.5}.env-on{stroke:var(--on)}.env-aws{stroke:var(--aws)}.env-gcp{stroke:var(--gcp)}
+.bd-on{fill:var(--on)}.bd-aws{fill:var(--aws)}.bd-gcp{fill:var(--gcp)}
+.dot-on{fill:var(--on)}.dot-aws{fill:var(--aws)}.dot-gcp{fill:var(--gcp)}
+.strip{fill:var(--strip);stroke:var(--line)}.obsc{fill:var(--obs-f);stroke:var(--obs-l)}
+.optc{fill:var(--card);stroke:var(--pool);stroke-width:1.3;stroke-dasharray:6 4}
+.bm{fill:var(--must)}.bx{fill:var(--extra)}.bp{fill:var(--prelim)}.bn{fill:var(--new)}.bq{fill:var(--q)}
+.h1{font-size:34px;font-weight:700;fill:var(--text)}.h2{font-size:16px;fill:var(--muted)}
+.ttl{font-size:19px;font-weight:700;fill:var(--text)}.ttl-s{font-size:16px;font-weight:700;fill:var(--text)}
+.sub{font-size:14.5px;fill:var(--muted)}.subd{font-size:14.5px;fill:var(--text);font-weight:700}
+.qt{font-size:14.5px;fill:var(--q);font-weight:700}
+.tag{font-size:13px;fill:var(--muted);font-weight:700}.cpt{font-size:22px;font-weight:700;fill:var(--cp-text)}
+.pt{font-size:14.5px;font-weight:700;fill:var(--muted)}.stt{font-size:17px;font-weight:700;fill:var(--cp-text)}
+.lbl{font-size:13.5px;fill:var(--muted);font-weight:700}.leg{font-size:14.5px;fill:var(--muted)}
+.bdt{font-size:12.5px;font-weight:700;fill:#fff}.newt{font-size:11px;font-weight:700;fill:#fff;letter-spacing:.04em}
+.e-api{stroke:var(--edge);stroke-width:1.5;fill:none}.e-async{stroke:var(--async);stroke-width:1.6;stroke-dasharray:6 4;fill:none}
+.e-prov{stroke:var(--prov);stroke-width:2;fill:none}.e-user{stroke:var(--user);stroke-width:2;fill:none}
+.e-obs{stroke:var(--obs);stroke-width:1.8;stroke-dasharray:3 3;fill:none}.e-gate{stroke:var(--gate);stroke-width:2;fill:none}
+.e-sync{stroke:var(--sync);stroke-width:2.2;stroke-dasharray:8 4;fill:none}
+.mk-e-obs{fill:var(--obs)}.mk-e-api{fill:var(--edge)}.mk-e-async{fill:var(--async)}.mk-e-prov{fill:var(--prov)}.mk-e-user{fill:var(--user)}.mk-e-gate{fill:var(--gate)}.mk-e-sync{fill:var(--sync)}
+</style>
+<div class="wrap">
+<div class="bar"><b>Beyond Lock-In · 아키텍처 v0.1-k8s (k8s 버전)</b><span>가로로 긴 그림이라 옆으로 스크롤해서 봐. 분홍 <b>TODO(h)</b>가 팀이 정할 지점.</span>
+<button id="zoom-out" type="button">축소</button><button id="zoom-in" type="button">확대</button><button id="zoom-fit" type="button">폭 맞춤</button></div>
+<div class="scroll" id="scroll"><svg id="dg" width="1900" height="2420" viewBox="0 0 1900 2420" xmlns="http://www.w3.org/2000/svg"><defs><marker id="m-e-api" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="mk-e-api"/></marker><marker id="m-e-async" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="mk-e-async"/></marker><marker id="m-e-prov" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="mk-e-prov"/></marker><marker id="m-e-user" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="mk-e-user"/></marker><marker id="m-e-obs" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="mk-e-obs"/></marker><marker id="m-e-gate" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="mk-e-gate"/></marker><marker id="m-e-sync" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9z" class="mk-e-sync"/></marker></defs>
+<rect width="1900" height="2420" class="bg"/>
+<text x="48" y="70" class="h1">멀티 클라우드 관리 플랫폼 — 본선 아키텍처 v0.1-k8s</text>
+<text x="48" y="106" class="h2">k8s 버전 · EKS / GKE / k3s 3클러스터 + Argo CD 허브 · GitOps 레포가 배포의 원천 | v0.1(ECS·Cloud Run·Compose)과 비교용, 2026-10-30 초안</text>
+<line x1="980" y1="52" x2="1030" y2="52" class="e-api"/>
+<text x="1046" y="57" class="leg">API 호출 (HTTPS · SSE)</text>
+<line x1="980" y1="86" x2="1030" y2="86" class="e-prov"/>
+<text x="1046" y="91" class="leg">GitOps 동기화 (Argo CD)</text>
+<line x1="980" y1="120" x2="1030" y2="120" class="e-obs"/>
+<text x="1046" y="125" class="leg">관측 데이터 (OTel)</text>
+<line x1="1280" y1="52" x2="1330" y2="52" class="e-async"/>
+<text x="1346" y="57" class="leg">비동기 작업 (Postgres 큐)</text>
+<line x1="1280" y1="86" x2="1330" y2="86" class="e-user"/>
+<text x="1346" y="91" class="leg">사용자 트래픽</text>
+<line x1="1280" y1="120" x2="1330" y2="120" class="e-sync"/>
+<text x="1346" y="125" class="leg">데이터 복제</text>
+<rect x="1580" y="42" width="46" height="20" rx="10" class="bm"/>
+<text x="1603.0" y="56.5" class="newt" text-anchor="middle">MUST</text>
+<text x="1652" y="57" class="leg">데모 필수 3장면 (먼저 완주)</text>
+<rect x="1580" y="70" width="50" height="20" rx="10" class="bx"/>
+<text x="1605.0" y="84.5" class="newt" text-anchor="middle">EXTRA</text>
+<text x="1652" y="85" class="leg">시간 남으면 · 설계 문서로 커버</text>
+<rect x="1580" y="98" width="40" height="20" rx="10" class="bp"/>
+<text x="1600.0" y="112.5" class="newt" text-anchor="middle">예선</text>
+<text x="1652" y="113" class="leg">camellia에서 가져옴</text>
+<rect x="1580" y="126" width="40" height="20" rx="10" class="bn"/>
+<text x="1600.0" y="140.5" class="newt" text-anchor="middle">신규</text>
+<text x="1652" y="141" class="leg">본선에서 새로 만듦</text>
+<rect x="1200" y="142" width="62" height="20" rx="10" class="bq"/>
+<text x="1231.0" y="156.5" class="newt" text-anchor="middle">TODO(h)</text>
+<text x="1272" y="157" class="leg">팀이 정할 결정 (인터뷰 Q)</text>
+<rect x="48" y="180" width="310" height="150" rx="12" class="card"/>
+<text x="70" y="218" class="ttl">웹 콘솔</text>
+<rect x="148.5" y="202" width="46" height="20" rx="10" class="bm"/>
+<text x="171.5" y="216.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="200.5" y="202" width="40" height="20" rx="10" class="bp"/>
+<text x="220.5" y="216.5" class="newt" text-anchor="middle">예선</text>
+<text x="70" y="248" class="sub">환경 목록 · 상태 일원 화면 (FR-BASE-04)</text>
+<text x="70" y="273" class="sub">이전 계획 · 승인 · 진행 · 롤백 버튼</text>
+<text x="70" y="298" class="sub">보안 매트릭스 · 에이전트 승인 화면</text>
+<rect x="48" y="348" width="310" height="120" rx="12" class="optc"/>
+<text x="70" y="386" class="ttl">CLI · CI</text>
+<rect x="167.12" y="370" width="50" height="20" rx="10" class="bx"/>
+<text x="192.12" y="384.5" class="newt" text-anchor="middle">EXTRA</text>
+<text x="70" y="416" class="sub">PR → kubeconform · Kyverno CLI · Trivy</text>
+<text x="70" y="441" class="sub">앱 레포 push → 이미지 태그 → GitOps 레포</text>
+<rect x="48" y="486" width="310" height="120" rx="12" class="card"/>
+<text x="70" y="524" class="ttl">역할 (RBAC)</text>
+<rect x="193.72" y="508" width="46" height="20" rx="10" class="bm"/>
+<text x="216.72" y="522.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="245.72" y="508" width="40" height="20" rx="10" class="bn"/>
+<text x="265.72" y="522.5" class="newt" text-anchor="middle">신규</text>
+<text x="70" y="554" class="sub">플랫폼 역할 → 클러스터 RBAC · Argo CD 프로젝트</text>
+<text x="70" y="579" class="sub">이전·롤백·반영은 approver만 (FR-BASE-06)</text>
+<line x1="358" y1="205" x2="380" y2="205" class="e-api"/>
+<line x1="358" y1="373" x2="380" y2="373" class="e-api"/>
+<line x1="358" y1="511" x2="380" y2="511" class="e-api"/>
+<line x1="380" y1="205" x2="380" y2="511" class="e-api"/>
+<rect x="405" y="170" width="940" height="1250" rx="18" class="cp"/>
+<text x="439" y="212" class="cpt">컨트롤 플레인 (EKS 관리 클러스터)</text>
+<text x="1315" y="212" class="lbl" text-anchor="end">api · worker · web = Deployment · Argo CD 허브</text>
+<rect x="440" y="232" width="870" height="150" rx="12" class="card"/>
+<text x="462" y="270" class="ttl">API 서버 + 오케스트레이터</text>
+<rect x="716.06" y="254" width="46" height="20" rx="10" class="bm"/>
+<text x="739.06" y="268.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="768.06" y="254" width="40" height="20" rx="10" class="bp"/>
+<text x="788.06" y="268.5" class="newt" text-anchor="middle">예선</text>
+<text x="1290" y="368" class="tag" text-anchor="end">API · STM · LCK · AUD</text>
+<text x="462" y="300" class="sub">Fastify + Zod + pg-boss · REST · SSE · 이전 상태 추가: plan → precheck → sync → shift → cutover → done | rollback</text>
+<text x="462" y="325" class="sub">실제 변경은 kubectl 아님 → GitOps 레포 커밋 → Argo CD 동기화 (변경 이력 = git log)</text>
+<text x="462" y="350" class="sub">감사 로그: 누가·언제·무엇을·결과 (FR-BASE-07) · 권한 없는 요청 → 거부 + 기록</text>
+<path d="M380 257 L436 257" class="e-api" marker-end="url(#m-e-api)"/>
+<rect x="440" y="412" width="420" height="200" rx="12" class="card"/>
+<text x="462" y="450" class="ttl">이전 플래너</text>
+<rect x="577.74" y="434" width="46" height="20" rx="10" class="bm"/>
+<text x="600.74" y="448.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="629.74" y="434" width="40" height="20" rx="10" class="bn"/>
+<text x="649.74" y="448.5" class="newt" text-anchor="middle">신규</text>
+<text x="840" y="598" class="tag" text-anchor="end">PLN · CHK</text>
+<text x="462" y="480" class="sub">사전 점검: B 클러스터 버전·CRD·StorageClass·쿼터 (FR-MIG-06)</text>
+<text x="462" y="505" class="sub">계획 생성: 단계 · 예상 시간 · 롤백 조건 (FR-MIG-07)</text>
+<text x="462" y="530" class="sub">레지던시 규칙: KR 전용 데이터는 이전 차단 (FR-AIR-02)</text>
+<text x="462" y="555" class="sub">출력 = 승인 대기 계획 → approver 승인 후 실행</text>
+<text x="462" y="580" class="qt">결정: 계획을 AI가 쓰나, 규칙이 쓰나 (Q)</text>
+<rect x="890" y="412" width="420" height="200" rx="12" class="agent"/>
+<text x="912" y="450" class="ttl">AI 에이전트 (플랫폼 통합)</text>
+<rect x="1166.06" y="434" width="46" height="20" rx="10" class="bm"/>
+<text x="1189.06" y="448.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="1218.06" y="434" width="40" height="20" rx="10" class="bn"/>
+<text x="1238.06" y="448.5" class="newt" text-anchor="middle">신규</text>
+<text x="1290" y="598" class="tag" text-anchor="end">AGT · SBX</text>
+<text x="912" y="480" class="sub">입력: Kyverno 위반 · 이전 계획 · 매니페스트 diff</text>
+<text x="912" y="505" class="sub">행동: vcluster 샌드박스에서 매니페스트·코드 수정 → 테스트</text>
+<text x="912" y="530" class="sub">권한 경계: 샌드박스 쓰기 · 프로덕션 읽기 · 반영은 사람 (FR-AGT-06)</text>
+<text x="912" y="555" class="sub">출력: GitOps 레포 PR (근거 · diff · 테스트) → 승인 (FR-AGT-08)</text>
+<text x="912" y="580" class="qt">결정: Agents SDK vs 자체 도구 루프 (Q)</text>
+<path d="M650 382 L650 408" class="e-api" marker-end="url(#m-e-api)"/>
+<path d="M1100 382 L1100 408" class="e-api" marker-end="url(#m-e-api)"/>
+<rect x="440" y="640" width="420" height="176" rx="12" class="card"/>
+<text x="462" y="678" class="ttl">정책 엔진 (Kyverno)</text>
+<rect x="665.52" y="662" width="46" height="20" rx="10" class="bm"/>
+<text x="688.52" y="676.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="717.52" y="662" width="40" height="20" rx="10" class="bn"/>
+<text x="737.52" y="676.5" class="newt" text-anchor="middle">신규</text>
+<text x="840" y="802" class="tag" text-anchor="end">SEC · POL</text>
+<text x="462" y="708" class="sub">Kyverno 같은 정책 → 3클러스터 동일 적용 (FR-SEC-03)</text>
+<text x="462" y="733" class="sub">PolicyReport · Trivy Operator · GuardDuty·SCC → 공통 스키마</text>
+<text x="462" y="758" class="sub">매트릭스: 환경 × 4항목, 빈칸 0 (FR-SEC-02 · NFR-09)</text>
+<text x="462" y="783" class="qt">결정: 클라우드 서비스까지 vs 클러스터 안만 (Q4)</text>
+<rect x="890" y="640" width="420" height="176" rx="12" class="card"/>
+<text x="912" y="678" class="ttl">환경 추상화 (Helm)</text>
+<rect x="1102.22" y="662" width="46" height="20" rx="10" class="bm"/>
+<text x="1125.22" y="676.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="1154.22" y="662" width="40" height="20" rx="10" class="bp"/>
+<text x="1174.22" y="676.5" class="newt" text-anchor="middle">예선</text>
+<text x="1290" y="802" class="tag" text-anchor="end">IR · PRF · ADP</text>
+<text x="912" y="708" class="sub">앱 = Helm chart 하나 · 환경 차이 = values-aws/gcp/onprem</text>
+<text x="912" y="733" class="sub">ApplicationSet cluster generator: 라벨로 대상 클러스터 선택</text>
+<text x="912" y="758" class="sub">예선 IR → values 생성기로만 재사용, Terraform은 클러스터만</text>
+<text x="912" y="783" class="qt">결정: 클라우드 B = GKE / NKS(NAVER) / AKS (Q3)</text>
+<path d="M650 612 L650 636" class="e-api" marker-end="url(#m-e-api)"/>
+<path d="M1100 612 L1100 636" class="e-api" marker-end="url(#m-e-api)"/>
+<rect x="425" y="846" width="900" height="548" rx="14" class="pool"/>
+<text x="450" y="878" class="stt">통합 워커 (Postgres 큐 · 실행은 Argo CD에 위임)</text>
+<text x="1315" y="878" class="lbl" text-anchor="end">멱등 (job_id + attempt) · 단계마다 타임스탬프 기록</text>
+<rect x="445" y="898" width="410" height="230" rx="12" class="card"/>
+<text x="467" y="936" class="ttl">이전 핸들러</text>
+<rect x="582.74" y="920" width="46" height="20" rx="10" class="bm"/>
+<text x="605.74" y="934.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="634.74" y="920" width="40" height="20" rx="10" class="bp"/>
+<text x="654.74" y="934.5" class="newt" text-anchor="middle">예선</text>
+<text x="835" y="1114" class="tag" text-anchor="end">MIG</text>
+<text x="467" y="966" class="sub">1 deploy: ApplicationSet에 B 라벨 추가 → Argo sync</text>
+<text x="467" y="991" class="sub">2 sync: DB 복제 시작 → lag 0 확인 (FR-MIG-02)</text>
+<text x="467" y="1016" class="sub">3 shift: Cloudflare 가중치 10 → 50 → 100 % (클러스터 간)</text>
+<text x="467" y="1041" class="sub">4 cutover: 쓰기 전환 · A 읽기 전용 · 헬스 통과 후만</text>
+<text x="467" y="1066" class="sub">5 measure: 실패 요청 수 · 전환 시각 자동 기록 (FR-OBS-04)</text>
+<text x="467" y="1091" class="subd">클러스터 안 = Argo · 클러스터 사이 = 우리 워커</text>
+<rect x="895" y="898" width="410" height="230" rx="12" class="card"/>
+<text x="917" y="936" class="ttl">롤백 핸들러</text>
+<rect x="1032.74" y="920" width="46" height="20" rx="10" class="bm"/>
+<text x="1055.74" y="934.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="1084.74" y="920" width="40" height="20" rx="10" class="bp"/>
+<text x="1104.74" y="934.5" class="newt" text-anchor="middle">예선</text>
+<text x="1285" y="1114" class="tag" text-anchor="end">RBK</text>
+<text x="917" y="966" class="sub">버전 롤백: Argo Rollouts 카나리 + AnalysisTemplate</text>
+<text x="917" y="991" class="sub">환경 롤백: 에러율 · p95 초과 → 가중치 A 100 %</text>
+<text x="917" y="1016" class="sub">목표: 장애 주입 → 60초 안에 복귀 (NFR-05)</text>
+<text x="917" y="1041" class="subd">두 층: 클러스터 안(도구) / 클러스터 사이(직접)</text>
+<text x="917" y="1066" class="sub">제약: stateful이면 복제 방향 되돌린 뒤에만 쓰기 허용</text>
+<text x="917" y="1091" class="qt">결정: 자동 롤백 판정 지표·창 (Q)</text>
+<rect x="445" y="1148" width="410" height="226" rx="12" class="card"/>
+<text x="467" y="1186" class="ttl">보안 스캔 핸들러</text>
+<rect x="630.62" y="1170" width="46" height="20" rx="10" class="bm"/>
+<text x="653.62" y="1184.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="682.62" y="1170" width="40" height="20" rx="10" class="bn"/>
+<text x="702.62" y="1184.5" class="newt" text-anchor="middle">신규</text>
+<text x="835" y="1360" class="tag" text-anchor="end">SCN</text>
+<text x="467" y="1216" class="sub">PolicyReport · Trivy 결과 주기 수집 → 공통 스키마</text>
+<text x="467" y="1241" class="sub">이전 전후 보안 동등성 비교 A vs B (FR-SEC-06)</text>
+<text x="467" y="1266" class="sub">빨간 칸 → 에이전트 수정안 작업 생성 (FR-SEC-05)</text>
+<text x="467" y="1291" class="sub">온프레 k3s도 같은 Kyverno → 매트릭스 행 (FR-SEC-04)</text>
+<rect x="895" y="1148" width="410" height="226" rx="12" class="agent"/>
+<text x="917" y="1186" class="ttl">에이전트 작업 핸들러 (샌드박스)</text>
+<rect x="1224.26" y="1170" width="46" height="20" rx="10" class="bm"/>
+<text x="1247.26" y="1184.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="1276.26" y="1170" width="40" height="20" rx="10" class="bn"/>
+<text x="1296.26" y="1184.5" class="newt" text-anchor="middle">신규</text>
+<text x="1285" y="1360" class="tag" text-anchor="end">SBX</text>
+<text x="917" y="1216" class="sub">vcluster 생성 → 에이전트 실행 → 테스트·Kyverno 게이트</text>
+<text x="917" y="1241" class="sub">통과 + 사람 승인 → GitOps PR 머지 (FR-AGT-03)</text>
+<text x="917" y="1266" class="sub">실패 1건 차단 · 성공 1건 반영, 둘 다 기록</text>
+<text x="917" y="1291" class="sub">실행 1회 ≤ 60초 목표 (NFR-19)</text>
+<text x="917" y="1316" class="qt">결정: 샌드박스 = vcluster / NS + gVisor (Q5)</text>
+<path d="M1310 330 L1328 330 L1328 926 L1330 926" class="e-async" marker-end="url(#m-e-async)"/>
+<rect x="1392" y="180" width="464" height="155" rx="12" class="st-pg"/>
+<text x="1414" y="218" class="ttl">Postgres (플랫폼)</text>
+<rect x="1598.9" y="202" width="46" height="20" rx="10" class="bm"/>
+<text x="1621.9" y="216.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="1650.9" y="202" width="40" height="20" rx="10" class="bp"/>
+<text x="1670.9" y="216.5" class="newt" text-anchor="middle">예선</text>
+<text x="1414" y="248" class="sub">단일 진실 원천 · 이전 상태 · 측정표 · 감사 로그</text>
+<text x="1414" y="273" class="sub">작업 큐 SKIP LOCKED · LISTEN/NOTIFY</text>
+<line x1="1368" y1="257" x2="1392" y2="257" class="e-api"/>
+<rect x="1392" y="351" width="464" height="155" rx="12" class="st-ob"/>
+<text x="1414" y="389" class="ttl">증거 저장소 (오브젝트)</text>
+<rect x="1636.14" y="373" width="46" height="20" rx="10" class="bm"/>
+<text x="1659.14" y="387.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="1688.14" y="373" width="40" height="20" rx="10" class="bn"/>
+<text x="1708.14" y="387.5" class="newt" text-anchor="middle">신규</text>
+<text x="1414" y="419" class="sub">단계 로그 · 스캔 결과 · 에이전트 diff · 테스트 출력</text>
+<text x="1414" y="444" class="sub">데모 직후 ‘근거 보기’ 링크의 원천</text>
+<line x1="1368" y1="428" x2="1392" y2="428" class="e-api"/>
+<rect x="1392" y="522" width="464" height="155" rx="12" class="st-ob"/>
+<text x="1414" y="560" class="ttl">IaC State (Terraform)</text>
+<rect x="1649.44" y="544" width="46" height="20" rx="10" class="bm"/>
+<text x="1672.44" y="558.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="1701.44" y="544" width="40" height="20" rx="10" class="bp"/>
+<text x="1721.44" y="558.5" class="newt" text-anchor="middle">예선</text>
+<text x="1414" y="590" class="sub">클러스터·VPC·DB만 Terraform (앱은 Git)</text>
+<text x="1414" y="615" class="sub">S3 backend · use_lockfile (예선 방식)</text>
+<line x1="1368" y1="599" x2="1392" y2="599" class="e-api"/>
+<rect x="1392" y="693" width="464" height="155" rx="12" class="st-vt"/>
+<text x="1414" y="731" class="ttl">시크릿 (External Secrets)</text>
+<rect x="1684.02" y="715" width="46" height="20" rx="10" class="bm"/>
+<text x="1707.02" y="729.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="1736.02" y="715" width="40" height="20" rx="10" class="bn"/>
+<text x="1756.02" y="729.5" class="newt" text-anchor="middle">신규</text>
+<text x="1414" y="761" class="sub">ESO → AWS Secrets Manager / GCP Secret Manager</text>
+<text x="1414" y="786" class="sub">온프레 k3s는 Vault 또는 SOPS (같은 키 이름)</text>
+<line x1="1368" y1="770" x2="1392" y2="770" class="e-api"/>
+<rect x="1392" y="864" width="464" height="155" rx="12" class="st-ai"/>
+<text x="1414" y="902" class="ttl">LLM API</text>
+<rect x="1500.48" y="886" width="46" height="20" rx="10" class="bm"/>
+<text x="1523.48" y="900.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="1552.48" y="886" width="40" height="20" rx="10" class="bp"/>
+<text x="1572.48" y="900.5" class="newt" text-anchor="middle">예선</text>
+<text x="1414" y="932" class="sub">Anthropic 직접 또는 Bedrock (AI_PROVIDER 한 곳, 예선)</text>
+<text x="1414" y="957" class="sub">AI 리소스 현황: 모델·리전·호출량·비용 (FR-AIR-01)</text>
+<line x1="1368" y1="941" x2="1392" y2="941" class="e-api"/>
+<rect x="1392" y="1035" width="464" height="155" rx="12" class="st-rg"/>
+<text x="1414" y="1073" class="ttl">레지스트리 · 고정 진입점</text>
+<rect x="1654.76" y="1057" width="46" height="20" rx="10" class="bm"/>
+<text x="1677.76" y="1071.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="1706.76" y="1057" width="40" height="20" rx="10" class="bp"/>
+<text x="1726.76" y="1071.5" class="newt" text-anchor="middle">예선</text>
+<text x="1414" y="1103" class="sub">GHCR 하나: 같은 digest를 3클러스터 pull</text>
+<text x="1414" y="1128" class="sub">Cloudflare LB: URL 불변 · 클러스터 간 가중치</text>
+<line x1="1368" y1="1112" x2="1392" y2="1112" class="e-api"/>
+<rect x="1392" y="1206" width="464" height="155" rx="12" class="st-rg"/>
+<text x="1414" y="1244" class="ttl">GitOps 레포 (원천)</text>
+<rect x="1606.88" y="1228" width="46" height="20" rx="10" class="bm"/>
+<text x="1629.88" y="1242.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="1658.88" y="1228" width="40" height="20" rx="10" class="bn"/>
+<text x="1678.88" y="1242.5" class="newt" text-anchor="middle">신규</text>
+<text x="1414" y="1274" class="sub">Helm values · ApplicationSet · Kyverno 정책</text>
+<text x="1414" y="1299" class="sub">모든 변경 = PR, Argo CD가 읽어 감</text>
+<line x1="1368" y1="1283" x2="1392" y2="1283" class="e-api"/>
+<line x1="1368" y1="257" x2="1368" y2="1283" class="e-api"/>
+<line x1="1310" y1="257" x2="1368" y2="257" class="e-api"/>
+<line x1="1325" y1="1283" x2="1368" y2="1283" class="e-api"/>
+<text x="48" y="1500" class="cpt">데이터 플레인</text>
+<text x="48" y="1530" class="sub">컨트롤이 멈춰도 앱은 계속 동작</text>
+<rect x="48" y="1550" width="310" height="84" rx="12" class="card"/>
+<text x="70" y="1588" class="ttl">앱 사용자 · 심사위원</text>
+<text x="70" y="1618" class="sub">URL 하나: app.&lt;domain&gt; (이전 전후 동일)</text>
+<path d="M203 1634 L203 1660" class="e-user" marker-end="url(#m-e-user)"/>
+<rect x="48" y="1664" width="310" height="176" rx="12" class="card"/>
+<text x="70" y="1702" class="ttl">트래픽 전환</text>
+<rect x="185.74" y="1686" width="46" height="20" rx="10" class="bm"/>
+<text x="208.74" y="1700.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="237.74" y="1686" width="40" height="20" rx="10" class="bp"/>
+<text x="257.74" y="1700.5" class="newt" text-anchor="middle">예선</text>
+<text x="70" y="1732" class="sub">Cloudflare LB → 각 클러스터 Ingress</text>
+<text x="70" y="1757" class="sub">단계마다 에러율 · p95 확인 후 승격</text>
+<text x="70" y="1782" class="sub">헬스체크 통과 후에만 전환 (FR-MIG-09)</text>
+<text x="70" y="1807" class="qt">결정: L7 가중치 / DNS 가중치 / 글로벌 LB (Q2)</text>
+<path d="M358 1724 L401 1724" class="e-user" marker-end="url(#m-e-user)"/>
+<rect x="405" y="1470" width="470" height="330" rx="14" class="env env-aws"/>
+<rect x="427" y="1494" width="56" height="30" rx="7" class="bd-aws"/>
+<text x="455" y="1514" class="bdt" text-anchor="middle">A</text>
+<text x="497" y="1517" class="ttl">클러스터 A · EKS</text>
+<rect x="668.6" y="1501" width="46" height="20" rx="10" class="bm"/>
+<text x="691.6" y="1515.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="720.6" y="1501" width="40" height="20" rx="10" class="bn"/>
+<text x="740.6" y="1515.5" class="newt" text-anchor="middle">신규</text>
+<text x="427" y="1556" class="pt">EKS · 서울 · 관리 클러스터 겸용</text>
+<text x="427.0" y="1588" class="lbl" fill="var(--aws)">워크로드</text>
+<circle cx="433.0" cy="1609" r="3.2" class="dot-aws"/>
+<text x="445.0" y="1614" class="sub">Rollout + Ingress (ALB)</text>
+<circle cx="433.0" cy="1635" r="3.2" class="dot-aws"/>
+<text x="445.0" y="1640" class="sub">Argo CD 허브 · Rollouts</text>
+<text x="427.0" y="1666" class="lbl" fill="var(--aws)">데이터</text>
+<circle cx="433.0" cy="1687" r="3.2" class="dot-aws"/>
+<text x="445.0" y="1692" class="sub">RDS PG (소스 DB)</text>
+<circle cx="433.0" cy="1713" r="3.2" class="dot-aws"/>
+<text x="445.0" y="1718" class="sub">논리 복제 publisher</text>
+<text x="640.0" y="1588" class="lbl" fill="var(--aws)">보안</text>
+<circle cx="646.0" cy="1609" r="3.2" class="dot-aws"/>
+<text x="658.0" y="1614" class="sub">Kyverno · Trivy Operator</text>
+<circle cx="646.0" cy="1635" r="3.2" class="dot-aws"/>
+<text x="658.0" y="1640" class="sub">IRSA · GuardDuty EKS</text>
+<text x="640.0" y="1666" class="lbl" fill="var(--aws)">관측</text>
+<circle cx="646.0" cy="1687" r="3.2" class="dot-aws"/>
+<text x="658.0" y="1692" class="sub">kube-prometheus · OTel</text>
+<circle cx="646.0" cy="1713" r="3.2" class="dot-aws"/>
+<text x="658.0" y="1718" class="sub">k8s audit → 감사 로그</text>
+<rect x="897" y="1470" width="470" height="330" rx="14" class="env env-gcp"/>
+<rect x="919" y="1494" width="56" height="30" rx="7" class="bd-gcp"/>
+<text x="947" y="1514" class="bdt" text-anchor="middle">B</text>
+<text x="989" y="1517" class="ttl">클러스터 B · GKE</text>
+<rect x="1160.6" y="1501" width="46" height="20" rx="10" class="bm"/>
+<text x="1183.6" y="1515.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="1212.6" y="1501" width="40" height="20" rx="10" class="bn"/>
+<text x="1232.6" y="1515.5" class="newt" text-anchor="middle">신규</text>
+<text x="919" y="1556" class="pt">GKE Autopilot 또는 Standard · 서울</text>
+<text x="919.0" y="1588" class="lbl" fill="var(--gcp)">워크로드</text>
+<circle cx="925.0" cy="1609" r="3.2" class="dot-gcp"/>
+<text x="937.0" y="1614" class="sub">같은 Helm chart · values-gcp</text>
+<circle cx="925.0" cy="1635" r="3.2" class="dot-gcp"/>
+<text x="937.0" y="1640" class="sub">Argo 허브가 원격 sync</text>
+<text x="919.0" y="1666" class="lbl" fill="var(--gcp)">데이터</text>
+<circle cx="925.0" cy="1687" r="3.2" class="dot-gcp"/>
+<text x="937.0" y="1692" class="sub">Cloud SQL PG (타깃 DB)</text>
+<circle cx="925.0" cy="1713" r="3.2" class="dot-gcp"/>
+<text x="937.0" y="1718" class="sub">복제 subscriber · lag 0</text>
+<text x="1132.0" y="1588" class="lbl" fill="var(--gcp)">보안</text>
+<circle cx="1138.0" cy="1609" r="3.2" class="dot-gcp"/>
+<text x="1150.0" y="1614" class="sub">같은 Kyverno 정책</text>
+<circle cx="1138.0" cy="1635" r="3.2" class="dot-gcp"/>
+<text x="1150.0" y="1640" class="sub">Workload Identity · SCC</text>
+<text x="1132.0" y="1666" class="lbl" fill="var(--gcp)">관측</text>
+<circle cx="1138.0" cy="1687" r="3.2" class="dot-gcp"/>
+<text x="1150.0" y="1692" class="sub">kube-prometheus · OTel</text>
+<circle cx="1138.0" cy="1713" r="3.2" class="dot-gcp"/>
+<text x="1150.0" y="1718" class="sub">k8s audit → 감사 로그</text>
+<rect x="1389" y="1470" width="467" height="330" rx="14" class="optc"/>
+<rect x="1411" y="1494" width="56" height="30" rx="7" class="bd-on"/>
+<text x="1439" y="1514" class="bdt" text-anchor="middle">ON</text>
+<text x="1481" y="1517" class="ttl">온프레 · k3s (VM)</text>
+<rect x="1660" y="1501" width="50" height="20" rx="10" class="bx"/>
+<text x="1685.0" y="1515.5" class="newt" text-anchor="middle">EXTRA</text>
+<rect x="1716" y="1501" width="40" height="20" rx="10" class="bn"/>
+<text x="1736.0" y="1515.5" class="newt" text-anchor="middle">신규</text>
+<text x="1411" y="1556" class="pt">k3s 1노드 · Argo CD 허브가 Tunnel로 등록</text>
+<circle cx="1417" cy="1583" r="3.2" class="dot-on"/>
+<text x="1429" y="1588" class="sub">Ingress = Cloudflare Tunnel (인바운드 0)</text>
+<circle cx="1417" cy="1609" r="3.2" class="dot-on"/>
+<text x="1429" y="1614" class="sub">CloudNativePG + 백업 → 복구 (FR-ONP-05)</text>
+<circle cx="1417" cy="1635" r="3.2" class="dot-on"/>
+<text x="1429" y="1640" class="sub">같은 Kyverno · Trivy → 매트릭스 행</text>
+<circle cx="1417" cy="1661" r="3.2" class="dot-on"/>
+<text x="1429" y="1666" class="sub">ESO + Vault/SOPS 로 시크릿 재현</text>
+<circle cx="1417" cy="1687" r="3.2" class="dot-on"/>
+<text x="1429" y="1692" class="sub">Argo CD Agent(pull) 모드도 후보</text>
+<text x="1411" y="1760" class="qt">결정: 온프레를 3번째 환경으로 넣나 (범위)</text>
+<path d="M650 1394 L650 1440" class="e-prov"/>
+<line x1="650" y1="1440" x2="1620" y2="1440" class="e-prov"/>
+<path d="M640 1440 L640 1466" class="e-prov" marker-end="url(#m-e-prov)"/>
+<path d="M1132 1440 L1132 1466" class="e-prov" marker-end="url(#m-e-prov)"/>
+<path d="M1620 1440 L1620 1466" class="e-prov" marker-end="url(#m-e-prov)"/>
+<rect x="597.6" y="1432" width="804.8" height="26" rx="4" class="bg"/>
+<text x="1000" y="1450" class="lbl" text-anchor="middle">GitOps 레포 → Argo CD 허브 → 3클러스터 sync · 같은 digest · 같은 chart</text>
+<path d="M875 1760 L893 1760" class="e-sync" marker-end="url(#m-e-sync)"/>
+<rect x="771.0" y="1808" width="230" height="26" rx="4" class="bg"/>
+<text x="886" y="1826" class="lbl" text-anchor="middle">DB 논리 복제 A → B (RPO 0)</text>
+<path d="M203 1840 L203 1860 L640 1860 L640 1804" class="e-user" marker-end="url(#m-e-user)"/>
+<path d="M203 1860 L1132 1860 L1132 1804" class="e-user" marker-end="url(#m-e-user)"/>
+<rect x="599.2" y="1860" width="573.6" height="26" rx="4" class="bg"/>
+<text x="886" y="1878" class="lbl" text-anchor="middle">가중치 전환 중 A·B 동시 서빙 → 실패 요청 0건 측정 (NFR-01)</text>
+<rect x="405" y="1900" width="1451" height="150" rx="14" class="agent" style="stroke-dasharray:6 4"/>
+<text x="431" y="1940" class="ttl">샌드박스 (vcluster · 관리 클러스터 안)</text>
+<rect x="760" y="1924" width="46" height="20" rx="10" class="bm"/>
+<text x="783.0" y="1938.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="812" y="1924" width="40" height="20" rx="10" class="bn"/>
+<text x="832.0" y="1938.5" class="newt" text-anchor="middle">신규</text>
+<text x="1832" y="1938" class="lbl" text-anchor="end">에이전트 ServiceAccount = vcluster 안만 · 프로덕션 kubeconfig 없음 · 실행 후 삭제</text>
+<rect x="431" y="1958" width="340" height="74" rx="12" class="card"/>
+<text x="449" y="1986" class="ttl-s">격리</text>
+<text x="449" y="2012" class="sub">vcluster + NetworkPolicy 기본 차단 + gVisor</text>
+<rect x="787" y="1958" width="340" height="74" rx="12" class="card"/>
+<text x="805" y="1986" class="ttl-s">실행</text>
+<text x="805" y="2012" class="sub">같은 chart를 띄워 테스트 · Kyverno 평가</text>
+<rect x="1143" y="1958" width="340" height="74" rx="12" class="card"/>
+<text x="1161" y="1986" class="ttl-s">게이트</text>
+<text x="1161" y="2012" class="sub">통과 + approver 승인 → GitOps PR 머지</text>
+<rect x="1499" y="1958" width="340" height="74" rx="12" class="card"/>
+<text x="1517" y="1986" class="ttl-s">기록</text>
+<text x="1517" y="2012" class="sub">점검 내용 · 이유 · diff · 결과 → 증거 저장소</text>
+<path d="M1100 1374 L1100 1394 L1360 1394 L1360 1896" class="e-gate" marker-end="url(#m-e-gate)"/>
+<rect x="1250.0" y="1394" width="220" height="26" rx="4" class="bg"/>
+<text x="1360" y="1412" class="lbl" text-anchor="middle">에이전트 작업 → 샌드박스</text>
+<rect x="405" y="2080" width="1451" height="150" rx="14" class="obsc" style="stroke-dasharray:6 4"/>
+<text x="431" y="2120" class="ttl">횡단 관측 · 이전 측정 (OpenTelemetry)</text>
+<rect x="830" y="2104" width="46" height="20" rx="10" class="bm"/>
+<text x="853.0" y="2118.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="882" y="2104" width="40" height="20" rx="10" class="bn"/>
+<text x="902.0" y="2118.5" class="newt" text-anchor="middle">신규</text>
+<text x="1832" y="2118" class="lbl" text-anchor="end">이전 1회마다 자동 표: 시작·단계·컷오버·롤백 시각 · 실패 요청 수 · 복제 lag (FR-OBS-04)</text>
+<rect x="431" y="2138" width="340" height="74" rx="12" class="card"/>
+<text x="449" y="2166" class="ttl-s">OTel Operator</text>
+<text x="449" y="2192" class="sub">3클러스터 자동 계측 · cluster 라벨</text>
+<rect x="787" y="2138" width="340" height="74" rx="12" class="card"/>
+<text x="805" y="2166" class="ttl-s">Prometheus</text>
+<text x="805" y="2192" class="sub">Rollouts 분석 + 클러스터 간 롤백 입력</text>
+<rect x="1143" y="2138" width="340" height="74" rx="12" class="card"/>
+<text x="1161" y="2166" class="ttl-s">Grafana</text>
+<text x="1161" y="2192" class="sub">한 그래프에 A·B 선 교차 (FR-OBS-01)</text>
+<rect x="1499" y="2138" width="340" height="74" rx="12" class="card"/>
+<text x="1517" y="2166" class="ttl-s">OpenCost</text>
+<text x="1517" y="2192" class="sub">클러스터별 비용 · 50만 원 예산 (EXTRA)</text>
+<path d="M412 1800 L412 2076" class="e-obs" marker-end="url(#m-e-obs)"/>
+<text x="48" y="2120" class="cpt">관측 · 측정</text>
+<text x="48" y="2152" class="sub">숫자가 곧 심사 근거:</text>
+<text x="48" y="2176" class="sub">실패 요청 0 · p95 ≤ 2배 · RPO 0</text>
+<text x="48" y="2200" class="sub">롤백 ≤ 60초 · 이전 ≤ 90초</text>
+<rect x="405" y="2260" width="1451" height="130" rx="14" class="strip"/>
+<text x="48" y="2300" class="cpt">데모 3장면 ↔ 구성</text>
+<text x="48" y="2332" class="sub">장면 1: 이전 → 진입점·이전·롤백</text>
+<text x="48" y="2356" class="sub">장면 2: 보안 → 수집기·매트릭스</text>
+<text x="48" y="2380" class="sub">장면 3: 에이전트 → 샌드박스</text>
+<text x="435" y="2306" class="stt">예선에서 가져온 것 (적음)</text>
+<text x="435" y="2334" class="sub">API·상태 머신·Postgres 큐 · IR(values 생성기로) · 검증 후</text>
+<text x="435" y="2356" class="sub">주소 전환 아이디어 · Terraform backend</text>
+<text x="918" y="2306" class="stt">k8s로 공짜로 얻는 것</text>
+<text x="918" y="2334" class="sub">카나리·자동 롤백(Rollouts) · 같은 정책(Kyverno) ·</text>
+<text x="918" y="2356" class="sub">vcluster 샌드박스 · GitOps 이력 · OTel Operator</text>
+<text x="1401" y="2306" class="stt">대신 치르는 비용</text>
+<text x="1401" y="2334" class="sub">클러스터 3개 구축·운영 · 예선 배포 엔진 대부분 폐기 · EKS+GKE 컨트롤</text>
+<text x="1401" y="2356" class="sub">플레인 비용 · 팀원 k8s 숙련도</text>
+</svg></div></div>
+<script>
+(function(){var s=document.getElementById('dg'),box=document.getElementById('scroll'),z=1,W=1900,H=2420;
+function ap(){s.setAttribute('width',W*z);s.setAttribute('height',H*z);s.style.minWidth=(W*z)+'px';}
+document.getElementById('zoom-in').onclick=function(){z=Math.min(2,z*1.2);ap();};
+document.getElementById('zoom-out').onclick=function(){z=Math.max(.3,z/1.2);ap();};
+document.getElementById('zoom-fit').onclick=function(){z=Math.max(.3,(box.clientWidth-2)/W);ap();};
+if(box.clientWidth<W){z=Math.max(.3,(box.clientWidth-2)/W);ap();}})();
+</script>

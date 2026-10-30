@@ -94,9 +94,9 @@ svg{display:block;min-width:1900px;font-family:var(--font)}
 <text x="70" y="273" class="sub">이전 계획 · 승인 · 진행 · 롤백 버튼</text>
 <text x="70" y="298" class="sub">보안 매트릭스 · 에이전트 승인 화면</text>
 <rect x="48" y="348" width="310" height="120" rx="12" class="optc"/>
-<text x="70" y="386" class="ttl">CLI · CI (GitHub Actions)</text>
-<rect x="348.0" y="370" width="50" height="20" rx="10" class="bx"/>
-<text x="373.0" y="384.5" class="newt" text-anchor="middle">EXTRA</text>
+<text x="70" y="386" class="ttl">CLI · CI</text>
+<rect x="167.12" y="370" width="50" height="20" rx="10" class="bx"/>
+<text x="192.12" y="384.5" class="newt" text-anchor="middle">EXTRA</text>
 <text x="70" y="416" class="sub">migrate · rollback · policy check</text>
 <text x="70" y="441" class="sub">push → 샌드박스 점검 자동 실행</text>
 <rect x="48" y="486" width="310" height="120" rx="12" class="card"/>
@@ -121,7 +121,7 @@ svg{display:block;min-width:1900px;font-family:var(--font)}
 <rect x="768.06" y="254" width="40" height="20" rx="10" class="bp"/>
 <text x="788.06" y="268.5" class="newt" text-anchor="middle">예선</text>
 <text x="1290" y="368" class="tag" text-anchor="end">API · STM · LCK · AUD</text>
-<text x="462" y="300" class="sub">Fastify + Zod + pg-boss · REST · SSE · 예선 상태 머신에 이전 상태 추가: plan → precheck → sync → shift 10/50/100 → cutover → done | rollback</text>
+<text x="462" y="300" class="sub">Fastify + Zod + pg-boss · REST · SSE · 이전 상태 추가: plan → precheck → sync → shift → cutover → done | rollback</text>
 <text x="462" y="325" class="sub">env_lock(환경 단위 락) · 승인 게이트: 이전 계획 · 에이전트 반영 · 상태 변경 + 작업 생성 = 한 트랜잭션</text>
 <text x="462" y="350" class="sub">감사 로그: 누가·언제·무엇을·결과 (FR-BASE-07) · 권한 없는 요청 → 거부 + 기록</text>
 <path d="M380 257 L436 257" class="e-api" marker-end="url(#m-e-api)"/>
@@ -301,11 +301,11 @@ svg{display:block;min-width:1900px;font-family:var(--font)}
 <text x="70" y="1618" class="sub">URL 하나: app.&lt;domain&gt; (이전 전후 동일)</text>
 <path d="M203 1634 L203 1660" class="e-user" marker-end="url(#m-e-user)"/>
 <rect x="48" y="1664" width="310" height="176" rx="12" class="card"/>
-<text x="70" y="1702" class="ttl">진입점 · 트래픽 전환</text>
-<rect x="273.52" y="1686" width="46" height="20" rx="10" class="bm"/>
-<text x="296.52" y="1700.5" class="newt" text-anchor="middle">MUST</text>
-<rect x="325.52" y="1686" width="40" height="20" rx="10" class="bp"/>
-<text x="345.52" y="1700.5" class="newt" text-anchor="middle">예선</text>
+<text x="70" y="1702" class="ttl">트래픽 전환</text>
+<rect x="185.74" y="1686" width="46" height="20" rx="10" class="bm"/>
+<text x="208.74" y="1700.5" class="newt" text-anchor="middle">MUST</text>
+<rect x="237.74" y="1686" width="40" height="20" rx="10" class="bp"/>
+<text x="257.74" y="1700.5" class="newt" text-anchor="middle">예선</text>
 <text x="70" y="1732" class="sub">Cloudflare LB 가중치 10 → 50 → 100 %</text>
 <text x="70" y="1757" class="sub">단계마다 에러율 · p95 확인 후 승격</text>
 <text x="70" y="1782" class="sub">헬스체크 통과 후에만 전환 (FR-MIG-09)</text>
@@ -455,14 +455,14 @@ svg{display:block;min-width:1900px;font-family:var(--font)}
 <text x="48" y="2356" class="sub">장면 2: 보안 → 수집기·매트릭스</text>
 <text x="48" y="2380" class="sub">장면 3: 에이전트 → 샌드박스</text>
 <text x="435" y="2306" class="stt">예선에서 가져온 것</text>
-<text x="435" y="2334" class="sub">상태 머신 · Postgres 큐 · env_lock · IR/프로필/어댑터 · 검증 후 주소</text>
-<text x="435" y="2356" class="sub">전환 · 페일오버 · Agent · Terraform backend</text>
+<text x="435" y="2334" class="sub">상태 머신 · Postgres 큐 · env_lock · IR/프로필/어댑터 ·</text>
+<text x="435" y="2356" class="sub">검증 후 주소 전환 · 페일오버 · Agent · Terraform backend</text>
 <text x="918" y="2306" class="stt">본선에서 더한 것</text>
-<text x="918" y="2334" class="sub">단계적 전환 · DB 복제 · 자동 롤백 · 보안 공통 스키마·매트릭스 · 샌드박스 에이전트</text>
-<text x="918" y="2356" class="sub">· OTel · 측정표 · RBAC</text>
+<text x="918" y="2334" class="sub">단계적 전환 · DB 복제 · 자동 롤백 · 보안 공통 스키마·매트릭스 · 샌드박스</text>
+<text x="918" y="2356" class="sub">에이전트 · OTel · 측정표 · RBAC</text>
 <text x="1401" y="2306" class="stt">팀이 정할 것 (TODO)</text>
-<text x="1401" y="2334" class="sub">Q1 베이스 · Q2 전환 수단 · Q3 클라우드 B · Q4 보안 소스 · Q5 샌드박스 형</text>
-<text x="1401" y="2356" class="sub">태 · DB 복제 방식 · 롤백 지표</text>
+<text x="1401" y="2334" class="sub">Q1 베이스 · Q2 전환 수단 · Q3 클라우드 B · Q4 보안 소스 · Q5</text>
+<text x="1401" y="2356" class="sub">샌드박스 형태 · DB 복제 방식 · 롤백 지표</text>
 </svg></div></div>
 <script>
 (function(){var s=document.getElementById('dg'),box=document.getElementById('scroll'),z=1,W=1900,H=2420;
